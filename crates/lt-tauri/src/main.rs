@@ -12,6 +12,8 @@ use lt_pipeline::{PipelineEvent, PipelineOrchestrator, PipelineState};
 use lt_stt::{ElevenLabsProvider, GroqProvider, OpenAIProvider};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use tokio::sync::Mutex;
 use tracing_subscriber;
@@ -55,7 +57,8 @@ struct ErrorEvent {
 }
 
 #[tauri::command]
-fn toggle_overlay(window: tauri::WebviewWindow) -> Result<bool, String> {
+fn toggle_overlay(app: tauri::AppHandle) -> Result<bool, String> {
+    let window = app.get_webview_window("main").ok_or("Main window not found")?;
     let is_visible = window.is_visible().map_err(|e| e.to_string())?;
 
     if is_visible {
@@ -403,6 +406,11 @@ async fn start_pipeline(
                     let _ = app_clone.emit("recording-state", serde_json::json!({
                         "is_recording": is_recording
                     }));
+
+                    // Update tray menu to reflect recording state
+                    if let Err(e) = rebuild_tray_menu(&app_clone, is_recording) {
+                        tracing::warn!("Failed to update tray menu: {}", e);
+                    }
                 }
                 PipelineEvent::AudioLevel { rms, voice_active, timestamp_ms } => {
                     let _ = app_clone.emit("audio-level", AudioLevelEvent {
@@ -673,6 +681,78 @@ async fn search_dictionary(query: String) -> Result<Vec<lt_core::dictionary::Dic
     Ok(dict.search_entries(&query))
 }
 
+/// Helper function to create a red-tinted version of the icon for recording state
+fn create_recording_icon(original_bytes: &[u8], _width: u32, _height: u32) -> Vec<u8> {
+    let mut tinted = original_bytes.to_vec();
+    // Apply red tint to the icon (increase red, decrease green/blue)
+    for chunk in tinted.chunks_mut(4) {
+        if chunk.len() == 4 {
+            let alpha = chunk[3];
+            if alpha > 0 {
+                // Boost red channel
+                chunk[0] = chunk[0].saturating_add(80);
+                // Reduce green and blue
+                chunk[1] = chunk[1].saturating_sub(40);
+                chunk[2] = chunk[2].saturating_sub(40);
+            }
+        }
+    }
+    tinted
+}
+
+/// Helper function to rebuild tray menu with updated recording state
+fn rebuild_tray_menu(app: &tauri::AppHandle, is_recording: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let tray = app.tray_by_id("main-tray").ok_or("Tray not found")?;
+
+    // Build menu items
+    let toggle_item = MenuItemBuilder::with_id(
+        "toggle_recording",
+        if is_recording { "⏸ Stop Recording" } else { "⏺ Start Recording" }
+    ).build(app)?;
+
+    let settings_item = MenuItemBuilder::with_id("open_settings", "⚙ Open Settings").build(app)?;
+    let overlay_item = MenuItemBuilder::with_id("toggle_overlay", "👁 Show/Hide Overlay").build(app)?;
+    let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+
+    let menu = MenuBuilder::new(app)
+        .item(&toggle_item)
+        .item(&settings_item)
+        .item(&overlay_item)
+        .separator()
+        .item(&quit_item)
+        .build()?;
+
+    tray.set_menu(Some(menu))?;
+
+    // Update tooltip to reflect recording state
+    let tooltip = if is_recording {
+        "Localtype - Recording"
+    } else {
+        "Localtype"
+    };
+    tray.set_tooltip(Some(tooltip))?;
+
+    // Update icon to reflect recording state
+    if let Ok(tray_icon_path) = app.path().resolve("icons/32x32.png", tauri::path::BaseDirectory::Resource) {
+        if let Ok(icon_image) = image::open(&tray_icon_path) {
+            let rgba_image = icon_image.to_rgba8();
+            let (width, height) = rgba_image.dimensions();
+            let original_bytes = rgba_image.into_raw();
+
+            let icon_bytes = if is_recording {
+                create_recording_icon(&original_bytes, width, height)
+            } else {
+                original_bytes
+            };
+
+            let icon = tauri::image::Image::new(&icon_bytes, width, height);
+            let _ = tray.set_icon(Some(icon));
+        }
+    }
+
+    Ok(())
+}
+
 fn main() {
     // Initialize tracing
     tracing_subscriber::fmt()
@@ -777,6 +857,104 @@ fn main() {
             search_dictionary
         ])
         .setup(|app| {
+            // Set up system tray
+            let tray_icon_path = app.path().resolve("icons/32x32.png", tauri::path::BaseDirectory::Resource)
+                .expect("Failed to resolve tray icon path");
+
+            // Load icon from file
+            let icon_image = image::open(&tray_icon_path)
+                .expect("Failed to load tray icon")
+                .to_rgba8();
+            let (width, height) = icon_image.dimensions();
+            let icon_bytes = icon_image.into_raw();
+            let icon = tauri::image::Image::new(
+                &icon_bytes,
+                width,
+                height
+            );
+
+            // Build initial menu
+            let toggle_item = MenuItemBuilder::with_id("toggle_recording", "⏺ Start Recording")
+                .build(app)?;
+            let settings_item = MenuItemBuilder::with_id("open_settings", "⚙ Open Settings")
+                .build(app)?;
+            let overlay_item = MenuItemBuilder::with_id("toggle_overlay", "👁 Show/Hide Overlay")
+                .build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit")
+                .build(app)?;
+
+            let menu = MenuBuilder::new(app)
+                .item(&toggle_item)
+                .item(&settings_item)
+                .item(&overlay_item)
+                .separator()
+                .item(&quit_item)
+                .build()?;
+
+            // Create tray icon
+            let _tray = TrayIconBuilder::with_id("main-tray")
+                .icon(icon)
+                .menu(&menu)
+                .tooltip("Localtype")
+                .show_menu_on_left_click(true)
+                .on_menu_event(move |app, event| {
+                    let app_handle = app.clone();
+                    match event.id.as_ref() {
+                        "toggle_recording" => {
+                            tokio::spawn(async move {
+                                let state = app_handle.state::<AppState>();
+                                let is_currently_recording = {
+                                    let pipeline = state.pipeline.lock().await;
+                                    let current_state = pipeline.get_state().await;
+                                    matches!(current_state, PipelineState::Recording | PipelineState::Transcribing)
+                                };
+
+                                if is_currently_recording {
+                                    let _ = stop_pipeline(app_handle.clone(), state).await;
+                                } else {
+                                    let _ = start_pipeline(app_handle.clone(), state).await;
+                                }
+                            });
+                        }
+                        "open_settings" => {
+                            if let Some(window) = app_handle.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                                let _ = window.emit("open-settings", ());
+                            }
+                        }
+                        "toggle_overlay" => {
+                            if let Some(window) = app_handle.get_webview_window("main") {
+                                let is_visible = window.is_visible().unwrap_or(false);
+                                if is_visible {
+                                    let _ = window.hide();
+                                } else {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                        }
+                        "quit" => {
+                            app_handle.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|_tray, event| {
+                    if let TrayIconEvent::Click { button, .. } = event {
+                        tracing::debug!("Tray icon clicked with {:?}", button);
+                    }
+                })
+                .build(app)?;
+
+            // Configure macOS activation policy for background mode
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::ActivationPolicy;
+                app.set_activation_policy(ActivationPolicy::Accessory);
+                tracing::info!("macOS activation policy set to Accessory (background mode)");
+            }
+
             // Perform LLM health checks
             tokio::spawn(async move {
                 tracing::info!("Checking available LLM processors...");
