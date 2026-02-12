@@ -1,78 +1,83 @@
 <script lang="ts">
+  import { fade, fly } from 'svelte/transition';
+
   interface Props {
     partialText: string;
     committedText: string;
   }
 
   let { partialText, committedText }: Props = $props();
+
+  // Calculate auto-sizing based on text length
+  let containerHeight = $derived(() => {
+    const totalLength = committedText.length + partialText.length;
+    if (totalLength === 0) return 60;
+    if (totalLength < 50) return 70;
+    if (totalLength < 150) return 100;
+    if (totalLength < 300) return 150;
+    return 200;
+  });
 </script>
 
-<div class="transcription-container">
+<div class="transcription-container" style="min-height: {containerHeight()}px; max-height: {Math.max(containerHeight(), 200)}px;">
   {#if committedText}
-    <div class="committed-text">{committedText}</div>
+    <div class="committed-text" transition:fly={{ y: 5, duration: 300 }}>{committedText}</div>
   {/if}
 
   {#if partialText}
-    <div class="partial-text">{partialText}</div>
+    <div class="partial-text" transition:fade={{ duration: 200 }}>{partialText}</div>
   {/if}
 
   {#if !committedText && !partialText}
-    <div class="placeholder">Listening...</div>
+    <div class="placeholder" transition:fade={{ duration: 200 }}>Listening...</div>
   {/if}
 </div>
 
 <style>
   .transcription-container {
-    min-height: 60px;
-    max-height: 200px;
     overflow-y: auto;
-    padding: 12px;
-    background: rgba(0, 0, 0, 0.3);
-    border-radius: 8px;
-    margin: 16px 0;
-    font-family: 'SF Pro Text', -apple-system, system-ui, sans-serif;
+    padding: 14px 16px;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 10px;
+    margin: 12px 0;
+    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    border: 1px solid rgba(255, 255, 255, 0.05);
   }
 
   .committed-text {
     color: rgba(255, 255, 255, 0.95);
     font-size: 14px;
-    line-height: 1.6;
-    margin-bottom: 8px;
-    animation: fadeIn 0.3s ease-in-out;
+    line-height: 1.65;
+    margin-bottom: 6px;
+    font-weight: 400;
+    letter-spacing: 0.01em;
   }
 
   .partial-text {
-    color: rgba(255, 255, 255, 0.5);
+    color: rgba(255, 255, 255, 0.55);
     font-size: 14px;
-    line-height: 1.6;
+    line-height: 1.65;
     font-style: italic;
-    animation: pulse 1.5s ease-in-out infinite;
+    font-weight: 400;
+    animation: pulse 2s ease-in-out infinite;
+    letter-spacing: 0.01em;
   }
 
   .placeholder {
-    color: rgba(255, 255, 255, 0.4);
+    color: rgba(255, 255, 255, 0.45);
     font-size: 13px;
     font-style: italic;
     text-align: center;
-  }
-
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(-4px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    font-weight: 400;
   }
 
   @keyframes pulse {
     0%, 100% {
-      opacity: 0.5;
+      opacity: 0.55;
     }
     50% {
-      opacity: 0.8;
+      opacity: 0.75;
     }
   }
 

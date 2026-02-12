@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { fade, fly, slide } from 'svelte/transition';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -29,6 +30,7 @@
   let isDragging = $state(false);
   let dragStartX = $state(0);
   let dragStartY = $state(0);
+  let overlayVisible = $state(true);
 
   // Event listeners cleanup
   let unlistenAudioLevel: UnlistenFn | null = null;
@@ -79,12 +81,24 @@
         isProcessing = false;
         showCopiedIndicator = false;
         detectedCommand = null;
+        overlayVisible = true;
         await invoke('start_pipeline');
       }
     } catch (error) {
       console.error('Failed to toggle recording:', error);
       errorMessage = String(error);
     }
+  }
+
+  function dismissOverlay() {
+    overlayVisible = false;
+    setTimeout(() => {
+      committedText = '';
+      processedText = '';
+      partialText = '';
+      errorMessage = null;
+      overlayVisible = true;
+    }, 300);
   }
 
   function openSettings() {
@@ -234,69 +248,90 @@
 />
 
 <div class="overlay-container">
-  <div
-    class="overlay-window"
-    onmousedown={handleMouseDown}
-    role="button"
-    tabindex="0"
-  >
-    <div class="header-row">
-      <div class="status-indicator">
-        <div class="status-dot {isProcessing ? 'processing' : (isRecording ? (partialText || committedText ? 'transcribing' : 'recording') : (committedText ? 'done' : pipelineState))}"></div>
-        <span class="status-text">
-          {#if isProcessing}
-            {#if detectedCommand === 'shorten'}
-              Shortening...
-            {:else if detectedCommand === 'formalize'}
-              Formalizing...
-            {:else if detectedCommand === 'casualize'}
-              Casualizing...
-            {:else if detectedCommand === 'reply'}
-              Generating reply...
-            {:else if detectedCommand && detectedCommand.startsWith('translate to')}
-              {detectedCommand.charAt(0).toUpperCase() + detectedCommand.slice(1)}...
+  {#if overlayVisible}
+    <div
+      class="overlay-window"
+      class:compact={!isRecording && !committedText}
+      class:expanded={isRecording || committedText}
+      onmousedown={handleMouseDown}
+      role="button"
+      tabindex="0"
+      transition:fade={{ duration: 200 }}
+    >
+      <div class="header-row">
+        <div class="status-indicator">
+          {#key pipelineState + isRecording + isProcessing}
+            <div
+              class="status-dot {isProcessing ? 'processing' : (isRecording ? (partialText || committedText ? 'transcribing' : 'recording') : (committedText ? 'done' : pipelineState))}"
+              transition:fade={{ duration: 150 }}
+            ></div>
+          {/key}
+          <span class="status-text">
+            {#if isProcessing}
+              {#if detectedCommand === 'shorten'}
+                Shortening...
+              {:else if detectedCommand === 'formalize'}
+                Formalizing...
+              {:else if detectedCommand === 'casualize'}
+                Casualizing...
+              {:else if detectedCommand === 'reply'}
+                Generating reply...
+              {:else if detectedCommand && detectedCommand.startsWith('translate to')}
+                {detectedCommand.charAt(0).toUpperCase() + detectedCommand.slice(1)}...
+              {:else}
+                Processing...
+              {/if}
+            {:else if isRecording}
+              {partialText || committedText ? 'Transcribing' : 'Recording'}
+            {:else if committedText}
+              Done
             {:else}
-              Processing...
+              {pipelineState === 'idle' ? 'Ready' : pipelineState.charAt(0).toUpperCase() + pipelineState.slice(1)}
             {/if}
-          {:else if isRecording}
-            {partialText || committedText ? 'Transcribing' : 'Recording'}
-          {:else if committedText}
-            Done
-          {:else}
-            {pipelineState === 'idle' ? 'Ready' : pipelineState.charAt(0).toUpperCase() + pipelineState.slice(1)}
+          </span>
+        </div>
+        <div class="control-buttons">
+          <button class="settings-button" onclick={openSettings} title="Settings">
+            ⚙
+          </button>
+          {#if committedText}
+            <button class="close-button" onclick={dismissOverlay} title="Dismiss" transition:fly={{ x: 10, duration: 200 }}>
+              ✕
+            </button>
           {/if}
-        </span>
+        </div>
       </div>
-      <button class="settings-button" onclick={openSettings} title="Settings">
-        ⚙
+
+      <div class="app-title">Localtype</div>
+
+      {#if showCopiedIndicator}
+        <div class="copied-indicator" transition:fly={{ y: -10, duration: 300 }}>
+          ✓ Copied to clipboard!
+        </div>
+      {/if}
+
+      {#if errorMessage}
+        <div class="error-message" transition:slide={{ duration: 250 }}>{errorMessage}</div>
+      {/if}
+
+      {#if isRecording}
+        <div transition:fade={{ duration: 200 }}>
+          <WaveformIndicator rms={audioLevel.rms} voiceActive={audioLevel.voiceActive} />
+        </div>
+        <TranscriptionView partialText={partialText} committedText={committedText} />
+      {:else if committedText}
+        <div transition:fade={{ duration: 300 }}>
+          <TranscriptionView partialText={partialText} committedText={committedText} />
+        </div>
+      {:else}
+        <div class="hint-text" transition:fade={{ duration: 200 }}>Press Cmd+Shift+Space to start</div>
+      {/if}
+
+      <button class="record-button" class:recording={isRecording} onclick={toggleRecording}>
+        {isRecording ? '⏸ Stop Recording' : '⏺ Start Recording'}
       </button>
     </div>
-
-    <div class="app-title">Localtype</div>
-
-    {#if showCopiedIndicator}
-      <div class="copied-indicator">
-        ✓ Copied to clipboard!
-      </div>
-    {/if}
-
-    {#if errorMessage}
-      <div class="error-message">{errorMessage}</div>
-    {/if}
-
-    {#if isRecording}
-      <WaveformIndicator rms={audioLevel.rms} voiceActive={audioLevel.voiceActive} />
-      <TranscriptionView partialText={partialText} committedText={committedText} />
-    {:else if committedText}
-      <TranscriptionView partialText={partialText} committedText={committedText} />
-    {:else}
-      <div class="hint-text">Press Cmd+Shift+Space to start</div>
-    {/if}
-
-    <button class="record-button" onclick={toggleRecording}>
-      {isRecording ? 'Stop Recording' : 'Start Recording'}
-    </button>
-  </div>
+  {/if}
 </div>
 
 <SettingsPanel visible={showSettings} onClose={closeSettings} />
@@ -312,53 +347,102 @@
   }
 
   .overlay-window {
-    background: rgba(30, 30, 30, 0.95);
-    backdrop-filter: blur(10px);
+    background: rgba(28, 28, 30, 0.88);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
     border-radius: 16px;
-    padding: 24px 32px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 20px 28px;
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.6),
+      0 2px 8px rgba(0, 0, 0, 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     cursor: move;
-    min-width: 450px;
+    min-width: 400px;
+    max-width: 600px;
     text-align: center;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .overlay-window.compact {
+    padding: 18px 24px;
+    min-width: 380px;
+  }
+
+  .overlay-window.expanded {
+    padding: 24px 32px;
+    min-width: 500px;
+  }
+
+  .overlay-window:hover {
+    border-color: rgba(255, 255, 255, 0.18);
+    box-shadow:
+      0 12px 40px rgba(0, 0, 0, 0.7),
+      0 4px 12px rgba(0, 0, 0, 0.5),
+      inset 0 1px 0 rgba(255, 255, 255, 0.15);
   }
 
   .header-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 16px;
-    gap: 16px;
+    margin-bottom: 12px;
+    gap: 12px;
   }
 
   .status-indicator {
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 8px;
+    justify-content: flex-start;
+    gap: 10px;
     flex: 1;
   }
 
-  .settings-button {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.6);
+  .control-buttons {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .settings-button,
+  .close-button {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.65);
     width: 32px;
     height: 32px;
     border-radius: 8px;
-    font-size: 16px;
+    font-size: 15px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 0;
+    flex-shrink: 0;
   }
 
-  .settings-button:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.2);
-    color: rgba(255, 255, 255, 0.9);
+  .settings-button:hover,
+  .close-button:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.22);
+    color: rgba(255, 255, 255, 0.95);
+    transform: scale(1.05);
+  }
+
+  .settings-button:active,
+  .close-button:active {
+    transform: scale(0.95);
+  }
+
+  .close-button {
+    color: rgba(255, 99, 99, 0.75);
+  }
+
+  .close-button:hover {
+    background: rgba(255, 99, 99, 0.15);
+    border-color: rgba(255, 99, 99, 0.3);
+    color: rgba(255, 99, 99, 1);
   }
 
   .status-dot {
@@ -417,85 +501,91 @@
   }
 
   .status-text {
-    color: rgba(255, 255, 255, 0.9);
-    font-size: 14px;
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 13px;
     font-weight: 500;
+    letter-spacing: 0.01em;
+    transition: color 0.2s ease;
   }
 
   .app-title {
-    font-size: 24px;
+    font-size: 22px;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.95);
-    margin-bottom: 16px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.75) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 14px;
+    letter-spacing: -0.02em;
   }
 
   .copied-indicator {
-    background: rgba(16, 185, 129, 0.2);
-    border: 1px solid rgba(16, 185, 129, 0.4);
-    border-radius: 8px;
-    padding: 12px;
-    margin-bottom: 16px;
-    color: rgba(16, 185, 129, 0.9);
-    font-size: 14px;
+    background: rgba(52, 211, 153, 0.18);
+    border: 1px solid rgba(52, 211, 153, 0.35);
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin-bottom: 14px;
+    color: rgba(52, 211, 153, 1);
+    font-size: 13px;
     font-weight: 500;
-    animation: fadeInOut 2s ease-in-out;
-  }
-
-  @keyframes fadeInOut {
-    0% {
-      opacity: 0;
-      transform: translateY(-10px);
-    }
-    15% {
-      opacity: 1;
-      transform: translateY(0);
-    }
-    85% {
-      opacity: 1;
-      transform: translateY(0);
-    }
-    100% {
-      opacity: 0;
-      transform: translateY(-10px);
-    }
+    box-shadow: 0 4px 12px rgba(52, 211, 153, 0.15);
   }
 
   .hint-text {
     font-size: 12px;
-    color: rgba(255, 255, 255, 0.6);
-    margin-bottom: 16px;
+    color: rgba(255, 255, 255, 0.5);
+    margin-bottom: 14px;
+    font-weight: 400;
+    letter-spacing: 0.01em;
   }
 
   .error-message {
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    border-radius: 8px;
-    padding: 12px;
-    margin-bottom: 16px;
-    color: rgba(239, 68, 68, 0.9);
-    font-size: 13px;
+    background: rgba(248, 113, 113, 0.12);
+    border: 1px solid rgba(248, 113, 113, 0.3);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    color: rgba(248, 113, 113, 1);
+    font-size: 12px;
     line-height: 1.5;
+    box-shadow: 0 2px 8px rgba(248, 113, 113, 0.08);
   }
 
   .record-button {
-    background: rgba(74, 222, 128, 0.2);
-    border: 1px solid rgba(74, 222, 128, 0.4);
-    color: rgba(74, 222, 128, 0.9);
-    padding: 10px 24px;
-    border-radius: 8px;
-    font-size: 14px;
+    background: rgba(52, 211, 153, 0.15);
+    border: 1px solid rgba(52, 211, 153, 0.35);
+    color: rgba(52, 211, 153, 1);
+    padding: 10px 20px;
+    border-radius: 10px;
+    font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 2px 8px rgba(52, 211, 153, 0.1);
+    min-width: 160px;
   }
 
   .record-button:hover {
-    background: rgba(74, 222, 128, 0.3);
-    border-color: rgba(74, 222, 128, 0.6);
+    background: rgba(52, 211, 153, 0.22);
+    border-color: rgba(52, 211, 153, 0.5);
     transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(52, 211, 153, 0.2);
   }
 
   .record-button:active {
     transform: translateY(0);
+  }
+
+  .record-button.recording {
+    background: rgba(248, 113, 113, 0.15);
+    border-color: rgba(248, 113, 113, 0.35);
+    color: rgba(248, 113, 113, 1);
+    box-shadow: 0 2px 8px rgba(248, 113, 113, 0.1);
+  }
+
+  .record-button.recording:hover {
+    background: rgba(248, 113, 113, 0.22);
+    border-color: rgba(248, 113, 113, 0.5);
+    box-shadow: 0 4px 12px rgba(248, 113, 113, 0.2);
   }
 </style>
