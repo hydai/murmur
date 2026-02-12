@@ -1,6 +1,9 @@
 <script>
   import ProviderConfig from './ProviderConfig.svelte';
   import DictionaryEditor from './DictionaryEditor.svelte';
+  import LlmConfig from './LlmConfig.svelte';
+  import HotkeyConfig from './HotkeyConfig.svelte';
+  import OutputConfig from './OutputConfig.svelte';
 
   export let visible = false;
   export let onClose = () => {};
@@ -28,6 +31,24 @@
           STT Providers
         </button>
         <button
+          class="tab-button {activeTab === 'llm' ? 'active' : ''}"
+          on:click={() => switchTab('llm')}
+        >
+          LLM Processor
+        </button>
+        <button
+          class="tab-button {activeTab === 'hotkey' ? 'active' : ''}"
+          on:click={() => switchTab('hotkey')}
+        >
+          Hotkey
+        </button>
+        <button
+          class="tab-button {activeTab === 'output' ? 'active' : ''}"
+          on:click={() => switchTab('output')}
+        >
+          Output
+        </button>
+        <button
           class="tab-button {activeTab === 'dictionary' ? 'active' : ''}"
           on:click={() => switchTab('dictionary')}
         >
@@ -38,6 +59,12 @@
       <div class="settings-content">
         {#if activeTab === 'providers'}
           <ProviderConfig />
+        {:else if activeTab === 'llm'}
+          <LlmConfig />
+        {:else if activeTab === 'hotkey'}
+          <HotkeyConfig />
+        {:else if activeTab === 'output'}
+          <OutputConfig />
         {:else if activeTab === 'dictionary'}
           <DictionaryEditor />
         {/if}

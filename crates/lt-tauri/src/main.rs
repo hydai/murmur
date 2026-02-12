@@ -233,6 +233,94 @@ async fn set_llm_processor(processor: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn set_output_mode(mode: String) -> Result<(), String> {
+    let config_path = AppConfig::default_config_file()
+        .map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    let mut config = if config_path.exists() {
+        AppConfig::load_from_file(&config_path)
+            .map_err(|e| format!("Failed to load config: {}", e))?
+    } else {
+        AppConfig::default()
+    };
+
+    // Parse mode string to OutputMode
+    let output_mode = match mode.to_lowercase().as_str() {
+        "clipboard" => OutputMode::Clipboard,
+        "keyboard" => OutputMode::Keyboard,
+        "both" => OutputMode::Both,
+        _ => return Err(format!("Unknown output mode: {}", mode)),
+    };
+
+    config.output_mode = output_mode;
+
+    config.save_to_file(&config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))
+}
+
+#[tauri::command]
+async fn set_hotkey(hotkey: String, app: tauri::AppHandle) -> Result<(), String> {
+    let config_path = AppConfig::default_config_file()
+        .map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    let mut config = if config_path.exists() {
+        AppConfig::load_from_file(&config_path)
+            .map_err(|e| format!("Failed to load config: {}", e))?
+    } else {
+        AppConfig::default()
+    };
+
+    // Validate hotkey format (basic validation)
+    if hotkey.is_empty() {
+        return Err("Hotkey cannot be empty".to_string());
+    }
+
+    // Unregister old hotkey
+    let old_hotkey = config.hotkey.clone();
+    if let Err(e) = app.global_shortcut().unregister(old_hotkey.as_str()) {
+        tracing::warn!("Failed to unregister old hotkey '{}': {}", old_hotkey, e);
+    }
+
+    // Update config
+    config.hotkey = hotkey.clone();
+    config.save_to_file(&config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    // Register new hotkey
+    let app_handle = app.clone();
+    let hotkey_str = hotkey.clone();
+
+    // Set up the handler for the new hotkey
+    app.global_shortcut()
+        .on_shortcut(hotkey_str.as_str(), move |_app, _shortcut, _event| {
+            let handle = app_handle.clone();
+            tokio::spawn(async move {
+                let state = handle.state::<AppState>();
+                let is_currently_recording = {
+                    let pipeline = state.pipeline.lock().await;
+                    let current_state = pipeline.get_state().await;
+                    matches!(current_state, PipelineState::Recording | PipelineState::Transcribing)
+                };
+
+                if is_currently_recording {
+                    let _ = stop_pipeline(handle.clone(), state).await;
+                } else {
+                    let _ = start_pipeline(handle.clone(), state).await;
+                }
+            });
+        })
+        .map_err(|e| format!("Failed to set hotkey handler: {}", e))?;
+
+    // Register the hotkey
+    app.global_shortcut()
+        .register(hotkey.as_str())
+        .map_err(|e| format!("Failed to register hotkey '{}': {}", hotkey, e))?;
+
+    tracing::info!("Hotkey updated to: {}", hotkey);
+    Ok(())
+}
+
+#[tauri::command]
 async fn start_pipeline(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -680,6 +768,8 @@ fn main() {
             get_stt_providers,
             get_llm_processors,
             set_llm_processor,
+            set_output_mode,
+            set_hotkey,
             get_dictionary,
             add_dictionary_entry,
             update_dictionary_entry,

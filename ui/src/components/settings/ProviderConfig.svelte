@@ -7,6 +7,7 @@
   let showApiKeyModal = false;
   let selectedProvider = null;
   let apiKeyInput = '';
+  let showApiKey = false;
   let loading = false;
   let error = '';
   let success = '';
@@ -105,7 +106,12 @@
   function closeModal() {
     showApiKeyModal = false;
     apiKeyInput = '';
+    showApiKey = false;
     error = '';
+  }
+
+  function toggleApiKeyVisibility() {
+    showApiKey = !showApiKey;
   }
 
   function getProviderStatusClass(provider) {
@@ -171,13 +177,23 @@
       <h3>Configure {selectedProvider?.name}</h3>
       <p>Enter your API key to enable this provider:</p>
 
-      <input
-        type="password"
-        bind:value={apiKeyInput}
-        placeholder="API Key"
-        class="api-key-input"
-        on:keypress={(e) => e.key === 'Enter' && saveApiKey()}
-      />
+      <div class="api-key-input-wrapper">
+        <input
+          type={showApiKey ? 'text' : 'password'}
+          bind:value={apiKeyInput}
+          placeholder="API Key"
+          class="api-key-input"
+          on:keypress={(e) => e.key === 'Enter' && saveApiKey()}
+        />
+        <button
+          class="toggle-visibility-btn"
+          on:click={toggleApiKeyVisibility}
+          type="button"
+          title={showApiKey ? 'Hide API key' : 'Show API key'}
+        >
+          {showApiKey ? '👁️' : '👁️‍🗨️'}
+        </button>
+      </div>
 
       <div class="modal-actions">
         <button class="btn btn-secondary" on:click={closeModal}>Cancel</button>
@@ -342,20 +358,43 @@
     font-size: 14px;
   }
 
+  .api-key-input-wrapper {
+    position: relative;
+    margin-bottom: 20px;
+  }
+
   .api-key-input {
     width: 100%;
     padding: 12px;
+    padding-right: 48px;
     border-radius: 8px;
     border: 1px solid rgba(255, 255, 255, 0.2);
     background: rgba(0, 0, 0, 0.3);
     color: #fff;
     font-size: 14px;
-    margin-bottom: 20px;
   }
 
   .api-key-input:focus {
     outline: none;
     border-color: rgba(59, 130, 246, 0.6);
+  }
+
+  .toggle-visibility-btn {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 8px;
+    font-size: 16px;
+    opacity: 0.6;
+    transition: opacity 0.2s ease;
+  }
+
+  .toggle-visibility-btn:hover {
+    opacity: 1;
   }
 
   .modal-actions {
