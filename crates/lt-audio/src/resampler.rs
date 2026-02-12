@@ -165,4 +165,56 @@ mod tests {
         assert_eq!(mono[0], 150); // avg of 100 and 200
         assert_eq!(mono[1], 350); // avg of 300 and 400
     }
+
+    #[test]
+    fn test_empty_input() {
+        let mut resampler = AudioResampler::new(48000, 16000, 1).unwrap();
+        let input = vec![];
+        let output = resampler.resample(&input).unwrap();
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn test_single_sample() {
+        let mut resampler = AudioResampler::new(16000, 16000, 1).unwrap();
+        let input = vec![100i16];
+        let output = resampler.resample(&input).unwrap();
+        assert_eq!(output.len(), 1);
+    }
+
+    #[test]
+    fn test_to_mono_edge_cases() {
+        let resampler = AudioResampler::new(16000, 16000, 2).unwrap();
+
+        // Empty input
+        let empty: Vec<i16> = vec![];
+        let mono = resampler.to_mono(&empty);
+        assert_eq!(mono.len(), 0);
+
+        // Odd number of samples (incomplete frame) - should handle gracefully
+        let odd_input = vec![100i16, 200i16, 300i16];
+        let mono = resampler.to_mono(&odd_input);
+        assert_eq!(mono.len(), 1); // Only complete frames
+    }
+
+    #[test]
+    fn test_extreme_values() {
+        let mut resampler = AudioResampler::new(16000, 16000, 1).unwrap();
+
+        // Test with max and min i16 values
+        let input = vec![i16::MAX, i16::MIN, 0i16];
+        let output = resampler.resample(&input).unwrap();
+        assert_eq!(output.len(), 3);
+    }
+
+    #[test]
+    fn test_high_sample_rate_conversion() {
+        // Test 96kHz to 16kHz (6:1 ratio)
+        let mut resampler = AudioResampler::new(96000, 16000, 1).unwrap();
+        let input = vec![1000i16; 9600]; // 100ms at 96kHz
+        let output = resampler.resample(&input).unwrap();
+
+        // Should be roughly 1/6 the size
+        assert!(output.len() > 1500 && output.len() < 1700);
+    }
 }

@@ -1,6 +1,8 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod permissions;
+
 use lt_core::config::{SttProviderType, LlmProcessorType};
 use lt_core::llm::LlmProcessor;
 use lt_core::output::OutputMode;
@@ -681,6 +683,28 @@ async fn search_dictionary(query: String) -> Result<Vec<lt_core::dictionary::Dic
     Ok(dict.search_entries(&query))
 }
 
+// ============================================================================
+// Permission Management Commands
+// ============================================================================
+
+#[tauri::command]
+fn check_permissions() -> permissions::PermissionsResult {
+    permissions::PermissionsResult {
+        microphone: permissions::check_microphone_permission(),
+        accessibility: permissions::check_accessibility_permission(),
+    }
+}
+
+#[tauri::command]
+fn request_microphone_permission() -> Result<(), String> {
+    permissions::request_microphone_permission()
+}
+
+#[tauri::command]
+fn open_system_preferences(section: String) -> Result<(), String> {
+    permissions::open_system_preferences(&section)
+}
+
 /// Helper function to create a red-tinted version of the icon for recording state
 fn create_recording_icon(original_bytes: &[u8], _width: u32, _height: u32) -> Vec<u8> {
     let mut tinted = original_bytes.to_vec();
@@ -854,7 +878,10 @@ fn main() {
             add_dictionary_entry,
             update_dictionary_entry,
             delete_dictionary_entry,
-            search_dictionary
+            search_dictionary,
+            check_permissions,
+            request_microphone_permission,
+            open_system_preferences
         ])
         .setup(|app| {
             // Set up system tray

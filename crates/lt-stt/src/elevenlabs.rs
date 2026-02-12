@@ -38,6 +38,24 @@ enum ElevenLabsResponse {
     Error { message: String },
 }
 
+/// Reconnection configuration
+#[derive(Clone)]
+struct ReconnectConfig {
+    max_retries: u32,
+    base_delay_ms: u64,
+    max_delay_ms: u64,
+}
+
+impl Default for ReconnectConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 10,
+            base_delay_ms: 1000,
+            max_delay_ms: 30000,
+        }
+    }
+}
+
 /// ElevenLabs Scribe v2 WebSocket client
 pub struct ElevenLabsProvider {
     api_key: String,
@@ -47,6 +65,8 @@ pub struct ElevenLabsProvider {
     event_tx: Arc<Mutex<Option<mpsc::Sender<TranscriptionEvent>>>>,
     event_rx: Arc<Mutex<Option<mpsc::Receiver<TranscriptionEvent>>>>,
     ws_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    reconnect_config: ReconnectConfig,
+    should_reconnect: Arc<Mutex<bool>>,
 }
 
 impl ElevenLabsProvider {
@@ -60,6 +80,8 @@ impl ElevenLabsProvider {
             event_tx: Arc::new(Mutex::new(None)),
             event_rx: Arc::new(Mutex::new(None)),
             ws_task: Arc::new(Mutex::new(None)),
+            reconnect_config: ReconnectConfig::default(),
+            should_reconnect: Arc::new(Mutex::new(true)),
         }
     }
 
@@ -73,6 +95,8 @@ impl ElevenLabsProvider {
             event_tx: Arc::new(Mutex::new(None)),
             event_rx: Arc::new(Mutex::new(None)),
             ws_task: Arc::new(Mutex::new(None)),
+            reconnect_config: ReconnectConfig::default(),
+            should_reconnect: Arc::new(Mutex::new(true)),
         }
     }
 
@@ -83,6 +107,52 @@ impl ElevenLabsProvider {
             self.model_id, self.language_code
         );
         Url::parse(&url).map_err(|e| LocaltypeError::Stt(format!("Invalid URL: {}", e)))
+    }
+
+    /// Connect to WebSocket with retry logic
+    async fn connect_with_retry(&self) -> Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>> {
+        let ws_url = self.build_ws_url()?;
+        let mut retry_count = 0;
+
+        loop {
+            let request = http::Request::builder()
+                .uri(ws_url.as_str())
+                .header("xi-api-key", &self.api_key)
+                .body(())
+                .map_err(|e| LocaltypeError::Stt(format!("Failed to build request: {}", e)))?;
+
+            match connect_async(request).await {
+                Ok((ws_stream, _)) => {
+                    info!("WebSocket connected to ElevenLabs");
+                    return Ok(ws_stream);
+                }
+                Err(e) => {
+                    if retry_count >= self.reconnect_config.max_retries {
+                        error!("Failed to connect after {} retries", retry_count);
+                        return Err(LocaltypeError::Stt(format!(
+                            "WebSocket connection failed after {} retries: {}",
+                            retry_count, e
+                        )));
+                    }
+
+                    let delay = std::cmp::min(
+                        self.reconnect_config.base_delay_ms * 2u64.pow(retry_count),
+                        self.reconnect_config.max_delay_ms,
+                    );
+
+                    warn!(
+                        "WebSocket connection failed (attempt {}/{}), retrying in {}ms: {}",
+                        retry_count + 1,
+                        self.reconnect_config.max_retries,
+                        delay,
+                        e
+                    );
+
+                    tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
+                    retry_count += 1;
+                }
+            }
+        }
     }
 
     /// Convert i16 PCM to WAV bytes
@@ -130,8 +200,8 @@ impl SttProvider for ElevenLabsProvider {
     async fn start_session(&mut self) -> Result<()> {
         info!("Starting ElevenLabs STT session");
 
-        // Build WebSocket URL
-        let ws_url = self.build_ws_url()?;
+        // Enable reconnection
+        *self.should_reconnect.lock().await = true;
 
         // Create channel for audio chunks
         let (audio_tx, mut audio_rx) = mpsc::channel::<AudioChunk>(32);
@@ -142,18 +212,8 @@ impl SttProvider for ElevenLabsProvider {
         *self.event_tx.lock().await = Some(event_tx.clone());
         *self.event_rx.lock().await = Some(event_rx);
 
-        // Connect to WebSocket
-        let request = http::Request::builder()
-            .uri(ws_url.as_str())
-            .header("xi-api-key", &self.api_key)
-            .body(())
-            .map_err(|e| LocaltypeError::Stt(format!("Failed to build request: {}", e)))?;
-
-        let (ws_stream, _) = connect_async(request)
-            .await
-            .map_err(|e| LocaltypeError::Stt(format!("WebSocket connection failed: {}", e)))?;
-
-        info!("WebSocket connected to ElevenLabs");
+        // Connect to WebSocket with retry
+        let ws_stream = self.connect_with_retry().await?;
 
         let (mut ws_write, mut ws_read) = ws_stream.split();
 
@@ -305,6 +365,9 @@ impl SttProvider for ElevenLabsProvider {
 
     async fn stop_session(&mut self) -> Result<()> {
         info!("Stopping ElevenLabs STT session");
+
+        // Disable reconnection
+        *self.should_reconnect.lock().await = false;
 
         // Close audio sender channel
         *self.ws_tx.lock().await = None;
