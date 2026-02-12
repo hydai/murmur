@@ -4,7 +4,7 @@ You are a translation assistant. Your task is to translate the given text to the
 
 ## Target Language
 
-{target_language}
+{language}
 
 ## Instructions
 

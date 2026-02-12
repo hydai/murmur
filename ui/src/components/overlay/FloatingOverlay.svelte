@@ -18,6 +18,8 @@
   let errorMessage = $state<string | null>(null);
   let partialText = $state('');
   let committedText = $state('');
+  let isProcessing = $state(false);
+  let processedText = $state('');
 
   let isDragging = $state(false);
   let dragStartX = $state(0);
@@ -30,6 +32,8 @@
   let unlistenTranscriptionPartial: UnlistenFn | null = null;
   let unlistenTranscriptionCommitted: UnlistenFn | null = null;
   let unlistenTranscriptionError: UnlistenFn | null = null;
+  let unlistenProcessingStatus: UnlistenFn | null = null;
+  let unlistenTranscriptionProcessed: UnlistenFn | null = null;
 
   async function handleMouseDown(e: MouseEvent) {
     isDragging = true;
@@ -62,6 +66,8 @@
         errorMessage = null;
         partialText = '';
         committedText = '';
+        processedText = '';
+        isProcessing = false;
         await invoke('start_recording');
       }
     } catch (error) {
@@ -111,6 +117,20 @@
       const payload = event.payload as { message: string };
       errorMessage = payload.message;
     });
+
+    // Listen for processing status events
+    unlistenProcessingStatus = await listen('processing-status', (event) => {
+      const payload = event.payload as { status: string };
+      isProcessing = payload.status === 'processing';
+    });
+
+    // Listen for processed transcription
+    unlistenTranscriptionProcessed = await listen('transcription-processed', (event) => {
+      const payload = event.payload as { text: string; processing_time_ms: number };
+      processedText = payload.text;
+      committedText = payload.text; // Update committed text with processed version
+      isProcessing = false;
+    });
   });
 
   onDestroy(() => {
@@ -120,6 +140,8 @@
     if (unlistenTranscriptionPartial) unlistenTranscriptionPartial();
     if (unlistenTranscriptionCommitted) unlistenTranscriptionCommitted();
     if (unlistenTranscriptionError) unlistenTranscriptionError();
+    if (unlistenProcessingStatus) unlistenProcessingStatus();
+    if (unlistenTranscriptionProcessed) unlistenTranscriptionProcessed();
   });
 </script>
 
@@ -136,9 +158,11 @@
     tabindex="0"
   >
     <div class="status-indicator">
-      <div class="status-dot {isRecording ? (partialText || committedText ? 'transcribing' : 'recording') : (committedText ? 'done' : status.toLowerCase())}"></div>
+      <div class="status-dot {isProcessing ? 'processing' : (isRecording ? (partialText || committedText ? 'transcribing' : 'recording') : (committedText ? 'done' : status.toLowerCase()))}"></div>
       <span class="status-text">
-        {#if isRecording}
+        {#if isProcessing}
+          Processing
+        {:else if isRecording}
           {partialText || committedText ? 'Transcribing' : 'Recording'}
         {:else if committedText}
           Done
@@ -226,6 +250,12 @@
     background: #3b82f6;
     box-shadow: 0 0 8px rgba(59, 130, 246, 0.8);
     animation: pulse 1.2s ease-in-out infinite;
+  }
+
+  .status-dot.processing {
+    background: #8b5cf6;
+    box-shadow: 0 0 8px rgba(139, 92, 246, 0.8);
+    animation: pulse 1.5s ease-in-out infinite;
   }
 
   .status-dot.done {

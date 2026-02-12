@@ -2,8 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use lt_audio::{AudioCapture, AudioLevel};
+use lt_core::llm::{LlmProcessor, ProcessingTask};
 use lt_core::stt::{SttProvider, TranscriptionEvent};
-use lt_core::AppConfig;
+use lt_core::{AppConfig, PersonalDictionary};
+use lt_llm::GeminiProcessor;
 use lt_stt::ElevenLabsProvider;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -12,12 +14,15 @@ use tokio::sync::Mutex;
 use tracing_subscriber;
 
 /// Application state managing audio capture and STT
+#[derive(Clone)]
 struct AppState {
     audio_capture: Arc<Mutex<Option<AudioCapture>>>,
     level_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     stt_provider: Arc<Mutex<Option<ElevenLabsProvider>>>,
     audio_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     transcription_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    llm_processor: Arc<GeminiProcessor>,
+    dictionary: Arc<Mutex<PersonalDictionary>>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -116,23 +121,90 @@ async fn start_recording(
     let mut event_rx = stt.subscribe_events().await;
     let app_clone = app.clone();
 
+    let app_for_llm = app.clone();
+
     let transcription_task = tokio::spawn(async move {
+        let mut full_transcription = String::new();
+
         while let Some(event) = event_rx.recv().await {
             match &event {
                 TranscriptionEvent::Partial { text, .. } => {
                     tracing::debug!("Partial transcript: {}", text);
-                    let _ = app_clone.emit("transcription-partial", event);
+                    let _ = app_clone.emit("transcription-partial", event.clone());
                 }
                 TranscriptionEvent::Committed { text, .. } => {
                     tracing::info!("Committed transcript: {}", text);
-                    let _ = app_clone.emit("transcription-committed", event);
+                    let _ = app_clone.emit("transcription-committed", event.clone());
+
+                    // Accumulate transcription
+                    if !full_transcription.is_empty() {
+                        full_transcription.push(' ');
+                    }
+                    full_transcription.push_str(text);
                 }
                 TranscriptionEvent::Error { message } => {
                     tracing::error!("STT error: {}", message);
-                    let _ = app_clone.emit("transcription-error", event);
+                    let _ = app_clone.emit("transcription-error", event.clone());
                 }
             }
         }
+
+        // When transcription finishes (channel closed), trigger LLM processing
+        if !full_transcription.is_empty() {
+            tracing::info!("Transcription complete, starting LLM post-processing");
+
+            let state_for_llm = app_for_llm.state::<AppState>();
+
+            let _ = app_for_llm.emit("processing-status", ProcessingStatusEvent {
+                status: "processing".to_string(),
+            });
+
+            // Get dictionary terms
+            let dictionary_terms = {
+                let dict = state_for_llm.dictionary.lock().await;
+                dict.get_terms()
+            };
+
+            let task = ProcessingTask::PostProcess {
+                text: full_transcription.clone(),
+                dictionary_terms,
+            };
+
+            match state_for_llm.llm_processor.process(task).await {
+                Ok(output) => {
+                    tracing::info!(
+                        "LLM processing successful (took {}ms)",
+                        output.processing_time_ms
+                    );
+
+                    // Emit processed text as a final committed transcription
+                    let _ = app_for_llm.emit(
+                        "transcription-processed",
+                        serde_json::json!({
+                            "text": output.text,
+                            "processing_time_ms": output.processing_time_ms
+                        })
+                    );
+
+                    let _ = app_for_llm.emit("processing-status", ProcessingStatusEvent {
+                        status: "done".to_string(),
+                    });
+                }
+                Err(e) => {
+                    tracing::error!("LLM processing failed: {}", e);
+
+                    // Emit error but keep raw transcription
+                    let _ = app_for_llm.emit("audio-error", ErrorEvent {
+                        message: format!("LLM processing failed: {}. Showing raw transcription.", e),
+                    });
+
+                    let _ = app_for_llm.emit("processing-status", ProcessingStatusEvent {
+                        status: "error".to_string(),
+                    });
+                }
+            }
+        }
+
         tracing::debug!("Transcription event task finished");
     });
 
@@ -271,11 +343,106 @@ async fn is_recording(state: tauri::State<'_, AppState>) -> Result<bool, String>
     }
 }
 
+#[derive(Clone, serde::Serialize)]
+struct ProcessingStatusEvent {
+    status: String,
+}
+
+#[tauri::command]
+async fn process_text(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    text: String,
+) -> Result<String, String> {
+    tracing::info!("Starting LLM post-processing (text length: {} chars)", text.len());
+
+    // Emit processing status
+    let _ = app.emit("processing-status", ProcessingStatusEvent {
+        status: "processing".to_string(),
+    });
+
+    // Get dictionary terms
+    let dictionary_terms = {
+        let dict = state.dictionary.lock().await;
+        dict.get_terms()
+    };
+
+    // Create processing task
+    let task = ProcessingTask::PostProcess {
+        text: text.clone(),
+        dictionary_terms,
+    };
+
+    // Process with LLM
+    match state.llm_processor.process(task).await {
+        Ok(output) => {
+            tracing::info!(
+                "LLM processing successful (took {}ms, output length: {} chars)",
+                output.processing_time_ms,
+                output.text.len()
+            );
+
+            // Emit done status
+            let _ = app.emit("processing-status", ProcessingStatusEvent {
+                status: "done".to_string(),
+            });
+
+            Ok(output.text)
+        }
+        Err(e) => {
+            tracing::error!("LLM processing failed: {}", e);
+
+            // Emit error and return raw text as fallback
+            let _ = app.emit("audio-error", ErrorEvent {
+                message: format!("LLM processing failed: {}. Showing raw transcription.", e),
+            });
+
+            let _ = app.emit("processing-status", ProcessingStatusEvent {
+                status: "error".to_string(),
+            });
+
+            // Return raw text as fallback
+            Ok(text)
+        }
+    }
+}
+
 fn main() {
     // Initialize tracing
     tracing_subscriber::fmt()
-        .with_env_filter("lt_tauri=debug,lt_audio=debug,info")
+        .with_env_filter("lt_tauri=debug,lt_audio=debug,lt_stt=debug,lt_llm=debug,info")
         .init();
+
+    // Initialize LLM processor
+    let llm_processor = Arc::new(GeminiProcessor::new());
+
+    // Load dictionary (or create empty if not exists)
+    let dictionary = {
+        let dict_path = AppConfig::default_config_dir()
+            .ok()
+            .map(|dir| dir.join("dictionary.json"));
+
+        if let Some(path) = dict_path.as_ref() {
+            if path.exists() {
+                match PersonalDictionary::load_from_file(path) {
+                    Ok(dict) => {
+                        tracing::info!("Loaded personal dictionary with {} entries", dict.entries.len());
+                        dict
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load dictionary: {}, using empty dictionary", e);
+                        PersonalDictionary::new()
+                    }
+                }
+            } else {
+                tracing::info!("No dictionary file found, using empty dictionary");
+                PersonalDictionary::new()
+            }
+        } else {
+            tracing::warn!("Could not determine dictionary path, using empty dictionary");
+            PersonalDictionary::new()
+        }
+    };
 
     // Create app state
     let app_state = AppState {
@@ -284,6 +451,8 @@ fn main() {
         stt_provider: Arc::new(Mutex::new(None)),
         audio_task: Arc::new(Mutex::new(None)),
         transcription_task: Arc::new(Mutex::new(None)),
+        llm_processor,
+        dictionary: Arc::new(Mutex::new(dictionary)),
     };
 
     tauri::Builder::default()
@@ -295,9 +464,28 @@ fn main() {
             get_status,
             start_recording,
             stop_recording,
-            is_recording
+            is_recording,
+            process_text
         ])
         .setup(|app| {
+            // Perform LLM health check
+            let app_handle_clone = app.handle().clone();
+            tokio::spawn(async move {
+                let state = app_handle_clone.state::<AppState>();
+                match state.llm_processor.health_check().await {
+                    Ok(true) => {
+                        tracing::info!("✓ Gemini CLI is available and ready");
+                    }
+                    Ok(false) => {
+                        tracing::warn!("⚠ Gemini CLI is not installed. LLM post-processing will not be available.");
+                        tracing::warn!("  Install gemini-cli: https://github.com/google/generative-ai-cli");
+                    }
+                    Err(e) => {
+                        tracing::error!("✗ Failed to check Gemini CLI health: {}", e);
+                    }
+                }
+            });
+
             // Try to register global shortcut for recording toggle
             let app_handle = app.handle().clone();
 

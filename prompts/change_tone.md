@@ -4,7 +4,7 @@ You are a text tone adjustment assistant. Your task is to rewrite the given text
 
 ## Target Tone
 
-{target_tone}
+{tone}
 
 ## Instructions
 
