@@ -1,11 +1,12 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use lt_audio::{AudioCapture, AudioLevel};
-use lt_core::llm::{LlmProcessor, ProcessingTask};
-use lt_core::stt::{SttProvider, TranscriptionEvent};
+use lt_core::llm::LlmProcessor;
+use lt_core::output::OutputMode;
 use lt_core::{AppConfig, PersonalDictionary};
 use lt_llm::GeminiProcessor;
+use lt_output::CombinedOutput;
+use lt_pipeline::{PipelineEvent, PipelineOrchestrator, PipelineState};
 use lt_stt::ElevenLabsProvider;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -13,16 +14,17 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use tokio::sync::Mutex;
 use tracing_subscriber;
 
-/// Application state managing audio capture and STT
+/// Application state using unified pipeline
 #[derive(Clone)]
 struct AppState {
-    audio_capture: Arc<Mutex<Option<AudioCapture>>>,
-    level_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    stt_provider: Arc<Mutex<Option<ElevenLabsProvider>>>,
-    audio_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    transcription_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    llm_processor: Arc<GeminiProcessor>,
-    dictionary: Arc<Mutex<PersonalDictionary>>,
+    pipeline: Arc<Mutex<PipelineOrchestrator>>,
+    event_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct PipelineStateEvent {
+    state: String,
+    timestamp_ms: u64,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -32,24 +34,22 @@ struct AudioLevelEvent {
     timestamp_ms: u64,
 }
 
-impl From<AudioLevel> for AudioLevelEvent {
-    fn from(level: AudioLevel) -> Self {
-        Self {
-            rms: level.rms,
-            voice_active: level.voice_active,
-            timestamp_ms: level.timestamp_ms,
-        }
-    }
+#[derive(Clone, serde::Serialize)]
+struct TranscriptionEvent {
+    text: String,
+    timestamp_ms: u64,
 }
 
 #[derive(Clone, serde::Serialize)]
-struct RecordingStateEvent {
-    is_recording: bool,
+struct FinalResultEvent {
+    text: String,
+    processing_time_ms: u64,
 }
 
 #[derive(Clone, serde::Serialize)]
 struct ErrorEvent {
     message: String,
+    recoverable: bool,
 }
 
 #[tauri::command]
@@ -72,19 +72,18 @@ fn get_status() -> String {
 }
 
 #[tauri::command]
-async fn start_recording(
+async fn start_pipeline(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    tracing::info!("Starting recording");
+    tracing::info!("Starting pipeline");
 
-    let mut capture_guard = state.audio_capture.lock().await;
+    let pipeline = state.pipeline.lock().await;
 
-    // Check if already recording
-    if let Some(capture) = &*capture_guard {
-        if capture.is_running() {
-            return Err("Recording already in progress".to_string());
-        }
+    // Check if pipeline is already running
+    let current_state = pipeline.get_state().await;
+    if current_state != PipelineState::Idle {
+        return Err(format!("Pipeline is already running (state: {:?})", current_state));
     }
 
     // Load config and get API key
@@ -105,312 +104,150 @@ async fn start_recording(
         })?
         .clone();
 
-    // Create and start STT provider
-    let mut stt = ElevenLabsProvider::new(api_key);
+    // Create STT provider
+    let stt = ElevenLabsProvider::new(api_key);
 
-    if let Err(e) = stt.start_session().await {
-        let error_msg = format!("Failed to start STT session: {}", e);
-        tracing::error!("{}", error_msg);
-        let _ = app.emit("audio-error", ErrorEvent {
-            message: error_msg.clone(),
-        });
-        return Err(error_msg);
-    }
-
-    // Subscribe to transcription events
-    let mut event_rx = stt.subscribe_events().await;
+    // Subscribe to pipeline events before starting
+    let mut event_rx = pipeline.subscribe_events();
     let app_clone = app.clone();
 
-    let app_for_llm = app.clone();
+    // Spawn task to forward pipeline events to frontend
+    let event_task = tokio::spawn(async move {
+        while let Ok(event) = event_rx.recv().await {
+            match event {
+                PipelineEvent::StateChanged { state, timestamp_ms } => {
+                    let state_str = match state {
+                        PipelineState::Idle => "idle",
+                        PipelineState::Recording => "recording",
+                        PipelineState::Transcribing => "transcribing",
+                        PipelineState::Processing => "processing",
+                        PipelineState::Done => "done",
+                        PipelineState::Error => "error",
+                    };
 
-    let transcription_task = tokio::spawn(async move {
-        let mut full_transcription = String::new();
+                    let _ = app_clone.emit("pipeline-state", PipelineStateEvent {
+                        state: state_str.to_string(),
+                        timestamp_ms,
+                    });
 
-        while let Some(event) = event_rx.recv().await {
-            match &event {
-                TranscriptionEvent::Partial { text, .. } => {
-                    tracing::debug!("Partial transcript: {}", text);
-                    let _ = app_clone.emit("transcription-partial", event.clone());
+                    // Also emit recording-state for compatibility
+                    let is_recording = matches!(state, PipelineState::Recording | PipelineState::Transcribing);
+                    let _ = app_clone.emit("recording-state", serde_json::json!({
+                        "is_recording": is_recording
+                    }));
                 }
-                TranscriptionEvent::Committed { text, .. } => {
-                    tracing::info!("Committed transcript: {}", text);
-                    let _ = app_clone.emit("transcription-committed", event.clone());
-
-                    // Accumulate transcription
-                    if !full_transcription.is_empty() {
-                        full_transcription.push(' ');
-                    }
-                    full_transcription.push_str(text);
+                PipelineEvent::AudioLevel { rms, voice_active, timestamp_ms } => {
+                    let _ = app_clone.emit("audio-level", AudioLevelEvent {
+                        rms,
+                        voice_active,
+                        timestamp_ms,
+                    });
                 }
-                TranscriptionEvent::Error { message } => {
-                    tracing::error!("STT error: {}", message);
-                    let _ = app_clone.emit("transcription-error", event.clone());
+                PipelineEvent::PartialTranscription { text, timestamp_ms } => {
+                    let _ = app_clone.emit("transcription-partial", TranscriptionEvent {
+                        text,
+                        timestamp_ms,
+                    });
+                }
+                PipelineEvent::CommittedTranscription { text, timestamp_ms } => {
+                    let _ = app_clone.emit("transcription-committed", TranscriptionEvent {
+                        text,
+                        timestamp_ms,
+                    });
+                }
+                PipelineEvent::FinalResult { text, processing_time_ms } => {
+                    tracing::info!("Pipeline completed: {} chars in {}ms", text.len(), processing_time_ms);
+
+                    let _ = app_clone.emit("pipeline-result", FinalResultEvent {
+                        text: text.clone(),
+                        processing_time_ms,
+                    });
+
+                    // Emit as transcription-processed for compatibility
+                    let _ = app_clone.emit("transcription-processed", serde_json::json!({
+                        "text": text,
+                        "processing_time_ms": processing_time_ms
+                    }));
+                }
+                PipelineEvent::Error { message, recoverable } => {
+                    tracing::error!("Pipeline error: {} (recoverable: {})", message, recoverable);
+
+                    let _ = app_clone.emit("pipeline-error", ErrorEvent {
+                        message: message.clone(),
+                        recoverable,
+                    });
+
+                    // Emit as audio-error for compatibility
+                    let _ = app_clone.emit("audio-error", serde_json::json!({
+                        "message": message
+                    }));
                 }
             }
         }
-
-        // When transcription finishes (channel closed), trigger LLM processing
-        if !full_transcription.is_empty() {
-            tracing::info!("Transcription complete, starting LLM post-processing");
-
-            let state_for_llm = app_for_llm.state::<AppState>();
-
-            let _ = app_for_llm.emit("processing-status", ProcessingStatusEvent {
-                status: "processing".to_string(),
-            });
-
-            // Get dictionary terms
-            let dictionary_terms = {
-                let dict = state_for_llm.dictionary.lock().await;
-                dict.get_terms()
-            };
-
-            let task = ProcessingTask::PostProcess {
-                text: full_transcription.clone(),
-                dictionary_terms,
-            };
-
-            match state_for_llm.llm_processor.process(task).await {
-                Ok(output) => {
-                    tracing::info!(
-                        "LLM processing successful (took {}ms)",
-                        output.processing_time_ms
-                    );
-
-                    // Emit processed text as a final committed transcription
-                    let _ = app_for_llm.emit(
-                        "transcription-processed",
-                        serde_json::json!({
-                            "text": output.text,
-                            "processing_time_ms": output.processing_time_ms
-                        })
-                    );
-
-                    let _ = app_for_llm.emit("processing-status", ProcessingStatusEvent {
-                        status: "done".to_string(),
-                    });
-                }
-                Err(e) => {
-                    tracing::error!("LLM processing failed: {}", e);
-
-                    // Emit error but keep raw transcription
-                    let _ = app_for_llm.emit("audio-error", ErrorEvent {
-                        message: format!("LLM processing failed: {}. Showing raw transcription.", e),
-                    });
-
-                    let _ = app_for_llm.emit("processing-status", ProcessingStatusEvent {
-                        status: "error".to_string(),
-                    });
-                }
-            }
-        }
-
-        tracing::debug!("Transcription event task finished");
+        tracing::debug!("Pipeline event forwarding task finished");
     });
 
-    *state.transcription_task.lock().await = Some(transcription_task);
+    *state.event_task.lock().await = Some(event_task);
 
-    // Create new capture
-    let mut capture = AudioCapture::new();
+    // Start the pipeline
+    pipeline.start(Box::new(stt)).await
+        .map_err(|e| {
+            tracing::error!("Failed to start pipeline: {}", e);
+            format!("Failed to start pipeline: {}", e)
+        })?;
 
-    // Start capture
-    if let Err(e) = capture.start() {
-        let error_msg = match e {
-            lt_audio::AudioError::NoInputDevice => {
-                "No microphone found. Please connect a microphone and try again.".to_string()
-            }
-            lt_audio::AudioError::PermissionDenied => {
-                "Microphone permission denied. Please grant microphone access in System Preferences.".to_string()
-            }
-            _ => format!("Failed to start audio capture: {}", e),
-        };
-
-        tracing::error!("{}", error_msg);
-
-        // Emit error event
-        let _ = app.emit("audio-error", ErrorEvent {
-            message: error_msg.clone(),
-        });
-
-        return Err(error_msg);
-    }
-
-    // Subscribe to audio levels for waveform
-    if let Some(mut level_rx) = capture.subscribe_levels() {
-        let app_clone = app.clone();
-
-        // Spawn task to emit level events
-        let task = tokio::spawn(async move {
-            while let Some(level) = level_rx.recv().await {
-                let event: AudioLevelEvent = level.into();
-                let _ = app_clone.emit("audio-level", event);
-            }
-            tracing::debug!("Audio level task finished");
-        });
-
-        *state.level_task.lock().await = Some(task);
-    }
-
-    // Subscribe to audio chunks and forward to STT
-    // Move stt into the audio forwarding task to avoid lock issues
-    if let Some(mut chunk_rx) = capture.subscribe_chunks() {
-        let audio_task = tokio::spawn(async move {
-            while let Some(chunk) = chunk_rx.recv().await {
-                if let Err(e) = stt.send_audio(chunk).await {
-                    tracing::error!("Failed to send audio to STT: {}", e);
-                    break;
-                }
-            }
-            tracing::debug!("Audio forwarding task finished");
-        });
-
-        *state.audio_task.lock().await = Some(audio_task);
-    }
-
-    // Store the STT provider reference (just to keep track, but it's moved into the task)
-    *state.stt_provider.lock().await = None;
-
-    // Store capture instance
-    *capture_guard = Some(capture);
-
-    // Emit recording state event
-    let _ = app.emit("recording-state", RecordingStateEvent {
-        is_recording: true,
-    });
-
-    tracing::info!("Recording started successfully");
+    tracing::info!("Pipeline started successfully");
     Ok(())
 }
 
 #[tauri::command]
-async fn stop_recording(
-    app: tauri::AppHandle,
+async fn stop_pipeline(
+    _app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    tracing::info!("Stopping recording");
+    tracing::info!("Stopping pipeline");
 
-    let mut capture_guard = state.audio_capture.lock().await;
+    let pipeline = state.pipeline.lock().await;
 
-    if let Some(mut capture) = capture_guard.take() {
-        if let Err(e) = capture.stop() {
-            tracing::error!("Error stopping capture: {}", e);
-            return Err(format!("Failed to stop recording: {}", e));
-        }
-    } else {
-        return Err("No recording in progress".to_string());
-    }
+    pipeline.stop().await
+        .map_err(|e| {
+            tracing::error!("Failed to stop pipeline: {}", e);
+            format!("Failed to stop pipeline: {}", e)
+        })?;
 
-    // Cancel level task
-    {
-        let mut task_guard = state.level_task.lock().await;
-        if let Some(task) = task_guard.take() {
-            task.abort();
-        }
-    }
-
-    // Cancel audio forwarding task (this will also stop STT since it owns it)
-    {
-        let mut audio_task_guard = state.audio_task.lock().await;
-        if let Some(task) = audio_task_guard.take() {
-            task.abort();
-        }
-    }
-
-    // Cancel transcription task
-    {
-        let mut transcription_task_guard = state.transcription_task.lock().await;
-        if let Some(task) = transcription_task_guard.take() {
-            task.abort();
-        }
-    }
-
-    // Emit recording state event
-    let _ = app.emit("recording-state", RecordingStateEvent {
-        is_recording: false,
-    });
-
-    tracing::info!("Recording stopped successfully");
+    tracing::info!("Pipeline stopped successfully");
     Ok(())
 }
 
 #[tauri::command]
 async fn is_recording(state: tauri::State<'_, AppState>) -> Result<bool, String> {
-    let capture_guard = state.audio_capture.lock().await;
-    if let Some(capture) = &*capture_guard {
-        Ok(capture.is_running())
-    } else {
-        Ok(false)
-    }
-}
+    let pipeline = state.pipeline.lock().await;
+    let current_state = pipeline.get_state().await;
 
-#[derive(Clone, serde::Serialize)]
-struct ProcessingStatusEvent {
-    status: String,
+    Ok(matches!(current_state, PipelineState::Recording | PipelineState::Transcribing))
 }
 
 #[tauri::command]
-async fn process_text(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    text: String,
-) -> Result<String, String> {
-    tracing::info!("Starting LLM post-processing (text length: {} chars)", text.len());
+async fn get_pipeline_state(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let pipeline = state.pipeline.lock().await;
+    let current_state = pipeline.get_state().await;
 
-    // Emit processing status
-    let _ = app.emit("processing-status", ProcessingStatusEvent {
-        status: "processing".to_string(),
-    });
-
-    // Get dictionary terms
-    let dictionary_terms = {
-        let dict = state.dictionary.lock().await;
-        dict.get_terms()
+    let state_str = match current_state {
+        PipelineState::Idle => "idle",
+        PipelineState::Recording => "recording",
+        PipelineState::Transcribing => "transcribing",
+        PipelineState::Processing => "processing",
+        PipelineState::Done => "done",
+        PipelineState::Error => "error",
     };
 
-    // Create processing task
-    let task = ProcessingTask::PostProcess {
-        text: text.clone(),
-        dictionary_terms,
-    };
-
-    // Process with LLM
-    match state.llm_processor.process(task).await {
-        Ok(output) => {
-            tracing::info!(
-                "LLM processing successful (took {}ms, output length: {} chars)",
-                output.processing_time_ms,
-                output.text.len()
-            );
-
-            // Emit done status
-            let _ = app.emit("processing-status", ProcessingStatusEvent {
-                status: "done".to_string(),
-            });
-
-            Ok(output.text)
-        }
-        Err(e) => {
-            tracing::error!("LLM processing failed: {}", e);
-
-            // Emit error and return raw text as fallback
-            let _ = app.emit("audio-error", ErrorEvent {
-                message: format!("LLM processing failed: {}. Showing raw transcription.", e),
-            });
-
-            let _ = app.emit("processing-status", ProcessingStatusEvent {
-                status: "error".to_string(),
-            });
-
-            // Return raw text as fallback
-            Ok(text)
-        }
-    }
+    Ok(state_str.to_string())
 }
 
 fn main() {
     // Initialize tracing
     tracing_subscriber::fmt()
-        .with_env_filter("lt_tauri=debug,lt_audio=debug,lt_stt=debug,lt_llm=debug,info")
+        .with_env_filter("lt_tauri=debug,lt_audio=debug,lt_stt=debug,lt_llm=debug,lt_pipeline=debug,lt_output=debug,info")
         .init();
 
     // Initialize LLM processor
@@ -444,15 +281,23 @@ fn main() {
         }
     };
 
+    // Initialize output sink (clipboard by default)
+    let output_sink = Arc::new(
+        CombinedOutput::new(OutputMode::Clipboard)
+            .expect("Failed to initialize output sink")
+    );
+
+    // Create pipeline orchestrator
+    let pipeline = PipelineOrchestrator::new(
+        llm_processor.clone() as Arc<dyn lt_core::llm::LlmProcessor>,
+        output_sink,
+        Arc::new(Mutex::new(dictionary)),
+    );
+
     // Create app state
     let app_state = AppState {
-        audio_capture: Arc::new(Mutex::new(None)),
-        level_task: Arc::new(Mutex::new(None)),
-        stt_provider: Arc::new(Mutex::new(None)),
-        audio_task: Arc::new(Mutex::new(None)),
-        transcription_task: Arc::new(Mutex::new(None)),
-        llm_processor,
-        dictionary: Arc::new(Mutex::new(dictionary)),
+        pipeline: Arc::new(Mutex::new(pipeline)),
+        event_task: Arc::new(Mutex::new(None)),
     };
 
     tauri::Builder::default()
@@ -462,17 +307,16 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             toggle_overlay,
             get_status,
-            start_recording,
-            stop_recording,
+            start_pipeline,
+            stop_pipeline,
             is_recording,
-            process_text
+            get_pipeline_state
         ])
         .setup(|app| {
             // Perform LLM health check
-            let app_handle_clone = app.handle().clone();
             tokio::spawn(async move {
-                let state = app_handle_clone.state::<AppState>();
-                match state.llm_processor.health_check().await {
+                let llm_processor = GeminiProcessor::new();
+                match llm_processor.health_check().await {
                     Ok(true) => {
                         tracing::info!("✓ Gemini CLI is available and ready");
                     }
@@ -486,34 +330,31 @@ fn main() {
                 }
             });
 
-            // Try to register global shortcut for recording toggle
+            // Try to register global shortcut for pipeline toggle
             let app_handle = app.handle().clone();
 
             // Register the shortcut handler first
             if let Err(e) =
                 app.global_shortcut()
                     .on_shortcut("Cmd+Shift+Space", move |_app, _shortcut, _event| {
-                        // Toggle recording using the cloned handle
+                        // Toggle pipeline using the cloned handle
                         let handle = app_handle.clone();
 
                         tokio::spawn(async move {
                             let state = handle.state::<AppState>();
 
                             let is_currently_recording = {
-                                let capture_guard = state.audio_capture.lock().await;
-                                if let Some(capture) = &*capture_guard {
-                                    capture.is_running()
-                                } else {
-                                    false
-                                }
+                                let pipeline = state.pipeline.lock().await;
+                                let current_state = pipeline.get_state().await;
+                                matches!(current_state, PipelineState::Recording | PipelineState::Transcribing)
                             };
 
                             if is_currently_recording {
-                                // Stop recording
-                                let _ = stop_recording(handle.clone(), state).await;
+                                // Stop pipeline
+                                let _ = stop_pipeline(handle.clone(), state).await;
                             } else {
-                                // Start recording
-                                let _ = start_recording(handle.clone(), state).await;
+                                // Start pipeline
+                                let _ = start_pipeline(handle.clone(), state).await;
                             }
                         });
                     })
@@ -530,7 +371,7 @@ fn main() {
                 ),
             }
 
-            tracing::info!("Localtype started successfully");
+            tracing::info!("Localtype started successfully with unified pipeline");
             Ok(())
         })
         .run(tauri::generate_context!())

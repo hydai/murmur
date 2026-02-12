@@ -20,6 +20,8 @@
   let committedText = $state('');
   let isProcessing = $state(false);
   let processedText = $state('');
+  let pipelineState = $state('idle');
+  let showCopiedIndicator = $state(false);
 
   let isDragging = $state(false);
   let dragStartX = $state(0);
@@ -34,6 +36,9 @@
   let unlistenTranscriptionError: UnlistenFn | null = null;
   let unlistenProcessingStatus: UnlistenFn | null = null;
   let unlistenTranscriptionProcessed: UnlistenFn | null = null;
+  let unlistenPipelineState: UnlistenFn | null = null;
+  let unlistenPipelineResult: UnlistenFn | null = null;
+  let unlistenPipelineError: UnlistenFn | null = null;
 
   async function handleMouseDown(e: MouseEvent) {
     isDragging = true;
@@ -61,14 +66,15 @@
   async function toggleRecording() {
     try {
       if (isRecording) {
-        await invoke('stop_recording');
+        await invoke('stop_pipeline');
       } else {
         errorMessage = null;
         partialText = '';
         committedText = '';
         processedText = '';
         isProcessing = false;
-        await invoke('start_recording');
+        showCopiedIndicator = false;
+        await invoke('start_pipeline');
       }
     } catch (error) {
       console.error('Failed to toggle recording:', error);
@@ -131,6 +137,43 @@
       committedText = payload.text; // Update committed text with processed version
       isProcessing = false;
     });
+
+    // Listen for pipeline state changes
+    unlistenPipelineState = await listen('pipeline-state', (event) => {
+      const payload = event.payload as { state: string; timestamp_ms: number };
+      pipelineState = payload.state;
+
+      // Update processing flag based on pipeline state
+      isProcessing = payload.state === 'processing';
+
+      console.log('Pipeline state:', payload.state);
+    });
+
+    // Listen for pipeline result (final text with clipboard copy)
+    unlistenPipelineResult = await listen('pipeline-result', (event) => {
+      const payload = event.payload as { text: string; processing_time_ms: number };
+      processedText = payload.text;
+      committedText = payload.text;
+
+      // Show "Copied!" indicator
+      showCopiedIndicator = true;
+
+      // Hide after 2 seconds
+      setTimeout(() => {
+        showCopiedIndicator = false;
+      }, 2000);
+
+      console.log('Pipeline completed:', payload.text.length, 'chars in', payload.processing_time_ms, 'ms');
+    });
+
+    // Listen for pipeline errors
+    unlistenPipelineError = await listen('pipeline-error', (event) => {
+      const payload = event.payload as { message: string; recoverable: boolean };
+      errorMessage = payload.message;
+      if (!payload.recoverable) {
+        isRecording = false;
+      }
+    });
   });
 
   onDestroy(() => {
@@ -142,6 +185,25 @@
     if (unlistenTranscriptionError) unlistenTranscriptionError();
     if (unlistenProcessingStatus) unlistenProcessingStatus();
     if (unlistenTranscriptionProcessed) unlistenTranscriptionProcessed();
+    if (unlistenPipelineState) unlistenPipelineState();
+    if (unlistenPipelineResult) unlistenPipelineResult();
+    if (unlistenPipelineError) unlistenPipelineError();
+  });
+
+  // Compute display state based on pipeline state
+  $effect(() => {
+    let displayState = pipelineState;
+
+    // Override with more specific states
+    if (isProcessing) {
+      displayState = 'processing';
+    } else if (isRecording && (partialText || committedText)) {
+      displayState = 'transcribing';
+    } else if (isRecording) {
+      displayState = 'recording';
+    } else if (committedText && !showCopiedIndicator) {
+      displayState = 'done';
+    }
   });
 </script>
 
@@ -158,7 +220,7 @@
     tabindex="0"
   >
     <div class="status-indicator">
-      <div class="status-dot {isProcessing ? 'processing' : (isRecording ? (partialText || committedText ? 'transcribing' : 'recording') : (committedText ? 'done' : status.toLowerCase()))}"></div>
+      <div class="status-dot {isProcessing ? 'processing' : (isRecording ? (partialText || committedText ? 'transcribing' : 'recording') : (committedText ? 'done' : pipelineState))}"></div>
       <span class="status-text">
         {#if isProcessing}
           Processing
@@ -167,12 +229,18 @@
         {:else if committedText}
           Done
         {:else}
-          {status}
+          {pipelineState === 'idle' ? 'Ready' : pipelineState.charAt(0).toUpperCase() + pipelineState.slice(1)}
         {/if}
       </span>
     </div>
 
     <div class="app-title">Localtype</div>
+
+    {#if showCopiedIndicator}
+      <div class="copied-indicator">
+        ✓ Copied to clipboard!
+      </div>
+    {/if}
 
     {#if errorMessage}
       <div class="error-message">{errorMessage}</div>
@@ -230,6 +298,7 @@
     animation: pulse 2s ease-in-out infinite;
   }
 
+  .status-dot.idle,
   .status-dot.ready {
     background: #4ade80;
     box-shadow: 0 0 8px rgba(74, 222, 128, 0.6);
@@ -288,6 +357,37 @@
     font-weight: 600;
     color: rgba(255, 255, 255, 0.95);
     margin-bottom: 16px;
+  }
+
+  .copied-indicator {
+    background: rgba(16, 185, 129, 0.2);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 16px;
+    color: rgba(16, 185, 129, 0.9);
+    font-size: 14px;
+    font-weight: 500;
+    animation: fadeInOut 2s ease-in-out;
+  }
+
+  @keyframes fadeInOut {
+    0% {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    15% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    85% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
   }
 
   .hint-text {
