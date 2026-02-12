@@ -1,12 +1,12 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use lt_core::config::SttProviderType;
+use lt_core::config::{SttProviderType, LlmProcessorType};
 use lt_core::llm::LlmProcessor;
 use lt_core::output::OutputMode;
 use lt_core::stt::SttProvider;
 use lt_core::{AppConfig, PersonalDictionary};
-use lt_llm::GeminiProcessor;
+use lt_llm::{GeminiProcessor, CopilotProcessor};
 use lt_output::CombinedOutput;
 use lt_pipeline::{PipelineEvent, PipelineOrchestrator, PipelineState};
 use lt_stt::{ElevenLabsProvider, GroqProvider, OpenAIProvider};
@@ -175,6 +175,63 @@ async fn get_stt_providers() -> Result<Vec<SttProviderInfo>, String> {
     Ok(providers)
 }
 
+#[derive(Clone, serde::Serialize)]
+struct LlmProcessorInfo {
+    name: String,
+    id: String,
+    available: bool,
+}
+
+#[tauri::command]
+async fn get_llm_processors() -> Result<Vec<LlmProcessorInfo>, String> {
+    // Check health for each processor
+    let gemini = GeminiProcessor::new();
+    let copilot = CopilotProcessor::new();
+
+    let gemini_available = gemini.health_check().await.unwrap_or(false);
+    let copilot_available = copilot.health_check().await.unwrap_or(false);
+
+    let processors = vec![
+        LlmProcessorInfo {
+            name: "Gemini CLI".to_string(),
+            id: "gemini".to_string(),
+            available: gemini_available,
+        },
+        LlmProcessorInfo {
+            name: "Copilot CLI".to_string(),
+            id: "copilot".to_string(),
+            available: copilot_available,
+        },
+    ];
+
+    Ok(processors)
+}
+
+#[tauri::command]
+async fn set_llm_processor(processor: String) -> Result<(), String> {
+    let config_path = AppConfig::default_config_file()
+        .map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    let mut config = if config_path.exists() {
+        AppConfig::load_from_file(&config_path)
+            .map_err(|e| format!("Failed to load config: {}", e))?
+    } else {
+        AppConfig::default()
+    };
+
+    // Parse processor string to LlmProcessorType
+    let processor_type = match processor.to_lowercase().as_str() {
+        "gemini" => LlmProcessorType::Gemini,
+        "copilot" => LlmProcessorType::Copilot,
+        _ => return Err(format!("Unknown LLM processor: {}", processor)),
+    };
+
+    config.llm_processor = processor_type;
+
+    config.save_to_file(&config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))
+}
+
 #[tauri::command]
 async fn start_pipeline(
     app: tauri::AppHandle,
@@ -278,6 +335,12 @@ async fn start_pipeline(
                         timestamp_ms,
                     });
                 }
+                PipelineEvent::CommandDetected { command_name, timestamp_ms } => {
+                    let _ = app_clone.emit("command-detected", serde_json::json!({
+                        "command_name": command_name,
+                        "timestamp_ms": timestamp_ms
+                    }));
+                }
                 PipelineEvent::FinalResult { text, processing_time_ms } => {
                     tracing::info!("Pipeline completed: {} chars in {}ms", text.len(), processing_time_ms);
 
@@ -373,8 +436,29 @@ fn main() {
         .with_env_filter("lt_tauri=debug,lt_audio=debug,lt_stt=debug,lt_llm=debug,lt_pipeline=debug,lt_output=debug,info")
         .init();
 
-    // Initialize LLM processor
-    let llm_processor = Arc::new(GeminiProcessor::new());
+    // Load config to determine LLM processor
+    let config = AppConfig::default_config_file()
+        .ok()
+        .and_then(|path| {
+            if path.exists() {
+                AppConfig::load_from_file(&path).ok()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    // Initialize LLM processor based on config
+    let llm_processor: Arc<dyn LlmProcessor> = match config.llm_processor {
+        LlmProcessorType::Gemini => {
+            tracing::info!("Using Gemini CLI as LLM processor");
+            Arc::new(GeminiProcessor::new())
+        }
+        LlmProcessorType::Copilot => {
+            tracing::info!("Using Copilot CLI as LLM processor");
+            Arc::new(CopilotProcessor::new())
+        }
+    };
 
     // Load dictionary (or create empty if not exists)
     let dictionary = {
@@ -412,7 +496,7 @@ fn main() {
 
     // Create pipeline orchestrator
     let pipeline = PipelineOrchestrator::new(
-        llm_processor.clone() as Arc<dyn lt_core::llm::LlmProcessor>,
+        llm_processor.clone(),
         output_sink,
         Arc::new(Mutex::new(dictionary)),
     );
@@ -438,22 +522,42 @@ fn main() {
             save_config,
             set_stt_provider,
             save_api_key,
-            get_stt_providers
+            get_stt_providers,
+            get_llm_processors,
+            set_llm_processor
         ])
         .setup(|app| {
-            // Perform LLM health check
+            // Perform LLM health checks
             tokio::spawn(async move {
-                let llm_processor = GeminiProcessor::new();
-                match llm_processor.health_check().await {
+                tracing::info!("Checking available LLM processors...");
+
+                // Check Gemini CLI
+                let gemini = GeminiProcessor::new();
+                match gemini.health_check().await {
                     Ok(true) => {
-                        tracing::info!("✓ Gemini CLI is available and ready");
+                        tracing::info!("✓ Gemini CLI is available");
                     }
                     Ok(false) => {
-                        tracing::warn!("⚠ Gemini CLI is not installed. LLM post-processing will not be available.");
-                        tracing::warn!("  Install gemini-cli: https://github.com/google/generative-ai-cli");
+                        tracing::warn!("⚠ Gemini CLI is not installed.");
+                        tracing::warn!("  Install: https://github.com/google/generative-ai-cli");
                     }
                     Err(e) => {
-                        tracing::error!("✗ Failed to check Gemini CLI health: {}", e);
+                        tracing::error!("✗ Failed to check Gemini CLI: {}", e);
+                    }
+                }
+
+                // Check Copilot CLI
+                let copilot = CopilotProcessor::new();
+                match copilot.health_check().await {
+                    Ok(true) => {
+                        tracing::info!("✓ Copilot CLI is available");
+                    }
+                    Ok(false) => {
+                        tracing::warn!("⚠ Copilot CLI is not installed.");
+                        tracing::warn!("  Install: npm install -g @githubnext/github-copilot-cli");
+                    }
+                    Err(e) => {
+                        tracing::error!("✗ Failed to check Copilot CLI: {}", e);
                     }
                 }
             });

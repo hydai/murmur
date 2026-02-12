@@ -24,6 +24,7 @@
   let pipelineState = $state('idle');
   let showCopiedIndicator = $state(false);
   let showSettings = $state(false);
+  let detectedCommand = $state<string | null>(null);
 
   let isDragging = $state(false);
   let dragStartX = $state(0);
@@ -41,6 +42,7 @@
   let unlistenPipelineState: UnlistenFn | null = null;
   let unlistenPipelineResult: UnlistenFn | null = null;
   let unlistenPipelineError: UnlistenFn | null = null;
+  let unlistenCommandDetected: UnlistenFn | null = null;
 
   async function handleMouseDown(e: MouseEvent) {
     isDragging = true;
@@ -76,6 +78,7 @@
         processedText = '';
         isProcessing = false;
         showCopiedIndicator = false;
+        detectedCommand = null;
         await invoke('start_pipeline');
       }
     } catch (error) {
@@ -184,6 +187,13 @@
         isRecording = false;
       }
     });
+
+    // Listen for command detection
+    unlistenCommandDetected = await listen('command-detected', (event) => {
+      const payload = event.payload as { command_name: string | null; timestamp_ms: number };
+      detectedCommand = payload.command_name;
+      console.log('Command detected:', payload.command_name);
+    });
   });
 
   onDestroy(() => {
@@ -198,6 +208,7 @@
     if (unlistenPipelineState) unlistenPipelineState();
     if (unlistenPipelineResult) unlistenPipelineResult();
     if (unlistenPipelineError) unlistenPipelineError();
+    if (unlistenCommandDetected) unlistenCommandDetected();
   });
 
   // Compute display state based on pipeline state
@@ -234,7 +245,19 @@
         <div class="status-dot {isProcessing ? 'processing' : (isRecording ? (partialText || committedText ? 'transcribing' : 'recording') : (committedText ? 'done' : pipelineState))}"></div>
         <span class="status-text">
           {#if isProcessing}
-            Processing
+            {#if detectedCommand === 'shorten'}
+              Shortening...
+            {:else if detectedCommand === 'formalize'}
+              Formalizing...
+            {:else if detectedCommand === 'casualize'}
+              Casualizing...
+            {:else if detectedCommand === 'reply'}
+              Generating reply...
+            {:else if detectedCommand && detectedCommand.startsWith('translate to')}
+              Translating...
+            {:else}
+              Processing...
+            {/if}
           {:else if isRecording}
             {partialText || committedText ? 'Transcribing' : 'Recording'}
           {:else if committedText}

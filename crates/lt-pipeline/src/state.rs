@@ -49,6 +49,11 @@ pub enum PipelineEvent {
         text: String,
         timestamp_ms: u64,
     },
+    /// Command detected in transcription
+    CommandDetected {
+        command_name: Option<String>,
+        timestamp_ms: u64,
+    },
     /// Final result after LLM processing
     FinalResult {
         text: String,

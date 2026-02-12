@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::Result;
 
 /// LLM processing task types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ProcessingTask {
     /// Post-process transcription (remove filler words, fix grammar, format)

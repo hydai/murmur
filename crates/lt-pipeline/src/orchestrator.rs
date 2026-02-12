@@ -1,6 +1,6 @@
 use lt_audio::AudioCapture;
 use lt_core::error::{LocaltypeError, Result};
-use lt_core::llm::{LlmProcessor, ProcessingTask};
+use lt_core::llm::LlmProcessor;
 use lt_core::output::OutputSink;
 use lt_core::stt::{SttProvider, TranscriptionEvent};
 use lt_core::PersonalDictionary;
@@ -9,6 +9,7 @@ use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
 
 use crate::state::{PipelineEvent, PipelineState};
+use crate::commands::detect_command;
 
 /// Pipeline orchestrator coordinating the full flow
 pub struct PipelineOrchestrator {
@@ -150,7 +151,28 @@ impl PipelineOrchestrator {
 
             // When transcription finishes (channel closed), trigger LLM processing
             if !full_transcription.is_empty() {
-                tracing::info!("Transcription complete, starting LLM post-processing");
+                tracing::info!("Transcription complete, detecting voice commands");
+
+                // Get dictionary terms
+                let dictionary_terms = {
+                    let dict = dictionary.lock().await;
+                    dict.get_terms()
+                };
+
+                // Detect voice commands in the transcription
+                let detection = detect_command(&full_transcription, dictionary_terms);
+
+                // Emit command detection event
+                let _ = event_tx.send(PipelineEvent::CommandDetected {
+                    command_name: detection.command_name.clone(),
+                    timestamp_ms: last_timestamp,
+                });
+
+                if let Some(ref cmd) = detection.command_name {
+                    tracing::info!("Voice command detected: {}", cmd);
+                } else {
+                    tracing::info!("No voice command detected, using default post-processing");
+                }
 
                 // Transition to Processing state
                 {
@@ -162,16 +184,7 @@ impl PipelineOrchestrator {
                     timestamp_ms: last_timestamp,
                 });
 
-                // Get dictionary terms
-                let dictionary_terms = {
-                    let dict = dictionary.lock().await;
-                    dict.get_terms()
-                };
-
-                let task = ProcessingTask::PostProcess {
-                    text: full_transcription.clone(),
-                    dictionary_terms,
-                };
+                let task = detection.task;
 
                 let start_time = std::time::Instant::now();
 
@@ -369,7 +382,7 @@ impl PipelineOrchestrator {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use lt_core::llm::ProcessingOutput;
+    use lt_core::llm::{ProcessingOutput, ProcessingTask};
     use lt_core::stt::AudioChunk;
     use lt_output::ClipboardOutput;
     use std::sync::Arc;
