@@ -2,15 +2,22 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use lt_audio::{AudioCapture, AudioLevel};
-use std::sync::{Arc, Mutex};
+use lt_core::stt::{SttProvider, TranscriptionEvent};
+use lt_core::AppConfig;
+use lt_stt::ElevenLabsProvider;
+use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
+use tokio::sync::Mutex;
 use tracing_subscriber;
 
-/// Application state managing audio capture
+/// Application state managing audio capture and STT
 struct AppState {
     audio_capture: Arc<Mutex<Option<AudioCapture>>>,
     level_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    stt_provider: Arc<Mutex<Option<ElevenLabsProvider>>>,
+    audio_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    transcription_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -66,7 +73,7 @@ async fn start_recording(
 ) -> Result<(), String> {
     tracing::info!("Starting recording");
 
-    let mut capture_guard = state.audio_capture.lock().unwrap();
+    let mut capture_guard = state.audio_capture.lock().await;
 
     // Check if already recording
     if let Some(capture) = &*capture_guard {
@@ -74,6 +81,62 @@ async fn start_recording(
             return Err("Recording already in progress".to_string());
         }
     }
+
+    // Load config and get API key
+    let config_path = AppConfig::default_config_file()
+        .map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    let config = if config_path.exists() {
+        AppConfig::load_from_file(&config_path)
+            .map_err(|e| format!("Failed to load config: {}", e))?
+    } else {
+        tracing::warn!("Config file not found, using default config");
+        AppConfig::default()
+    };
+
+    let api_key = config.api_keys.get("elevenlabs")
+        .ok_or_else(|| {
+            "ElevenLabs API key not configured. Please add your API key to ~/.config/localtype/config.toml".to_string()
+        })?
+        .clone();
+
+    // Create and start STT provider
+    let mut stt = ElevenLabsProvider::new(api_key);
+
+    if let Err(e) = stt.start_session().await {
+        let error_msg = format!("Failed to start STT session: {}", e);
+        tracing::error!("{}", error_msg);
+        let _ = app.emit("audio-error", ErrorEvent {
+            message: error_msg.clone(),
+        });
+        return Err(error_msg);
+    }
+
+    // Subscribe to transcription events
+    let mut event_rx = stt.subscribe_events().await;
+    let app_clone = app.clone();
+
+    let transcription_task = tokio::spawn(async move {
+        while let Some(event) = event_rx.recv().await {
+            match &event {
+                TranscriptionEvent::Partial { text, .. } => {
+                    tracing::debug!("Partial transcript: {}", text);
+                    let _ = app_clone.emit("transcription-partial", event);
+                }
+                TranscriptionEvent::Committed { text, .. } => {
+                    tracing::info!("Committed transcript: {}", text);
+                    let _ = app_clone.emit("transcription-committed", event);
+                }
+                TranscriptionEvent::Error { message } => {
+                    tracing::error!("STT error: {}", message);
+                    let _ = app_clone.emit("transcription-error", event);
+                }
+            }
+        }
+        tracing::debug!("Transcription event task finished");
+    });
+
+    *state.transcription_task.lock().await = Some(transcription_task);
 
     // Create new capture
     let mut capture = AudioCapture::new();
@@ -113,9 +176,27 @@ async fn start_recording(
             tracing::debug!("Audio level task finished");
         });
 
-        let mut task_guard = state.level_task.lock().unwrap();
-        *task_guard = Some(task);
+        *state.level_task.lock().await = Some(task);
     }
+
+    // Subscribe to audio chunks and forward to STT
+    // Move stt into the audio forwarding task to avoid lock issues
+    if let Some(mut chunk_rx) = capture.subscribe_chunks() {
+        let audio_task = tokio::spawn(async move {
+            while let Some(chunk) = chunk_rx.recv().await {
+                if let Err(e) = stt.send_audio(chunk).await {
+                    tracing::error!("Failed to send audio to STT: {}", e);
+                    break;
+                }
+            }
+            tracing::debug!("Audio forwarding task finished");
+        });
+
+        *state.audio_task.lock().await = Some(audio_task);
+    }
+
+    // Store the STT provider reference (just to keep track, but it's moved into the task)
+    *state.stt_provider.lock().await = None;
 
     // Store capture instance
     *capture_guard = Some(capture);
@@ -136,7 +217,7 @@ async fn stop_recording(
 ) -> Result<(), String> {
     tracing::info!("Stopping recording");
 
-    let mut capture_guard = state.audio_capture.lock().unwrap();
+    let mut capture_guard = state.audio_capture.lock().await;
 
     if let Some(mut capture) = capture_guard.take() {
         if let Err(e) = capture.stop() {
@@ -148,9 +229,27 @@ async fn stop_recording(
     }
 
     // Cancel level task
-    let mut task_guard = state.level_task.lock().unwrap();
-    if let Some(task) = task_guard.take() {
-        task.abort();
+    {
+        let mut task_guard = state.level_task.lock().await;
+        if let Some(task) = task_guard.take() {
+            task.abort();
+        }
+    }
+
+    // Cancel audio forwarding task (this will also stop STT since it owns it)
+    {
+        let mut audio_task_guard = state.audio_task.lock().await;
+        if let Some(task) = audio_task_guard.take() {
+            task.abort();
+        }
+    }
+
+    // Cancel transcription task
+    {
+        let mut transcription_task_guard = state.transcription_task.lock().await;
+        if let Some(task) = transcription_task_guard.take() {
+            task.abort();
+        }
     }
 
     // Emit recording state event
@@ -163,12 +262,12 @@ async fn stop_recording(
 }
 
 #[tauri::command]
-fn is_recording(state: tauri::State<'_, AppState>) -> bool {
-    let capture_guard = state.audio_capture.lock().unwrap();
+async fn is_recording(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    let capture_guard = state.audio_capture.lock().await;
     if let Some(capture) = &*capture_guard {
-        capture.is_running()
+        Ok(capture.is_running())
     } else {
-        false
+        Ok(false)
     }
 }
 
@@ -182,6 +281,9 @@ fn main() {
     let app_state = AppState {
         audio_capture: Arc::new(Mutex::new(None)),
         level_task: Arc::new(Mutex::new(None)),
+        stt_provider: Arc::new(Mutex::new(None)),
+        audio_task: Arc::new(Mutex::new(None)),
+        transcription_task: Arc::new(Mutex::new(None)),
     };
 
     tauri::Builder::default()
@@ -210,7 +312,7 @@ fn main() {
                             let state = handle.state::<AppState>();
 
                             let is_currently_recording = {
-                                let capture_guard = state.audio_capture.lock().unwrap();
+                                let capture_guard = state.audio_capture.lock().await;
                                 if let Some(capture) = &*capture_guard {
                                     capture.is_running()
                                 } else {

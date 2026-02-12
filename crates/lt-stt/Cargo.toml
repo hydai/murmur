@@ -1,0 +1,32 @@
+[package]
+name = "lt-stt"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lt-core = { path = "../lt-core" }
+
+# Async runtime
+tokio = { version = "1.49.0", features = ["full"] }
+async-trait.workspace = true
+
+# WebSocket
+tokio-tungstenite = { version = "0.28.0", features = ["native-tls"] }
+futures-util = "0.3.31"
+url = "2.5"
+http = "1.2.0"
+
+# HTTP client (for future REST providers)
+reqwest = { version = "0.13.2", features = ["json", "multipart"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json.workspace = true
+base64 = "0.22.1"
+
+# Error handling and logging
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio-test = "0.4.4"

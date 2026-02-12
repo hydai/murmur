@@ -4,6 +4,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import WaveformIndicator from './WaveformIndicator.svelte';
+  import TranscriptionView from './TranscriptionView.svelte';
 
   interface Props {
     status: string;
@@ -15,6 +16,8 @@
   let isRecording = $state(false);
   let audioLevel = $state({ rms: 0, voiceActive: false, timestamp_ms: 0 });
   let errorMessage = $state<string | null>(null);
+  let partialText = $state('');
+  let committedText = $state('');
 
   let isDragging = $state(false);
   let dragStartX = $state(0);
@@ -24,6 +27,9 @@
   let unlistenAudioLevel: UnlistenFn | null = null;
   let unlistenRecordingState: UnlistenFn | null = null;
   let unlistenAudioError: UnlistenFn | null = null;
+  let unlistenTranscriptionPartial: UnlistenFn | null = null;
+  let unlistenTranscriptionCommitted: UnlistenFn | null = null;
+  let unlistenTranscriptionError: UnlistenFn | null = null;
 
   async function handleMouseDown(e: MouseEvent) {
     isDragging = true;
@@ -54,6 +60,8 @@
         await invoke('stop_recording');
       } else {
         errorMessage = null;
+        partialText = '';
+        committedText = '';
         await invoke('start_recording');
       }
     } catch (error) {
@@ -80,12 +88,38 @@
       errorMessage = payload.message;
       isRecording = false;
     });
+
+    // Listen for transcription events
+    unlistenTranscriptionPartial = await listen('transcription-partial', (event) => {
+      const payload = event.payload as { text: string };
+      partialText = payload.text;
+    });
+
+    unlistenTranscriptionCommitted = await listen('transcription-committed', (event) => {
+      const payload = event.payload as { text: string };
+      // Append to committed text
+      if (committedText) {
+        committedText += ' ' + payload.text;
+      } else {
+        committedText = payload.text;
+      }
+      // Clear partial text when committed
+      partialText = '';
+    });
+
+    unlistenTranscriptionError = await listen('transcription-error', (event) => {
+      const payload = event.payload as { message: string };
+      errorMessage = payload.message;
+    });
   });
 
   onDestroy(() => {
     if (unlistenAudioLevel) unlistenAudioLevel();
     if (unlistenRecordingState) unlistenRecordingState();
     if (unlistenAudioError) unlistenAudioError();
+    if (unlistenTranscriptionPartial) unlistenTranscriptionPartial();
+    if (unlistenTranscriptionCommitted) unlistenTranscriptionCommitted();
+    if (unlistenTranscriptionError) unlistenTranscriptionError();
   });
 </script>
 
@@ -102,8 +136,16 @@
     tabindex="0"
   >
     <div class="status-indicator">
-      <div class="status-dot {isRecording ? 'recording' : status.toLowerCase()}"></div>
-      <span class="status-text">{isRecording ? 'Recording' : status}</span>
+      <div class="status-dot {isRecording ? (partialText || committedText ? 'transcribing' : 'recording') : (committedText ? 'done' : status.toLowerCase())}"></div>
+      <span class="status-text">
+        {#if isRecording}
+          {partialText || committedText ? 'Transcribing' : 'Recording'}
+        {:else if committedText}
+          Done
+        {:else}
+          {status}
+        {/if}
+      </span>
     </div>
 
     <div class="app-title">Localtype</div>
@@ -114,6 +156,9 @@
 
     {#if isRecording}
       <WaveformIndicator rms={audioLevel.rms} voiceActive={audioLevel.voiceActive} />
+      <TranscriptionView partialText={partialText} committedText={committedText} />
+    {:else if committedText}
+      <TranscriptionView partialText={partialText} committedText={committedText} />
     {:else}
       <div class="hint-text">Press Cmd+Shift+Space to start</div>
     {/if}
@@ -175,6 +220,17 @@
   .status-dot.initializing {
     background: #facc15;
     box-shadow: 0 0 8px rgba(250, 204, 21, 0.6);
+  }
+
+  .status-dot.transcribing {
+    background: #3b82f6;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.8);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+
+  .status-dot.done {
+    background: #10b981;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
   }
 
   .status-dot.error {

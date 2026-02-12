@@ -2,6 +2,7 @@
 members = [
     "crates/lt-core",
     "crates/lt-audio",
+    "crates/lt-stt",
     "crates/lt-tauri",
 ]
 resolver = "2"
