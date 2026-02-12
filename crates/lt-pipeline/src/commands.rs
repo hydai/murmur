@@ -205,6 +205,127 @@ mod tests {
     }
 
     #[test]
+    fn test_translate_to_japanese() {
+        let text = "translate to Japanese: thank you very much";
+        let result = detect_command(text, vec![]);
+
+        if let ProcessingTask::Translate { target_language, text } = result.task {
+            assert_eq!(target_language, "Japanese");
+            assert_eq!(text, "thank you very much");
+        } else {
+            panic!("Expected Translate task");
+        }
+        assert_eq!(result.command_name, Some("translate to Japanese".to_string()));
+    }
+
+    #[test]
+    fn test_translate_to_spanish() {
+        let text = "translate to Spanish: the meeting is at 3pm";
+        let result = detect_command(text, vec![]);
+
+        if let ProcessingTask::Translate { target_language, text } = result.task {
+            assert_eq!(target_language, "Spanish");
+            assert_eq!(text, "the meeting is at 3pm");
+        } else {
+            panic!("Expected Translate task");
+        }
+        assert_eq!(result.command_name, Some("translate to Spanish".to_string()));
+    }
+
+    #[test]
+    fn test_translate_to_french() {
+        let text = "translate to French: good morning everyone";
+        let result = detect_command(text, vec![]);
+
+        if let ProcessingTask::Translate { target_language, text } = result.task {
+            assert_eq!(target_language, "French");
+            assert_eq!(text, "good morning everyone");
+        } else {
+            panic!("Expected Translate task");
+        }
+        assert_eq!(result.command_name, Some("translate to French".to_string()));
+    }
+
+    #[test]
+    fn test_translate_to_german() {
+        let text = "translate to German: how are you today";
+        let result = detect_command(text, vec![]);
+
+        if let ProcessingTask::Translate { target_language, text } = result.task {
+            assert_eq!(target_language, "German");
+            assert_eq!(text, "how are you today");
+        } else {
+            panic!("Expected Translate task");
+        }
+        assert_eq!(result.command_name, Some("translate to German".to_string()));
+    }
+
+    #[test]
+    fn test_translate_to_korean() {
+        let text = "translate to Korean: nice to meet you";
+        let result = detect_command(text, vec![]);
+
+        if let ProcessingTask::Translate { target_language, text } = result.task {
+            assert_eq!(target_language, "Korean");
+            assert_eq!(text, "nice to meet you");
+        } else {
+            panic!("Expected Translate task");
+        }
+        assert_eq!(result.command_name, Some("translate to Korean".to_string()));
+    }
+
+    #[test]
+    fn test_translate_case_insensitive() {
+        let text = "TRANSLATE TO CHINESE: HELLO WORLD";
+        let result = detect_command(text, vec![]);
+
+        if let ProcessingTask::Translate { target_language, .. } = result.task {
+            assert_eq!(target_language, "CHINESE");
+        } else {
+            panic!("Expected Translate task");
+        }
+    }
+
+    #[test]
+    fn test_translate_with_extra_whitespace() {
+        let text = "  translate to   Spanish  :   hello   ";
+        let result = detect_command(text, vec![]);
+
+        if let ProcessingTask::Translate { target_language, text } = result.task {
+            assert_eq!(target_language, "Spanish");
+            assert_eq!(text, "hello");
+        } else {
+            panic!("Expected Translate task");
+        }
+    }
+
+    #[test]
+    fn test_translate_multiword_language() {
+        let text = "translate to Traditional Chinese: hello world";
+        let result = detect_command(text, vec![]);
+
+        if let ProcessingTask::Translate { target_language, text } = result.task {
+            assert_eq!(target_language, "Traditional Chinese");
+            assert_eq!(text, "hello world");
+        } else {
+            panic!("Expected Translate task");
+        }
+    }
+
+    #[test]
+    fn test_translate_complex_content() {
+        let text = "translate to Chinese: Hello world, how are you today? The meeting is at 3pm.";
+        let result = detect_command(text, vec![]);
+
+        if let ProcessingTask::Translate { target_language, text } = result.task {
+            assert_eq!(target_language, "Chinese");
+            assert_eq!(text, "Hello world, how are you today? The meeting is at 3pm.");
+        } else {
+            panic!("Expected Translate task");
+        }
+    }
+
+    #[test]
     fn test_no_command_post_process() {
         let text = "um so like hello world you know";
         let dict_terms = vec!["API".to_string()];

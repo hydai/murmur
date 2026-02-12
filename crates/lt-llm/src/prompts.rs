@@ -117,4 +117,47 @@ mod tests {
             assert!(prompt.contains("This is a long text"));
         }
     }
+
+    #[test]
+    fn test_build_translate_prompt() {
+        let manager = PromptManager::new();
+        let task = ProcessingTask::Translate {
+            text: "Hello world".to_string(),
+            target_language: "Chinese".to_string(),
+        };
+
+        let result = manager.build_prompt(&task);
+        if let Ok(prompt) = result {
+            assert!(prompt.contains("Hello world"));
+            assert!(prompt.contains("Chinese"));
+        }
+    }
+
+    #[test]
+    fn test_build_change_tone_prompt() {
+        let manager = PromptManager::new();
+        let task = ProcessingTask::ChangeTone {
+            text: "hey there".to_string(),
+            target_tone: "formal".to_string(),
+        };
+
+        let result = manager.build_prompt(&task);
+        if let Ok(prompt) = result {
+            assert!(prompt.contains("hey there"));
+            assert!(prompt.contains("formal"));
+        }
+    }
+
+    #[test]
+    fn test_build_generate_reply_prompt() {
+        let manager = PromptManager::new();
+        let task = ProcessingTask::GenerateReply {
+            context: "Can you attend the meeting?".to_string(),
+        };
+
+        let result = manager.build_prompt(&task);
+        if let Ok(prompt) = result {
+            assert!(prompt.contains("Can you attend the meeting?"));
+        }
+    }
 }
