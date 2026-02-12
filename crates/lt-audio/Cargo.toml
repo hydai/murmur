@@ -1,0 +1,23 @@
+[package]
+name = "lt-audio"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lt-core = { path = "../lt-core" }
+
+# Audio capture and processing
+cpal = "0.17.1"
+
+# Async runtime
+tokio = { version = "1.49.0", features = ["sync", "rt", "time"] }
+
+# Serialization
+serde.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow = "1.0.101"
+
+# Logging
+tracing.workspace = true

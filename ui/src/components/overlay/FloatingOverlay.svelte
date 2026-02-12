@@ -1,5 +1,9 @@
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { invoke } from '@tauri-apps/api/core';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import WaveformIndicator from './WaveformIndicator.svelte';
 
   interface Props {
     status: string;
@@ -7,9 +11,19 @@
 
   let { status }: Props = $props();
 
+  // State
+  let isRecording = $state(false);
+  let audioLevel = $state({ rms: 0, voiceActive: false, timestamp_ms: 0 });
+  let errorMessage = $state<string | null>(null);
+
   let isDragging = $state(false);
   let dragStartX = $state(0);
   let dragStartY = $state(0);
+
+  // Event listeners cleanup
+  let unlistenAudioLevel: UnlistenFn | null = null;
+  let unlistenRecordingState: UnlistenFn | null = null;
+  let unlistenAudioError: UnlistenFn | null = null;
 
   async function handleMouseDown(e: MouseEvent) {
     isDragging = true;
@@ -33,6 +47,46 @@
   function handleMouseUp() {
     isDragging = false;
   }
+
+  async function toggleRecording() {
+    try {
+      if (isRecording) {
+        await invoke('stop_recording');
+      } else {
+        errorMessage = null;
+        await invoke('start_recording');
+      }
+    } catch (error) {
+      console.error('Failed to toggle recording:', error);
+      errorMessage = String(error);
+    }
+  }
+
+  onMount(async () => {
+    // Listen for audio level events
+    unlistenAudioLevel = await listen('audio-level', (event) => {
+      audioLevel = event.payload as { rms: number; voice_active: boolean; timestamp_ms: number };
+    });
+
+    // Listen for recording state changes
+    unlistenRecordingState = await listen('recording-state', (event) => {
+      const payload = event.payload as { is_recording: boolean };
+      isRecording = payload.is_recording;
+    });
+
+    // Listen for audio errors
+    unlistenAudioError = await listen('audio-error', (event) => {
+      const payload = event.payload as { message: string };
+      errorMessage = payload.message;
+      isRecording = false;
+    });
+  });
+
+  onDestroy(() => {
+    if (unlistenAudioLevel) unlistenAudioLevel();
+    if (unlistenRecordingState) unlistenRecordingState();
+    if (unlistenAudioError) unlistenAudioError();
+  });
 </script>
 
 <svelte:window
@@ -48,11 +102,25 @@
     tabindex="0"
   >
     <div class="status-indicator">
-      <div class="status-dot {status.toLowerCase()}"></div>
-      <span class="status-text">{status}</span>
+      <div class="status-dot {isRecording ? 'recording' : status.toLowerCase()}"></div>
+      <span class="status-text">{isRecording ? 'Recording' : status}</span>
     </div>
+
     <div class="app-title">Localtype</div>
-    <div class="hint-text">Press Cmd+Shift+Space to toggle</div>
+
+    {#if errorMessage}
+      <div class="error-message">{errorMessage}</div>
+    {/if}
+
+    {#if isRecording}
+      <WaveformIndicator rms={audioLevel.rms} voiceActive={audioLevel.voiceActive} />
+    {:else}
+      <div class="hint-text">Press Cmd+Shift+Space to start</div>
+    {/if}
+
+    <button class="record-button" onclick={toggleRecording}>
+      {isRecording ? 'Stop Recording' : 'Start Recording'}
+    </button>
   </div>
 </div>
 
@@ -74,7 +142,7 @@
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     border: 1px solid rgba(255, 255, 255, 0.1);
     cursor: move;
-    min-width: 400px;
+    min-width: 450px;
     text-align: center;
   }
 
@@ -96,6 +164,12 @@
   .status-dot.ready {
     background: #4ade80;
     box-shadow: 0 0 8px rgba(74, 222, 128, 0.6);
+  }
+
+  .status-dot.recording {
+    background: #ef4444;
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
+    animation: pulse 1s ease-in-out infinite;
   }
 
   .status-dot.initializing {
@@ -127,11 +201,45 @@
     font-size: 24px;
     font-weight: 600;
     color: rgba(255, 255, 255, 0.95);
-    margin-bottom: 8px;
+    margin-bottom: 16px;
   }
 
   .hint-text {
     font-size: 12px;
     color: rgba(255, 255, 255, 0.6);
+    margin-bottom: 16px;
+  }
+
+  .error-message {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 16px;
+    color: rgba(239, 68, 68, 0.9);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .record-button {
+    background: rgba(74, 222, 128, 0.2);
+    border: 1px solid rgba(74, 222, 128, 0.4);
+    color: rgba(74, 222, 128, 0.9);
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .record-button:hover {
+    background: rgba(74, 222, 128, 0.3);
+    border-color: rgba(74, 222, 128, 0.6);
+    transform: translateY(-1px);
+  }
+
+  .record-button:active {
+    transform: translateY(0);
   }
 </style>

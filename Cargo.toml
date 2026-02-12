@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/lt-core",
+    "crates/lt-audio",
     "crates/lt-tauri",
 ]
 resolver = "2"
