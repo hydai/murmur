@@ -5,6 +5,7 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import WaveformIndicator from './WaveformIndicator.svelte';
   import TranscriptionView from './TranscriptionView.svelte';
+  import SettingsPanel from '../settings/SettingsPanel.svelte';
 
   interface Props {
     status: string;
@@ -22,6 +23,7 @@
   let processedText = $state('');
   let pipelineState = $state('idle');
   let showCopiedIndicator = $state(false);
+  let showSettings = $state(false);
 
   let isDragging = $state(false);
   let dragStartX = $state(0);
@@ -80,6 +82,14 @@
       console.error('Failed to toggle recording:', error);
       errorMessage = String(error);
     }
+  }
+
+  function openSettings() {
+    showSettings = true;
+  }
+
+  function closeSettings() {
+    showSettings = false;
   }
 
   onMount(async () => {
@@ -219,19 +229,24 @@
     role="button"
     tabindex="0"
   >
-    <div class="status-indicator">
-      <div class="status-dot {isProcessing ? 'processing' : (isRecording ? (partialText || committedText ? 'transcribing' : 'recording') : (committedText ? 'done' : pipelineState))}"></div>
-      <span class="status-text">
-        {#if isProcessing}
-          Processing
-        {:else if isRecording}
-          {partialText || committedText ? 'Transcribing' : 'Recording'}
-        {:else if committedText}
-          Done
-        {:else}
-          {pipelineState === 'idle' ? 'Ready' : pipelineState.charAt(0).toUpperCase() + pipelineState.slice(1)}
-        {/if}
-      </span>
+    <div class="header-row">
+      <div class="status-indicator">
+        <div class="status-dot {isProcessing ? 'processing' : (isRecording ? (partialText || committedText ? 'transcribing' : 'recording') : (committedText ? 'done' : pipelineState))}"></div>
+        <span class="status-text">
+          {#if isProcessing}
+            Processing
+          {:else if isRecording}
+            {partialText || committedText ? 'Transcribing' : 'Recording'}
+          {:else if committedText}
+            Done
+          {:else}
+            {pipelineState === 'idle' ? 'Ready' : pipelineState.charAt(0).toUpperCase() + pipelineState.slice(1)}
+          {/if}
+        </span>
+      </div>
+      <button class="settings-button" onclick={openSettings} title="Settings">
+        ⚙
+      </button>
     </div>
 
     <div class="app-title">Localtype</div>
@@ -261,6 +276,8 @@
   </div>
 </div>
 
+<SettingsPanel visible={showSettings} onClose={closeSettings} />
+
 <style>
   .overlay-container {
     width: 100%;
@@ -283,12 +300,42 @@
     text-align: center;
   }
 
+  .header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    gap: 16px;
+  }
+
   .status-indicator {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    margin-bottom: 16px;
+    flex: 1;
+  }
+
+  .settings-button {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.6);
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .settings-button:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.9);
   }
 
   .status-dot {

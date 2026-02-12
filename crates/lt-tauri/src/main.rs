@@ -1,13 +1,15 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use lt_core::config::SttProviderType;
 use lt_core::llm::LlmProcessor;
 use lt_core::output::OutputMode;
+use lt_core::stt::SttProvider;
 use lt_core::{AppConfig, PersonalDictionary};
 use lt_llm::GeminiProcessor;
 use lt_output::CombinedOutput;
 use lt_pipeline::{PipelineEvent, PipelineOrchestrator, PipelineState};
-use lt_stt::ElevenLabsProvider;
+use lt_stt::{ElevenLabsProvider, GroqProvider, OpenAIProvider};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
@@ -72,6 +74,108 @@ fn get_status() -> String {
 }
 
 #[tauri::command]
+async fn get_config() -> Result<AppConfig, String> {
+    let config_path = AppConfig::default_config_file()
+        .map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    if config_path.exists() {
+        AppConfig::load_from_file(&config_path)
+            .map_err(|e| format!("Failed to load config: {}", e))
+    } else {
+        Ok(AppConfig::default())
+    }
+}
+
+#[tauri::command]
+async fn save_config(config: AppConfig) -> Result<(), String> {
+    let config_path = AppConfig::default_config_file()
+        .map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    config.save_to_file(&config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))
+}
+
+#[tauri::command]
+async fn set_stt_provider(provider: String) -> Result<(), String> {
+    let config_path = AppConfig::default_config_file()
+        .map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    let mut config = if config_path.exists() {
+        AppConfig::load_from_file(&config_path)
+            .map_err(|e| format!("Failed to load config: {}", e))?
+    } else {
+        AppConfig::default()
+    };
+
+    // Parse provider string to SttProviderType
+    let provider_type = match provider.to_lowercase().as_str() {
+        "elevenlabs" => SttProviderType::ElevenLabs,
+        "openai" => SttProviderType::OpenAI,
+        "groq" => SttProviderType::Groq,
+        _ => return Err(format!("Unknown STT provider: {}", provider)),
+    };
+
+    config.stt_provider = provider_type;
+
+    config.save_to_file(&config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))
+}
+
+#[tauri::command]
+async fn save_api_key(provider: String, api_key: String) -> Result<(), String> {
+    let config_path = AppConfig::default_config_file()
+        .map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    let mut config = if config_path.exists() {
+        AppConfig::load_from_file(&config_path)
+            .map_err(|e| format!("Failed to load config: {}", e))?
+    } else {
+        AppConfig::default()
+    };
+
+    config.api_keys.insert(provider.to_lowercase(), api_key);
+
+    config.save_to_file(&config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))
+}
+
+#[derive(Clone, serde::Serialize)]
+struct SttProviderInfo {
+    name: String,
+    id: String,
+    provider_type: String,
+    configured: bool,
+}
+
+#[tauri::command]
+async fn get_stt_providers() -> Result<Vec<SttProviderInfo>, String> {
+    let config = get_config().await?;
+
+    let providers = vec![
+        SttProviderInfo {
+            name: "ElevenLabs Scribe".to_string(),
+            id: "elevenlabs".to_string(),
+            provider_type: "streaming".to_string(),
+            configured: config.api_keys.contains_key("elevenlabs"),
+        },
+        SttProviderInfo {
+            name: "OpenAI Whisper".to_string(),
+            id: "openai".to_string(),
+            provider_type: "batch".to_string(),
+            configured: config.api_keys.contains_key("openai"),
+        },
+        SttProviderInfo {
+            name: "Groq Whisper Turbo".to_string(),
+            id: "groq".to_string(),
+            provider_type: "batch".to_string(),
+            configured: config.api_keys.contains_key("groq"),
+        },
+    ];
+
+    Ok(providers)
+}
+
+#[tauri::command]
 async fn start_pipeline(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -98,14 +202,33 @@ async fn start_pipeline(
         AppConfig::default()
     };
 
-    let api_key = config.api_keys.get("elevenlabs")
-        .ok_or_else(|| {
-            "ElevenLabs API key not configured. Please add your API key to ~/.config/localtype/config.toml".to_string()
-        })?
-        .clone();
-
-    // Create STT provider
-    let stt = ElevenLabsProvider::new(api_key);
+    // Create STT provider based on config
+    let stt: Box<dyn SttProvider> = match config.stt_provider {
+        SttProviderType::ElevenLabs => {
+            let api_key = config.api_keys.get("elevenlabs")
+                .ok_or_else(|| {
+                    "ElevenLabs API key not configured. Please add your API key to ~/.config/localtype/config.toml".to_string()
+                })?
+                .clone();
+            Box::new(ElevenLabsProvider::new(api_key))
+        }
+        SttProviderType::OpenAI => {
+            let api_key = config.api_keys.get("openai")
+                .ok_or_else(|| {
+                    "OpenAI API key not configured. Please add your API key to ~/.config/localtype/config.toml".to_string()
+                })?
+                .clone();
+            Box::new(OpenAIProvider::new(api_key))
+        }
+        SttProviderType::Groq => {
+            let api_key = config.api_keys.get("groq")
+                .ok_or_else(|| {
+                    "Groq API key not configured. Please add your API key to ~/.config/localtype/config.toml".to_string()
+                })?
+                .clone();
+            Box::new(GroqProvider::new(api_key))
+        }
+    };
 
     // Subscribe to pipeline events before starting
     let mut event_rx = pipeline.subscribe_events();
@@ -190,7 +313,7 @@ async fn start_pipeline(
     *state.event_task.lock().await = Some(event_task);
 
     // Start the pipeline
-    pipeline.start(Box::new(stt)).await
+    pipeline.start(stt).await
         .map_err(|e| {
             tracing::error!("Failed to start pipeline: {}", e);
             format!("Failed to start pipeline: {}", e)
@@ -310,7 +433,12 @@ fn main() {
             start_pipeline,
             stop_pipeline,
             is_recording,
-            get_pipeline_state
+            get_pipeline_state,
+            get_config,
+            save_config,
+            set_stt_provider,
+            save_api_key,
+            get_stt_providers
         ])
         .setup(|app| {
             // Perform LLM health check

@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 lt-core = { path = "../lt-core" }
 
-tokio = { version = "1.49.0", features = ["process", "io-util", "time", "sync"] }
+tokio = { version = "1.49.0", features = ["process", "io-util", "time", "sync", "macros", "rt"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
