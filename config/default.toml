@@ -1,0 +1,35 @@
+# Localtype Default Configuration
+
+# STT Provider Selection
+# Options: "elevenlabs", "openai", "groq"
+stt_provider = "elevenlabs"
+
+# LLM Processor Selection
+# Options: "gemini", "copilot"
+llm_processor = "gemini"
+
+# Output Mode
+# Options: "clipboard", "keyboard", "both"
+output_mode = "clipboard"
+
+# Global Hotkey
+# Format: "Modifier+Key" (e.g., "Cmd+Shift+Space", "Ctrl+Alt+T")
+hotkey = "Cmd+Shift+Space"
+
+# API Keys
+# Store your API keys here or use environment variables
+[api_keys]
+# elevenlabs = "your-elevenlabs-api-key"
+# openai = "your-openai-api-key"
+# groq = "your-groq-api-key"
+
+# UI Preferences
+[ui_preferences]
+# Window opacity (0.0 - 1.0)
+opacity = 0.9
+
+# Show waveform indicator during recording
+show_waveform = true
+
+# Theme: "light" or "dark"
+theme = "dark"

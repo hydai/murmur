@@ -1,0 +1,13 @@
+[package]
+name = "lt-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+directories = { workspace = true }
+tokio = { version = "1.49.0", features = ["sync"] }
