@@ -1,8 +1,15 @@
 <script>
   import ProviderConfig from './ProviderConfig.svelte';
+  import DictionaryEditor from './DictionaryEditor.svelte';
 
   export let visible = false;
   export let onClose = () => {};
+
+  let activeTab = 'providers';
+
+  function switchTab(tab) {
+    activeTab = tab;
+  }
 </script>
 
 {#if visible}
@@ -13,8 +20,27 @@
         <button class="close-btn" on:click={onClose}>✕</button>
       </div>
 
+      <div class="settings-tabs">
+        <button
+          class="tab-button {activeTab === 'providers' ? 'active' : ''}"
+          on:click={() => switchTab('providers')}
+        >
+          STT Providers
+        </button>
+        <button
+          class="tab-button {activeTab === 'dictionary' ? 'active' : ''}"
+          on:click={() => switchTab('dictionary')}
+        >
+          Dictionary
+        </button>
+      </div>
+
       <div class="settings-content">
-        <ProviderConfig />
+        {#if activeTab === 'providers'}
+          <ProviderConfig />
+        {:else if activeTab === 'dictionary'}
+          <DictionaryEditor />
+        {/if}
       </div>
     </div>
   </div>
@@ -82,8 +108,37 @@
     color: #fff;
   }
 
+  .settings-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .tab-button {
+    background: none;
+    border: none;
+    padding: 12px 20px;
+    font-size: 14px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s ease;
+  }
+
+  .tab-button:hover {
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .tab-button.active {
+    color: #3b82f6;
+    border-bottom-color: #3b82f6;
+  }
+
   .settings-content {
     padding: 24px;
     overflow-y: auto;
+    flex: 1;
   }
 </style>

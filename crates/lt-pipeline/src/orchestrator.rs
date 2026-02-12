@@ -60,6 +60,11 @@ impl PipelineOrchestrator {
         *self.state.lock().await
     }
 
+    /// Get reference to the dictionary for updates
+    pub fn get_dictionary(&self) -> Arc<Mutex<PersonalDictionary>> {
+        self.dictionary.clone()
+    }
+
     /// Start the pipeline with the provided STT provider
     pub async fn start(&self, stt_provider: Box<dyn SttProvider>) -> Result<()> {
         let mut state = self.state.lock().await;

@@ -430,6 +430,161 @@ async fn get_pipeline_state(state: tauri::State<'_, AppState>) -> Result<String,
     Ok(state_str.to_string())
 }
 
+// Dictionary management commands
+
+#[tauri::command]
+async fn get_dictionary() -> Result<PersonalDictionary, String> {
+    let dict_path = AppConfig::default_config_dir()
+        .map_err(|e| format!("Failed to get config dir: {}", e))?
+        .join("dictionary.json");
+
+    if dict_path.exists() {
+        PersonalDictionary::load_from_file(&dict_path)
+            .map_err(|e| format!("Failed to load dictionary: {}", e))
+    } else {
+        Ok(PersonalDictionary::new())
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct AddEntryParams {
+    term: String,
+    aliases: Vec<String>,
+    description: Option<String>,
+}
+
+#[tauri::command]
+async fn add_dictionary_entry(
+    params: AddEntryParams,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let dict_path = AppConfig::default_config_dir()
+        .map_err(|e| format!("Failed to get config dir: {}", e))?
+        .join("dictionary.json");
+
+    // Ensure directory exists
+    if let Some(parent) = dict_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    }
+
+    let mut dict = if dict_path.exists() {
+        PersonalDictionary::load_from_file(&dict_path)
+            .map_err(|e| format!("Failed to load dictionary: {}", e))?
+    } else {
+        PersonalDictionary::new()
+    };
+
+    let entry = lt_core::dictionary::DictionaryEntry {
+        term: params.term,
+        aliases: params.aliases,
+        description: params.description,
+    };
+
+    dict.add_entry(entry);
+    dict.save_to_file(&dict_path)
+        .map_err(|e| format!("Failed to save dictionary: {}", e))?;
+
+    // Update the dictionary in the pipeline
+    let pipeline = state.pipeline.lock().await;
+    let pipeline_dict = pipeline.get_dictionary();
+    *pipeline_dict.lock().await = dict;
+
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct UpdateEntryParams {
+    old_term: String,
+    term: String,
+    aliases: Vec<String>,
+    description: Option<String>,
+}
+
+#[tauri::command]
+async fn update_dictionary_entry(
+    params: UpdateEntryParams,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let dict_path = AppConfig::default_config_dir()
+        .map_err(|e| format!("Failed to get config dir: {}", e))?
+        .join("dictionary.json");
+
+    let mut dict = if dict_path.exists() {
+        PersonalDictionary::load_from_file(&dict_path)
+            .map_err(|e| format!("Failed to load dictionary: {}", e))?
+    } else {
+        return Err("Dictionary file not found".to_string());
+    };
+
+    let new_entry = lt_core::dictionary::DictionaryEntry {
+        term: params.term,
+        aliases: params.aliases,
+        description: params.description,
+    };
+
+    if !dict.update_entry(&params.old_term, new_entry) {
+        return Err(format!("Entry '{}' not found", params.old_term));
+    }
+
+    dict.save_to_file(&dict_path)
+        .map_err(|e| format!("Failed to save dictionary: {}", e))?;
+
+    // Update the dictionary in the pipeline
+    let pipeline = state.pipeline.lock().await;
+    let pipeline_dict = pipeline.get_dictionary();
+    *pipeline_dict.lock().await = dict;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_dictionary_entry(
+    term: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let dict_path = AppConfig::default_config_dir()
+        .map_err(|e| format!("Failed to get config dir: {}", e))?
+        .join("dictionary.json");
+
+    let mut dict = if dict_path.exists() {
+        PersonalDictionary::load_from_file(&dict_path)
+            .map_err(|e| format!("Failed to load dictionary: {}", e))?
+    } else {
+        return Err("Dictionary file not found".to_string());
+    };
+
+    if !dict.remove_entry(&term) {
+        return Err(format!("Entry '{}' not found", term));
+    }
+
+    dict.save_to_file(&dict_path)
+        .map_err(|e| format!("Failed to save dictionary: {}", e))?;
+
+    // Update the dictionary in the pipeline
+    let pipeline = state.pipeline.lock().await;
+    let pipeline_dict = pipeline.get_dictionary();
+    *pipeline_dict.lock().await = dict;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn search_dictionary(query: String) -> Result<Vec<lt_core::dictionary::DictionaryEntry>, String> {
+    let dict_path = AppConfig::default_config_dir()
+        .map_err(|e| format!("Failed to get config dir: {}", e))?
+        .join("dictionary.json");
+
+    let dict = if dict_path.exists() {
+        PersonalDictionary::load_from_file(&dict_path)
+            .map_err(|e| format!("Failed to load dictionary: {}", e))?
+    } else {
+        PersonalDictionary::new()
+    };
+
+    Ok(dict.search_entries(&query))
+}
+
 fn main() {
     // Initialize tracing
     tracing_subscriber::fmt()
@@ -524,7 +679,12 @@ fn main() {
             save_api_key,
             get_stt_providers,
             get_llm_processors,
-            set_llm_processor
+            set_llm_processor,
+            get_dictionary,
+            add_dictionary_entry,
+            update_dictionary_entry,
+            delete_dictionary_entry,
+            search_dictionary
         ])
         .setup(|app| {
             // Perform LLM health checks
