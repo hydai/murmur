@@ -20,6 +20,9 @@ pub enum LocaltypeError {
     #[error("Permission error: {0}")]
     Permission(String),
 
+    #[error("Invalid state: {0}")]
+    InvalidState(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 

@@ -1,0 +1,20 @@
+[package]
+name = "lt-pipeline"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lt-core = { path = "../lt-core" }
+lt-audio = { path = "../lt-audio" }
+lt-stt = { path = "../lt-stt" }
+lt-llm = { path = "../lt-llm" }
+lt-output = { path = "../lt-output" }
+tokio = { version = "1.49.0", features = ["sync", "time", "macros"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1.49.0", features = ["rt-multi-thread"] }

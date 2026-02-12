@@ -1,0 +1,15 @@
+[package]
+name = "lt-output"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lt-core = { path = "../lt-core" }
+arboard = "3.6.1"
+enigo = "0.6.1"
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros"] }

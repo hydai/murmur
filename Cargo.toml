@@ -4,6 +4,8 @@ members = [
     "crates/lt-audio",
     "crates/lt-stt",
     "crates/lt-llm",
+    "crates/lt-output",
+    "crates/lt-pipeline",
     "crates/lt-tauri",
 ]
 resolver = "2"
