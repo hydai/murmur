@@ -1,4 +1,4 @@
-# Localtype - Project Instructions
+# Murmur - Project Instructions
 
 ## Overview
 

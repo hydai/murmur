@@ -1,8 +1,8 @@
-# Localtype: Privacy-First BYOK Voice Typing App
+# Murmur: Privacy-First BYOK Voice Typing App
 
 ## Context
 
-Typeless 存在嚴重隱私問題：語音資料上傳到他們的雲端處理、轉交未公開的第三方 LLM providers、收集裝置識別碼、與廣告合作夥伴（LinkedIn 等）分享資料。Localtype 透過 BYOK（Bring Your Own Key）架構解決這個問題 — 語音資料直接送到使用者自選的 STT provider，AI 後處理透過本地 CLI 工具完成，不經任何第三方中轉。
+Typeless 存在嚴重隱私問題：語音資料上傳到他們的雲端處理、轉交未公開的第三方 LLM providers、收集裝置識別碼、與廣告合作夥伴（LinkedIn 等）分享資料。Murmur 透過 BYOK（Bring Your Own Key）架構解決這個問題 — 語音資料直接送到使用者自選的 STT provider，AI 後處理透過本地 CLI 工具完成，不經任何第三方中轉。
 
 ## Architecture Overview
 
@@ -19,7 +19,7 @@ Typeless 存在嚴重隱私問題：語音資料上傳到他們的雲端處理�
 ## Rust Workspace 結構
 
 ```
-localtype/
+murmur/
 ├── Cargo.toml                    # Workspace root
 ├── crates/
 │   ├── lt-core/                  # Domain types + traits (zero external deps beyond serde/thiserror)
@@ -29,7 +29,7 @@ localtype/
 │   │       ├── config.rs         # AppConfig (TOML-based)
 │   │       ├── dictionary.rs     # PersonalDictionary, DictionaryEntry
 │   │       ├── output.rs         # OutputSink trait
-│   │       └── error.rs          # LocaltypeError
+│   │       └── error.rs          # MurmurError
 │   │
 │   ├── lt-audio/                 # 音訊擷取 (cpal + rubato resampling + VAD)
 │   ├── lt-stt/                   # STT providers
@@ -97,8 +97,8 @@ Overlay window: `decorations: false`, `transparent: true`, `alwaysOnTop: true`, 
 
 ### 5. 設定與儲存
 
-- Config: `~/.config/localtype/config.toml` (API keys, provider 選擇, hotkey, UI 偏好)
-- Dictionary: `~/.config/localtype/dictionary.json` (自定義術語 + aliases)
+- Config: `~/.config/murmur/config.toml` (API keys, provider 選擇, hotkey, UI 偏好)
+- Dictionary: `~/.config/murmur/dictionary.json` (自定義術語 + aliases)
 - 完全本地，無 telemetry，無 cloud sync
 
 ## Key Dependencies (verified 2026-02-12)

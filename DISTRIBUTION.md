@@ -1,6 +1,6 @@
-# Localtype Distribution Guide
+# Murmur Distribution Guide
 
-This document covers the build, packaging, and distribution process for Localtype on macOS.
+This document covers the build, packaging, and distribution process for Murmur on macOS.
 
 ## Build Configuration
 
@@ -8,12 +8,12 @@ This document covers the build, packaging, and distribution process for Localtyp
 
 ```json
 {
-  "productName": "Localtype",
-  "identifier": "com.localtype.app",
+  "productName": "Murmur",
+  "identifier": "com.hydai.murmur",
   "bundle": {
     "active": true,
     "targets": "all",
-    "publisher": "Localtype",
+    "publisher": "Murmur",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -49,10 +49,10 @@ The Info.plist includes required privacy descriptions for macOS permissions:
 
 ```xml
 <key>NSMicrophoneUsageDescription</key>
-<string>Localtype needs microphone access for voice-to-text transcription</string>
+<string>Murmur needs microphone access for voice-to-text transcription</string>
 
 <key>NSAccessibilityUsageDescription</key>
-<string>Localtype needs Accessibility permission to simulate keyboard input for typing transcribed text</string>
+<string>Murmur needs Accessibility permission to simulate keyboard input for typing transcribed text</string>
 ```
 
 ## Build Process
@@ -80,7 +80,7 @@ cargo tauri build
 ```
 target/release/bundle/
 ├── macos/
-│   └── Localtype.app/           # Standalone .app bundle
+│   └── Murmur.app/           # Standalone .app bundle
 │       └── Contents/
 │           ├── Info.plist       # Bundle metadata + privacy descriptions
 │           ├── MacOS/
@@ -88,13 +88,13 @@ target/release/bundle/
 │           └── Resources/
 │               └── icon.icns    # App icon
 └── dmg/
-    └── Localtype_0.1.0_aarch64.dmg  # Installer (7.7MB)
+    └── Murmur_0.1.0_aarch64.dmg  # Installer (7.7MB)
 ```
 
 ## DMG Contents
 
 When mounted, the .dmg shows:
-- Localtype.app (the application)
+- Murmur.app (the application)
 - Applications symlink (for drag-and-drop installation)
 - Volume icon (.VolumeIcon.icns)
 
@@ -102,9 +102,9 @@ When mounted, the .dmg shows:
 
 ### End User Installation
 
-1. **Download**: User downloads `Localtype_0.1.0_aarch64.dmg`
+1. **Download**: User downloads `Murmur_0.1.0_aarch64.dmg`
 2. **Mount**: Double-click the .dmg to mount the disk image
-3. **Install**: Drag Localtype.app to the Applications folder
+3. **Install**: Drag Murmur.app to the Applications folder
 4. **Launch**: Open from Applications or Spotlight
 5. **First Launch**:
    - System prompts for microphone permission
@@ -117,12 +117,12 @@ When mounted, the .dmg shows:
 On first launch, macOS will show system permission dialogs:
 
 **Microphone**:
-> "Localtype" would like to access the microphone.
-> Localtype needs microphone access for voice-to-text transcription
+> "Murmur" would like to access the microphone.
+> Murmur needs microphone access for voice-to-text transcription
 
 **Accessibility**:
-> "Localtype" would like to control this computer using accessibility features.
-> Localtype needs Accessibility permission to simulate keyboard input for typing transcribed text
+> "Murmur" would like to control this computer using accessibility features.
+> Murmur needs Accessibility permission to simulate keyboard input for typing transcribed text
 
 If denied, the app provides UI guidance to open System Settings → Privacy & Security.
 
@@ -132,25 +132,25 @@ After building, verify the following:
 
 ### AC1: Build Success
 - [ ] `cargo tauri build` completes without errors
-- [ ] .dmg file exists at `target/release/bundle/dmg/Localtype_0.1.0_aarch64.dmg`
-- [ ] .app bundle exists at `target/release/bundle/macos/Localtype.app`
+- [ ] .dmg file exists at `target/release/bundle/dmg/Murmur_0.1.0_aarch64.dmg`
+- [ ] .app bundle exists at `target/release/bundle/macos/Murmur.app`
 
 ### AC2: DMG Contents
-- [ ] Mount the .dmg: `hdiutil attach Localtype_0.1.0_aarch64.dmg -readonly`
-- [ ] Verify Localtype.app is present
+- [ ] Mount the .dmg: `hdiutil attach Murmur_0.1.0_aarch64.dmg -readonly`
+- [ ] Verify Murmur.app is present
 - [ ] Verify Applications symlink exists
 - [ ] Verify volume has icon
-- [ ] Unmount: `hdiutil detach /Volumes/Localtype`
+- [ ] Unmount: `hdiutil detach /Volumes/Murmur`
 
 ### AC3: App Bundle Structure
-- [ ] Info.plist exists: `ls target/release/bundle/macos/Localtype.app/Contents/Info.plist`
-- [ ] Binary exists: `ls target/release/bundle/macos/Localtype.app/Contents/MacOS/lt-tauri`
-- [ ] Icon exists: `ls target/release/bundle/macos/Localtype.app/Contents/Resources/icon.icns`
+- [ ] Info.plist exists: `ls target/release/bundle/macos/Murmur.app/Contents/Info.plist`
+- [ ] Binary exists: `ls target/release/bundle/macos/Murmur.app/Contents/MacOS/lt-tauri`
+- [ ] Icon exists: `ls target/release/bundle/macos/Murmur.app/Contents/Resources/icon.icns`
 
 ### AC4: Info.plist Privacy Descriptions
 ```bash
-grep "NSMicrophoneUsageDescription" target/release/bundle/macos/Localtype.app/Contents/Info.plist
-grep "NSAccessibilityUsageDescription" target/release/bundle/macos/Localtype.app/Contents/Info.plist
+grep "NSMicrophoneUsageDescription" target/release/bundle/macos/Murmur.app/Contents/Info.plist
+grep "NSAccessibilityUsageDescription" target/release/bundle/macos/Murmur.app/Contents/Info.plist
 ```
 
 ### AC5: File Sizes
@@ -162,19 +162,19 @@ grep "NSAccessibilityUsageDescription" target/release/bundle/macos/Localtype.app
 
 ```bash
 # Check bundle identifier
-defaults read target/release/bundle/macos/Localtype.app/Contents/Info.plist CFBundleIdentifier
+defaults read target/release/bundle/macos/Murmur.app/Contents/Info.plist CFBundleIdentifier
 
 # Check bundle version
-defaults read target/release/bundle/macos/Localtype.app/Contents/Info.plist CFBundleShortVersionString
+defaults read target/release/bundle/macos/Murmur.app/Contents/Info.plist CFBundleShortVersionString
 
 # Check minimum macOS version
-defaults read target/release/bundle/macos/Localtype.app/Contents/Info.plist LSMinimumSystemVersion
+defaults read target/release/bundle/macos/Murmur.app/Contents/Info.plist LSMinimumSystemVersion
 
 # Verify code signature (if signed)
-codesign -dv target/release/bundle/macos/Localtype.app
+codesign -dv target/release/bundle/macos/Murmur.app
 
 # Check for malformed Info.plist
-plutil -lint target/release/bundle/macos/Localtype.app/Contents/Info.plist
+plutil -lint target/release/bundle/macos/Murmur.app/Contents/Info.plist
 ```
 
 ## Full Workflow Test (Manual)
@@ -183,16 +183,16 @@ This requires a clean macOS environment or permission reset:
 
 ```bash
 # Reset permissions (requires root)
-tccutil reset Microphone com.localtype.app
-tccutil reset Accessibility com.localtype.app
+tccutil reset Microphone com.hydai.murmur
+tccutil reset Accessibility com.hydai.murmur
 
 # Install from .dmg
-hdiutil attach target/release/bundle/dmg/Localtype_0.1.0_aarch64.dmg
-cp -R /Volumes/Localtype/Localtype.app /Applications/
-hdiutil detach /Volumes/Localtype
+hdiutil attach target/release/bundle/dmg/Murmur_0.1.0_aarch64.dmg
+cp -R /Volumes/Murmur/Murmur.app /Applications/
+hdiutil detach /Volumes/Murmur
 
 # Launch
-open /Applications/Localtype.app
+open /Applications/Murmur.app
 
 # Test workflow:
 # 1. Grant microphone permission when prompted
@@ -214,11 +214,11 @@ open /Applications/Localtype.app
 
 ### Build Fails with "Bundle identifier ends with .app"
 
-This is a warning, not an error. The identifier `com.localtype.app` is functional but not recommended. To fix:
+This is a warning, not an error. The identifier `com.hydai.murmur` is functional but not recommended. To fix:
 
 ```json
 // In tauri.conf.json
-"identifier": "com.localtype.localtype"  // or any other valid identifier
+"identifier": "com.hydai.murmur"  // or any other valid identifier
 ```
 
 ### Icons Not Showing
@@ -279,19 +279,19 @@ For distribution outside the App Store, you should:
 3. **Sign the app**:
 ```bash
 codesign --force --options runtime --sign "Developer ID Application: Your Name" \
-  target/release/bundle/macos/Localtype.app
+  target/release/bundle/macos/Murmur.app
 ```
 
 4. **Notarize**:
 ```bash
 # Create .zip for notarization
-ditto -c -k --keepParent target/release/bundle/macos/Localtype.app Localtype.zip
+ditto -c -k --keepParent target/release/bundle/macos/Murmur.app Murmur.zip
 
 # Submit to Apple
-xcrun notarytool submit Localtype.zip --apple-id your@email.com --team-id TEAMID --password APP_SPECIFIC_PASSWORD --wait
+xcrun notarytool submit Murmur.zip --apple-id your@email.com --team-id TEAMID --password APP_SPECIFIC_PASSWORD --wait
 
 # Staple the notarization ticket
-xcrun stapler staple target/release/bundle/macos/Localtype.app
+xcrun stapler staple target/release/bundle/macos/Murmur.app
 ```
 
 5. **Re-package DMG** with signed app
@@ -308,8 +308,8 @@ xcrun stapler staple target/release/bundle/macos/Localtype.app
 ```bash
 # Create release with gh cli
 gh release create v0.1.0 \
-  target/release/bundle/dmg/Localtype_0.1.0_aarch64.dmg \
-  --title "Localtype v0.1.0" \
+  target/release/bundle/dmg/Murmur_0.1.0_aarch64.dmg \
+  --title "Murmur v0.1.0" \
   --notes "Initial release"
 ```
 
@@ -317,16 +317,16 @@ gh release create v0.1.0 \
 Create a Homebrew cask for easier installation:
 
 ```ruby
-cask "localtype" do
+cask "murmur" do
   version "0.1.0"
   sha256 "..."
 
-  url "https://github.com/yourorg/localtype/releases/download/v#{version}/Localtype_#{version}_aarch64.dmg"
-  name "Localtype"
+  url "https://github.com/hydai/murmur/releases/download/v#{version}/Murmur_#{version}_aarch64.dmg"
+  name "Murmur"
   desc "Privacy-first BYOK voice typing app"
-  homepage "https://github.com/yourorg/localtype"
+  homepage "https://github.com/hydai/murmur"
 
-  app "Localtype.app"
+  app "Murmur.app"
 end
 ```
 
