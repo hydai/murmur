@@ -2,7 +2,7 @@ name: Prepare Release
 
 on:
   push:
-    branches: [main]
+    branches: [master]
 
 permissions:
   contents: write
