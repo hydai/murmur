@@ -29,6 +29,9 @@ serde = { workspace = true }
 serde_json.workspace = true
 base64 = "0.22.1"
 
+# Locale detection (for Apple STT "auto" mode)
+sys-locale = "0.3"
+
 # Error handling and logging
 thiserror.workspace = true
 tracing.workspace = true

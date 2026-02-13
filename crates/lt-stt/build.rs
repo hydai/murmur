@@ -43,7 +43,10 @@ fn main() {
     // Find the built static library.
     // Swift PM puts release artifacts under .build/release/
     let swift_build_dir = swift_package_dir.join(".build").join("release");
-    println!("cargo:rustc-link-search=native={}", swift_build_dir.display());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        swift_build_dir.display()
+    );
     println!("cargo:rustc-link-lib=static=SpeechBridge");
 
     // Link Apple frameworks required by the Swift bridge.
@@ -52,33 +55,24 @@ fn main() {
     println!("cargo:rustc-link-lib=framework=Foundation");
     println!("cargo:rustc-link-lib=framework=CoreMedia");
 
-    // Link the Swift runtime and standard library.
-    // Find the Swift lib directory from the toolchain.
-    if let Some(dir) = get_swift_lib_dir() {
-        println!("cargo:rustc-link-search=native={}", dir);
+    // Link the Swift runtime libraries.
+    // On macOS 26+, these live in /usr/lib/swift/ (dyld shared cache).
+    // The toolchain's lib/swift/macosx/ contains static compatibility stubs.
+    if let Some(toolchain_dir) = get_swift_toolchain_lib_dir() {
+        println!("cargo:rustc-link-search=native={}", toolchain_dir);
     }
 
-    // The Swift static library needs these runtime libraries.
+    // System Swift runtime — rpath so dyld can resolve at runtime.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
+
+    // Link Swift runtime dylibs from system.
     println!("cargo:rustc-link-lib=dylib=swiftCore");
-    println!("cargo:rustc-link-lib=dylib=swift_Concurrency");
-    println!("cargo:rustc-link-lib=dylib=swift_StringProcessing");
     println!("cargo:rustc-link-lib=dylib=swiftFoundation");
     println!("cargo:rustc-link-lib=dylib=swiftDispatch");
 }
 
-/// Find the Swift runtime library directory.
-fn get_swift_lib_dir() -> Option<String> {
-    // Try xcrun to find the toolchain.
-    let output = Command::new("xcrun")
-        .args(["--show-sdk-path"])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    // The Swift runtime dylibs are typically in the toolchain's lib/swift/macosx/
+/// Find the Swift toolchain library directory (contains .a compatibility stubs).
+fn get_swift_toolchain_lib_dir() -> Option<String> {
     let output = Command::new("xcrun")
         .args(["--toolchain", "default", "--find", "swift"])
         .output()
@@ -89,10 +83,8 @@ fn get_swift_lib_dir() -> Option<String> {
     }
 
     let swift_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let swift_bin_dir = PathBuf::from(&swift_path)
+    let lib_dir = PathBuf::from(&swift_path)
         .parent()?
-        .to_path_buf();
-    let lib_dir = swift_bin_dir
         .parent()?
         .join("lib")
         .join("swift")
