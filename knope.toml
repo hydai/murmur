@@ -16,6 +16,12 @@ type = "PrepareRelease"
 type = "CreatePullRequest"
 base = "main"
 
+[workflows.steps.title]
+template = "chore: release $version"
+
+[workflows.steps.body]
+template = "$changelog"
+
 [[workflows]]
 name = "release"
 
