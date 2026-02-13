@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check & Test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: ui
+        run: npm run build
+
+      - name: Cargo check
+        run: cargo check --workspace
+
+      - name: Cargo test
+        run: cargo test --workspace
+
+      - name: Cargo clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Cargo fmt
+        run: cargo fmt --all -- --check
+
+  build:
+    name: Build
+    needs: check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli
+
+      - name: Build Tauri app
+        run: cargo tauri build
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: murmur-dmg
+          path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
