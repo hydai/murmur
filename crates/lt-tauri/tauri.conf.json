@@ -2,9 +2,9 @@
   "productName": "Localtype",
   "identifier": "com.localtype.app",
   "build": {
-    "beforeDevCommand": "npm --prefix /Users/hydai/workspace/vibe/localtype/ui run dev",
+    "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm --prefix /Users/hydai/workspace/vibe/localtype/ui run build",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "../../ui/dist"
   },
   "bundle": {
@@ -41,11 +41,8 @@
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
-  "plugins": {
-    "globalShortcut": {
-      "shortcuts": ["Cmd+Shift+Space"]
-    }
-  }
+  "plugins": {}
 }

@@ -24,7 +24,7 @@ use tracing_subscriber;
 #[derive(Clone)]
 struct AppState {
     pipeline: Arc<Mutex<PipelineOrchestrator>>,
-    event_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    event_task: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -299,7 +299,7 @@ async fn set_hotkey(hotkey: String, app: tauri::AppHandle) -> Result<(), String>
     app.global_shortcut()
         .on_shortcut(hotkey_str.as_str(), move |_app, _shortcut, _event| {
             let handle = app_handle.clone();
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 let state = handle.state::<AppState>();
                 let is_currently_recording = {
                     let pipeline = state.pipeline.lock().await;
@@ -385,7 +385,7 @@ async fn start_pipeline(
     let app_clone = app.clone();
 
     // Spawn task to forward pipeline events to frontend
-    let event_task = tokio::spawn(async move {
+    let event_task = tauri::async_runtime::spawn(async move {
         while let Ok(event) = event_rx.recv().await {
             match event {
                 PipelineEvent::StateChanged { state, timestamp_ms } => {
@@ -756,22 +756,21 @@ fn rebuild_tray_menu(app: &tauri::AppHandle, is_recording: bool) -> Result<(), B
     };
     tray.set_tooltip(Some(tooltip))?;
 
-    // Update icon to reflect recording state
-    if let Ok(tray_icon_path) = app.path().resolve("icons/32x32.png", tauri::path::BaseDirectory::Resource) {
-        if let Ok(icon_image) = image::open(&tray_icon_path) {
-            let rgba_image = icon_image.to_rgba8();
-            let (width, height) = rgba_image.dimensions();
-            let original_bytes = rgba_image.into_raw();
+    // Update icon to reflect recording state using embedded icon
+    let icon_png_bytes = include_bytes!("../icons/32x32.png");
+    if let Ok(icon_image) = image::load_from_memory(icon_png_bytes) {
+        let rgba_image = icon_image.to_rgba8();
+        let (width, height) = rgba_image.dimensions();
+        let original_bytes = rgba_image.into_raw();
 
-            let icon_bytes = if is_recording {
-                create_recording_icon(&original_bytes, width, height)
-            } else {
-                original_bytes
-            };
+        let icon_bytes = if is_recording {
+            create_recording_icon(&original_bytes, width, height)
+        } else {
+            original_bytes
+        };
 
-            let icon = tauri::image::Image::new(&icon_bytes, width, height);
-            let _ = tray.set_icon(Some(icon));
-        }
+        let icon = tauri::image::Image::new(&icon_bytes, width, height);
+        let _ = tray.set_icon(Some(icon));
     }
 
     Ok(())
@@ -884,13 +883,10 @@ fn main() {
             open_system_preferences
         ])
         .setup(|app| {
-            // Set up system tray
-            let tray_icon_path = app.path().resolve("icons/32x32.png", tauri::path::BaseDirectory::Resource)
-                .expect("Failed to resolve tray icon path");
-
-            // Load icon from file
-            let icon_image = image::open(&tray_icon_path)
-                .expect("Failed to load tray icon")
+            // Set up system tray - embed icon at compile time to avoid runtime path issues
+            let icon_png_bytes = include_bytes!("../icons/32x32.png");
+            let icon_image = image::load_from_memory(icon_png_bytes)
+                .expect("Failed to decode embedded tray icon")
                 .to_rgba8();
             let (width, height) = icon_image.dimensions();
             let icon_bytes = icon_image.into_raw();
@@ -928,7 +924,7 @@ fn main() {
                     let app_handle = app.clone();
                     match event.id.as_ref() {
                         "toggle_recording" => {
-                            tokio::spawn(async move {
+                            tauri::async_runtime::spawn(async move {
                                 let state = app_handle.state::<AppState>();
                                 let is_currently_recording = {
                                     let pipeline = state.pipeline.lock().await;
@@ -983,7 +979,7 @@ fn main() {
             }
 
             // Perform LLM health checks
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 tracing::info!("Checking available LLM processors...");
 
                 // Check Gemini CLI
@@ -1023,11 +1019,11 @@ fn main() {
             // Register the shortcut handler first
             if let Err(e) =
                 app.global_shortcut()
-                    .on_shortcut("Cmd+Shift+Space", move |_app, _shortcut, _event| {
+                    .on_shortcut("Cmd+Shift+L", move |_app, _shortcut, _event| {
                         // Toggle pipeline using the cloned handle
                         let handle = app_handle.clone();
 
-                        tokio::spawn(async move {
+                        tauri::async_runtime::spawn(async move {
                             let state = handle.state::<AppState>();
 
                             let is_currently_recording = {
@@ -1050,8 +1046,8 @@ fn main() {
             }
 
             // Try to register the global shortcut (non-fatal if it fails)
-            match app.global_shortcut().register("Cmd+Shift+Space") {
-                Ok(_) => tracing::info!("Global shortcut Cmd+Shift+Space registered successfully"),
+            match app.global_shortcut().register("Cmd+Shift+L") {
+                Ok(_) => tracing::info!("Global shortcut Cmd+Shift+L registered successfully"),
                 Err(e) => tracing::warn!(
                     "Failed to register global shortcut: {}. The app will still work, but you'll need to use the window controls.",
                     e

@@ -13,8 +13,8 @@ llm_processor = "gemini"
 output_mode = "clipboard"
 
 # Global Hotkey
-# Format: "Modifier+Key" (e.g., "Cmd+Shift+Space", "Ctrl+Alt+T")
-hotkey = "Cmd+Shift+Space"
+# Format: "Modifier+Key" (e.g., "Cmd+Shift+L", "Ctrl+Alt+T")
+hotkey = "Cmd+Shift+L"
 
 # API Keys
 # Store your API keys here or use environment variables

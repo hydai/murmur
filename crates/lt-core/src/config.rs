@@ -64,7 +64,7 @@ pub struct AppConfig {
     /// API keys (provider_name -> api_key)
     pub api_keys: HashMap<String, String>,
 
-    /// Global hotkey (e.g., "Cmd+Shift+Space")
+    /// Global hotkey (e.g., "Cmd+Shift+L")
     pub hotkey: String,
 
     /// Selected LLM processor
@@ -82,7 +82,7 @@ impl Default for AppConfig {
         Self {
             stt_provider: SttProviderType::default(),
             api_keys: HashMap::new(),
-            hotkey: "Cmd+Shift+Space".to_string(),
+            hotkey: "Cmd+Shift+L".to_string(),
             llm_processor: LlmProcessorType::default(),
             output_mode: OutputMode::default(),
             ui_preferences: UiPreferences::default(),
