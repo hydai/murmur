@@ -1,56 +1,55 @@
-<script>
+<script lang="ts">
   import ProviderConfig from './ProviderConfig.svelte';
   import DictionaryEditor from './DictionaryEditor.svelte';
   import LlmConfig from './LlmConfig.svelte';
   import HotkeyConfig from './HotkeyConfig.svelte';
   import OutputConfig from './OutputConfig.svelte';
 
-  export let visible = false;
-  export let onClose = () => {};
+  let { visible, onClose }: { visible: boolean; onClose: () => void } = $props();
 
-  let activeTab = 'providers';
+  let activeTab = $state('providers');
 
-  function switchTab(tab) {
+  function switchTab(tab: string) {
     activeTab = tab;
   }
 </script>
 
 {#if visible}
-  <div class="settings-overlay" on:click={onClose} on:keypress={(e) => e.key === 'Escape' && onClose()} role="presentation">
-    <div class="settings-panel" on:click|stopPropagation role="dialog">
+  <div class="settings-overlay" onclick={onClose} onkeydown={(e) => e.key === 'Escape' && onClose()} role="presentation">
+    <div class="settings-panel" onclick={(e) => e.stopPropagation()} role="dialog">
       <div class="settings-header">
         <h1>Settings</h1>
-        <button class="close-btn" on:click={onClose}>✕</button>
+        <button class="close-btn" onclick={onClose}>✕</button>
       </div>
 
       <div class="settings-tabs">
         <button
           class="tab-button {activeTab === 'providers' ? 'active' : ''}"
-          on:click={() => switchTab('providers')}
+          onclick={() => switchTab('providers')}
         >
           STT Providers
         </button>
         <button
           class="tab-button {activeTab === 'llm' ? 'active' : ''}"
-          on:click={() => switchTab('llm')}
+          onclick={() => switchTab('llm')}
         >
           LLM Processor
         </button>
         <button
           class="tab-button {activeTab === 'hotkey' ? 'active' : ''}"
-          on:click={() => switchTab('hotkey')}
+          onclick={() => switchTab('hotkey')}
         >
           Hotkey
         </button>
         <button
           class="tab-button {activeTab === 'output' ? 'active' : ''}"
-          on:click={() => switchTab('output')}
+          onclick={() => switchTab('output')}
         >
           Output
         </button>
         <button
           class="tab-button {activeTab === 'dictionary' ? 'active' : ''}"
-          on:click={() => switchTab('dictionary')}
+          onclick={() => switchTab('dictionary')}
         >
           Dictionary
         </button>

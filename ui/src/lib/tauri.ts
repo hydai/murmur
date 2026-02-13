@@ -16,5 +16,19 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
     await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS));
   }
 
-  throw new Error(`Tauri IPC bridge not available after ${MAX_ATTEMPTS * INTERVAL_MS}ms (cmd: ${cmd})`);
+  // Build a diagnostic error message
+  const tauriObj = (window as any).__TAURI_INTERNALS__;
+  let detail: string;
+  if (tauriObj === undefined) {
+    detail = '__TAURI_INTERNALS__ is not defined. '
+      + 'This usually means the app is running in a regular browser instead of the Tauri webview. '
+      + 'Start the app with `cargo tauri dev` so the IPC bridge is injected.';
+  } else if (typeof tauriObj.invoke !== 'function') {
+    detail = `__TAURI_INTERNALS__ exists but .invoke is ${typeof tauriObj.invoke}. `
+      + 'The IPC bridge may not have finished initializing.';
+  } else {
+    detail = 'Unknown IPC failure.';
+  }
+
+  throw new Error(`Tauri IPC not available after ${MAX_ATTEMPTS * INTERVAL_MS}ms (cmd: ${cmd}). ${detail}`);
 }

@@ -2,9 +2,9 @@
   "productName": "Localtype",
   "identifier": "com.localtype.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "cd ../../ui && npm run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "cd ../../ui && npm run build",
     "frontendDist": "../../ui/dist"
   },
   "bundle": {
