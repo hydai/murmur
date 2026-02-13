@@ -36,6 +36,11 @@ final class SpeechSession: @unchecked Sendable {
     // Background task for iterating transcription results.
     private let resultTask: Task<Void, Never>
 
+    // Cumulative audio timeline in nanoseconds.
+    // Each buffer's start time = previous buffer's end time.
+    // This prevents timestamp overlap errors from SpeechAnalyzer.
+    private var audioTimelineNs: Int64 = 0
+
     init?(
         localeIdentifier: String,
         ctx: UnsafeMutableRawPointer?,
@@ -125,8 +130,13 @@ final class SpeechSession: @unchecked Sendable {
         guard let destPtr = inputBuffer.int16ChannelData?[0] else { return false }
         destPtr.update(from: samples, count: count)
 
-        // Wrap as AnalyzerInput and yield into the stream.
-        let startTime = CMTime(value: CMTimeValue(timestampMs), timescale: 1000)
+        // Compute monotonic non-overlapping start time from cumulative sample count.
+        // Each buffer starts exactly where the previous one ended — no overlap, no gaps.
+        // The `timestampMs` parameter from Rust is ignored (wall clock ≠ audio timeline).
+        let startTime = CMTime(value: CMTimeValue(audioTimelineNs), timescale: 1_000_000_000)
+        let durationNs = Int64(count) * 1_000_000_000 / 16000  // samples / 16kHz in nanoseconds
+        audioTimelineNs += durationNs
+
         let input = AnalyzerInput(buffer: inputBuffer, bufferStartTime: startTime)
         audioContinuation.yield(input)
         return true
