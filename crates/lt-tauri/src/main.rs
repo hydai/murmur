@@ -198,14 +198,7 @@ async fn get_stt_providers() -> Result<Vec<SttProviderInfo>, String> {
         let model_status = if !available {
             "unavailable".to_string()
         } else {
-            let locale = &config.apple_stt_locale;
-            let check_locale = if locale == "auto" {
-                sys_locale::get_locale()
-                    .unwrap_or_else(|| "en_US".to_string())
-                    .replace('-', "_")
-            } else {
-                locale.clone()
-            };
+            let check_locale = resolve_apple_locale(&config.apple_stt_locale);
             match lt_stt::apple::check_model_status(&check_locale) {
                 lt_stt::apple::SpeechModelStatus::Installed => "installed".to_string(),
                 lt_stt::apple::SpeechModelStatus::NotInstalled => "not_installed".to_string(),
@@ -231,6 +224,19 @@ async fn get_stt_providers() -> Result<Vec<SttProviderInfo>, String> {
 // Apple STT Commands (macOS only)
 // ============================================================================
 
+/// Resolve "auto" locale to the actual system locale (normalized with underscores).
+/// Used by both `get_stt_providers` and `download_apple_stt_model` to avoid passing
+/// the literal string "auto" to Swift FFI (which creates an invalid Locale).
+fn resolve_apple_locale(locale: &str) -> String {
+    if locale == "auto" {
+        sys_locale::get_locale()
+            .unwrap_or_else(|| "en_US".to_string())
+            .replace('-', "_")
+    } else {
+        locale.to_string()
+    }
+}
+
 #[tauri::command]
 async fn get_apple_stt_locales() -> Result<Vec<String>, String> {
     #[cfg(target_os = "macos")]
@@ -247,17 +253,24 @@ async fn get_apple_stt_locales() -> Result<Vec<String>, String> {
 async fn download_apple_stt_model(locale: String, app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let mut rx = lt_stt::apple::download_model(&locale);
+        let resolved_locale = resolve_apple_locale(&locale);
+        let mut rx = lt_stt::apple::download_model(&resolved_locale);
         let app_clone = app.clone();
 
         tauri::async_runtime::spawn(async move {
             while let Some((progress, finished)) = rx.recv().await {
+                let error = if progress == 0.0 && finished {
+                    Some("Download failed or model unavailable for this locale")
+                } else {
+                    None
+                };
                 let _ = app_clone.emit(
                     "apple-stt-model-progress",
                     serde_json::json!({
-                        "locale": locale,
+                        "locale": resolved_locale,
                         "progress": progress,
-                        "finished": finished
+                        "finished": finished,
+                        "error": error
                     }),
                 );
                 if finished {

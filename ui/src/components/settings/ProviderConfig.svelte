@@ -28,6 +28,9 @@
   let appleSttLocale = $state('auto');
   let modelDownloadProgress = $state(0);
   let modelDownloading = $state(false);
+  let downloadStatus = $state<'' | 'checking' | 'downloading' | 'success' | 'already_installed' | 'error'>('');
+  let downloadError = $state('');
+  let downloadStartTime = $state(0);
 
   let unlistenProgress: UnlistenFn | null = null;
 
@@ -36,13 +39,37 @@
     await loadConfig();
 
     // Listen for model download progress events
-    unlistenProgress = await listen<{ locale: string; progress: number; finished: boolean }>(
+    unlistenProgress = await listen<{ locale: string; progress: number; finished: boolean; error: string | null }>(
       'apple-stt-model-progress',
       (event) => {
-        modelDownloadProgress = event.payload.progress;
-        if (event.payload.finished) {
+        const { progress, finished, error: errorMsg } = event.payload;
+        modelDownloadProgress = progress;
+
+        if (!finished && progress > 0) {
+          downloadStatus = 'downloading';
+        }
+
+        if (finished) {
           modelDownloading = false;
-          modelDownloadProgress = 0;
+          const elapsed = Date.now() - downloadStartTime;
+
+          if (errorMsg) {
+            downloadStatus = 'error';
+            downloadError = errorMsg;
+          } else if (elapsed < 500 && progress >= 1.0) {
+            // Completed almost instantly — model was already installed
+            downloadStatus = 'already_installed';
+          } else {
+            downloadStatus = 'success';
+          }
+
+          // Auto-clear status after 4s
+          setTimeout(() => {
+            downloadStatus = '';
+            downloadError = '';
+            modelDownloadProgress = 0;
+          }, 4000);
+
           // Reload providers to update model status
           loadProviders();
         }
@@ -230,14 +257,19 @@
     if (!provider.model_status || provider.model_status !== 'not_installed') return;
 
     try {
+      downloadStatus = 'checking';
+      downloadError = '';
       modelDownloading = true;
       modelDownloadProgress = 0;
+      downloadStartTime = Date.now();
       error = '';
 
       await invoke('download_apple_stt_model', { locale: appleSttLocale });
     } catch (err) {
-      error = `Failed to start model download: ${err}`;
+      downloadStatus = 'error';
+      downloadError = `${err}`;
       modelDownloading = false;
+      error = `Failed to start model download: ${err}`;
       console.error(error);
     }
   }
@@ -329,10 +361,24 @@
           {/if}
         </div>
 
-        {#if modelDownloading && provider.id === 'apple_stt'}
-          <div class="progress-bar-container">
-            <div class="progress-bar" style="width: {modelDownloadProgress * 100}%"></div>
-          </div>
+        {#if provider.id === 'apple_stt' && (modelDownloading || downloadStatus)}
+          {#if downloadStatus === 'checking'}
+            <div class="download-status">Checking model availability...</div>
+          {:else if downloadStatus === 'downloading'}
+            <div class="download-status">Downloading speech model — {Math.round(modelDownloadProgress * 100)}%</div>
+          {/if}
+          {#if modelDownloading}
+            <div class="progress-bar-container">
+              <div class="progress-bar" style="width: {modelDownloadProgress * 100}%"></div>
+            </div>
+          {/if}
+          {#if downloadStatus === 'success'}
+            <div class="download-success">Model downloaded successfully</div>
+          {:else if downloadStatus === 'already_installed'}
+            <div class="download-success">Model already installed</div>
+          {:else if downloadStatus === 'error'}
+            <div class="download-error">{downloadError || 'Download failed'}</div>
+          {/if}
         {/if}
 
         {#if currentProvider === provider.id && provider.id === 'apple_stt' && appleSttLocales.length > 0}
@@ -569,18 +615,36 @@
     color: rgba(34, 197, 94, 0.8);
   }
 
+  .download-status {
+    margin-top: 10px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.6);
+  }
+
+  .download-success {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #86efac;
+  }
+
+  .download-error {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #fca5a5;
+  }
+
   .progress-bar-container {
-    margin-top: 12px;
-    height: 4px;
+    margin-top: 8px;
+    height: 6px;
     background: rgba(255, 255, 255, 0.1);
-    border-radius: 2px;
+    border-radius: 3px;
     overflow: hidden;
   }
 
   .progress-bar {
     height: 100%;
     background: #3b82f6;
-    border-radius: 2px;
+    border-radius: 3px;
     transition: width 0.3s ease;
   }
 
