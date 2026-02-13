@@ -18,7 +18,6 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use tokio::sync::Mutex;
-use tracing_subscriber;
 
 /// Application state using unified pipeline
 #[derive(Clone)]

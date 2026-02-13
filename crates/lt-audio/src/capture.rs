@@ -181,7 +181,7 @@ impl AudioCapture {
 
         let data_callback = move |data: &[i16], _: &cpal::InputCallbackInfo| {
             let samples = data.to_vec();
-            if let Err(_) = raw_tx.try_send(samples) {
+            if raw_tx.try_send(samples).is_err() {
                 warn!("Audio buffer full, dropping frame");
             }
         };
@@ -208,7 +208,7 @@ impl AudioCapture {
                     (sample as i32 - 32768) as i16
                 })
                 .collect();
-            if let Err(_) = raw_tx.try_send(samples) {
+            if raw_tx.try_send(samples).is_err() {
                 warn!("Audio buffer full, dropping frame");
             }
         };
@@ -235,7 +235,7 @@ impl AudioCapture {
                     (clamped * i16::MAX as f32) as i16
                 })
                 .collect();
-            if let Err(_) = raw_tx.try_send(samples) {
+            if raw_tx.try_send(samples).is_err() {
                 warn!("Audio buffer full, dropping frame");
             }
         };
@@ -303,7 +303,7 @@ impl AudioCapture {
             let audio_level = vad.process(&resampled, timestamp_ms);
 
             // Send audio level (non-blocking)
-            if let Err(_) = level_tx.try_send(audio_level) {
+            if level_tx.try_send(audio_level).is_err() {
                 // Level channel full - skip this update
                 // UI updates can be dropped without issue
             }
@@ -314,7 +314,7 @@ impl AudioCapture {
                 timestamp_ms,
             };
 
-            if let Err(_) = chunk_tx.try_send(chunk) {
+            if chunk_tx.try_send(chunk).is_err() {
                 // Chunk channel full - this is more critical but we still don't want to block
                 warn!("Audio chunk channel full, dropping chunk");
             }

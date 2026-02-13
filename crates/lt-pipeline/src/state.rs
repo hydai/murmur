@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 /// Pipeline state machine
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PipelineState {
     /// Pipeline is idle, ready to start
+    #[default]
     Idle,
     /// Recording audio from microphone
     Recording,
@@ -16,12 +17,6 @@ pub enum PipelineState {
     Done,
     /// Pipeline encountered an error
     Error,
-}
-
-impl Default for PipelineState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 /// Pipeline events emitted during state transitions

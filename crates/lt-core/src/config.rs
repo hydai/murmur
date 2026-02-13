@@ -6,32 +6,22 @@ use crate::error::{MurmurError, Result};
 use crate::output::OutputMode;
 
 /// STT provider type
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SttProviderType {
+    #[default]
     ElevenLabs,
     OpenAI,
     Groq,
 }
 
-impl Default for SttProviderType {
-    fn default() -> Self {
-        Self::ElevenLabs
-    }
-}
-
 /// LLM processor type
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmProcessorType {
+    #[default]
     Gemini,
     Copilot,
-}
-
-impl Default for LlmProcessorType {
-    fn default() -> Self {
-        Self::Gemini
-    }
 }
 
 /// UI preferences

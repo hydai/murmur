@@ -80,7 +80,7 @@ impl PersonalDictionary {
             .filter(|e| {
                 e.term.to_lowercase().contains(&query_lower)
                     || e.aliases.iter().any(|a| a.to_lowercase().contains(&query_lower))
-                    || e.description.as_ref().map_or(false, |d| d.to_lowercase().contains(&query_lower))
+                    || e.description.as_ref().is_some_and(|d| d.to_lowercase().contains(&query_lower))
             })
             .cloned()
             .collect()
