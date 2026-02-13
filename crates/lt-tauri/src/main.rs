@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tokio::sync::Mutex;
 
 /// Application state using unified pipeline
@@ -427,7 +427,11 @@ async fn set_hotkey(hotkey: String, app: tauri::AppHandle) -> Result<(), String>
 
     // Set up the handler for the new hotkey
     app.global_shortcut()
-        .on_shortcut(hotkey_str.as_str(), move |_app, _shortcut, _event| {
+        .on_shortcut(hotkey_str.as_str(), move |_app, _shortcut, event| {
+            // Only process key PRESS, not release
+            if event.state != ShortcutState::Pressed {
+                return;
+            }
             let handle = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 let state = handle.state::<AppState>();
@@ -448,11 +452,6 @@ async fn set_hotkey(hotkey: String, app: tauri::AppHandle) -> Result<(), String>
             });
         })
         .map_err(|e| format!("Failed to set hotkey handler: {}", e))?;
-
-    // Register the hotkey
-    app.global_shortcut()
-        .register(hotkey.as_str())
-        .map_err(|e| format!("Failed to register hotkey '{}': {}", hotkey, e))?;
 
     tracing::info!("Hotkey updated to: {}", hotkey);
     Ok(())
@@ -1271,11 +1270,15 @@ fn main() {
             // Try to register global shortcut for pipeline toggle
             let app_handle = app.handle().clone();
 
-            // Register the shortcut handler first
-            let hotkey_for_handler = startup_hotkey.clone();
+            // Register the shortcut handler (on_shortcut registers internally)
             if let Err(e) =
                 app.global_shortcut()
-                    .on_shortcut(startup_hotkey.as_str(), move |_app, _shortcut, _event| {
+                    .on_shortcut(startup_hotkey.as_str(), move |_app, _shortcut, event| {
+                        // Only process key PRESS, not release
+                        if event.state != ShortcutState::Pressed {
+                            return;
+                        }
+
                         // Toggle pipeline using the cloned handle
                         let handle = app_handle.clone();
 
@@ -1300,15 +1303,8 @@ fn main() {
             {
                 tracing::warn!("Failed to set up shortcut handler: {}", e);
             }
-
-            // Try to register the global shortcut (non-fatal if it fails)
-            match app.global_shortcut().register(hotkey_for_handler.as_str()) {
-                Ok(_) => tracing::info!("Global shortcut {} registered successfully", hotkey_for_handler),
-                Err(e) => tracing::warn!(
-                    "Failed to register global shortcut {}: {}. The app will still work, but you'll need to use the window controls.",
-                    hotkey_for_handler, e
-                ),
-            }
+            // Note: on_shortcut() internally registers the shortcut, so no
+            // separate register() call is needed.
 
             tracing::info!("Murmur started successfully with unified pipeline");
             Ok(())

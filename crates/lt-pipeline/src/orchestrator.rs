@@ -344,15 +344,17 @@ impl PipelineOrchestrator {
                 .map_err(|e| MurmurError::Audio(e.to_string()))?;
         }
 
-        // Cancel ALL tasks (including transcription — this is a force stop)
+        // Cancel level task (just UI, safe to abort)
         if let Some(task) = self.level_task.lock().await.take() {
             task.abort();
         }
 
-        if let Some(task) = self.audio_task.lock().await.take() {
-            task.abort();
-        }
+        // DON'T abort audio_task — let it finish naturally.
+        // Stopping audio capture (above) closes chunk_tx, causing chunk_rx.recv()
+        // to return None, which triggers stt.stop_session() for clean shutdown.
+        // This is important for Apple STT's destroyAndWait() synchronization.
 
+        // Abort transcription task (force stop — no LLM processing on stop)
         if let Some(task) = self.transcription_task.lock().await.take() {
             task.abort();
         }

@@ -147,10 +147,19 @@ final class SpeechSession: @unchecked Sendable {
         audioContinuation.finish()
     }
 
-    /// Cancel the result iteration task and clean up.
-    func destroy() {
+    /// Cancel the result iteration task, wait for completion, and clean up.
+    /// This ensures no callbacks fire after Rust frees the CallbackContext.
+    func destroyAndWait() {
         audioContinuation.finish()
         resultTask.cancel()
+        // Synchronously wait for the task to complete.
+        let task = resultTask
+        let semaphore = DispatchSemaphore(value: 0)
+        Task {
+            _ = await task.value
+            semaphore.signal()
+        }
+        semaphore.wait()
     }
 }
 
@@ -335,7 +344,7 @@ public func speechBridgeStopSession(_ session: UnsafeMutableRawPointer?) {
 public func speechBridgeDestroySession(_ session: UnsafeMutableRawPointer?) {
     guard let session = session else { return }
     let obj = Unmanaged<SpeechSession>.fromOpaque(session)
-    obj.takeRetainedValue().destroy()
+    obj.takeRetainedValue().destroyAndWait()
 }
 
 @_cdecl("speech_bridge_free_string")
