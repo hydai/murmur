@@ -150,6 +150,7 @@ impl PipelineOrchestrator {
                             message: message.clone(),
                             recoverable: false,
                         });
+                        break; // Exit loop — let post-processing run or transition to Idle
                     }
                 }
             }
@@ -330,9 +331,11 @@ impl PipelineOrchestrator {
 
     /// Stop the pipeline
     pub async fn stop(&self) -> Result<()> {
-        let state = self.state.lock().await;
-
-        tracing::info!("Stopping pipeline (current state: {:?})", *state);
+        // Read state for logging only (don't hold lock across async operations)
+        {
+            let state = self.state.lock().await;
+            tracing::info!("Stopping pipeline (current state: {:?})", *state);
+        }
 
         // Stop audio capture
         if let Some(mut capture) = self.audio_capture.lock().await.take() {
@@ -341,7 +344,7 @@ impl PipelineOrchestrator {
                 .map_err(|e| MurmurError::Audio(e.to_string()))?;
         }
 
-        // Cancel tasks
+        // Cancel ALL tasks (including transcription — this is a force stop)
         if let Some(task) = self.level_task.lock().await.take() {
             task.abort();
         }
@@ -350,8 +353,16 @@ impl PipelineOrchestrator {
             task.abort();
         }
 
-        // Don't abort transcription task - let it finish processing
-        // It will transition to appropriate state when done
+        if let Some(task) = self.transcription_task.lock().await.take() {
+            task.abort();
+        }
+
+        // Transition to Idle immediately — no race window
+        {
+            let mut state = self.state.lock().await;
+            *state = PipelineState::Idle;
+        }
+        self.emit_state_change(PipelineState::Idle);
 
         tracing::info!("Pipeline stopped");
         Ok(())
@@ -359,21 +370,10 @@ impl PipelineOrchestrator {
 
     /// Reset the pipeline to idle state
     pub async fn reset(&self) -> Result<()> {
-        let mut state = self.state.lock().await;
-
-        // Stop if still running
-        if *state != PipelineState::Idle
-            && *state != PipelineState::Done
-            && *state != PipelineState::Error
-        {
-            drop(state);
+        let state = *self.state.lock().await;
+        if state != PipelineState::Idle {
             self.stop().await?;
-            state = self.state.lock().await;
         }
-
-        *state = PipelineState::Idle;
-        self.emit_state_change(PipelineState::Idle);
-
         tracing::info!("Pipeline reset to idle");
         Ok(())
     }
