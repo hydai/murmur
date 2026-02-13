@@ -110,104 +110,108 @@
   }
 
   onMount(async () => {
-    // Listen for audio level events
-    unlistenAudioLevel = await listen('audio-level', (event) => {
-      audioLevel = event.payload as { rms: number; voice_active: boolean; timestamp_ms: number };
-    });
+    try {
+      // Listen for audio level events
+      unlistenAudioLevel = await listen('audio-level', (event) => {
+        audioLevel = event.payload as { rms: number; voice_active: boolean; timestamp_ms: number };
+      });
 
-    // Listen for recording state changes
-    unlistenRecordingState = await listen('recording-state', (event) => {
-      const payload = event.payload as { is_recording: boolean };
-      isRecording = payload.is_recording;
-    });
+      // Listen for recording state changes
+      unlistenRecordingState = await listen('recording-state', (event) => {
+        const payload = event.payload as { is_recording: boolean };
+        isRecording = payload.is_recording;
+      });
 
-    // Listen for audio errors
-    unlistenAudioError = await listen('audio-error', (event) => {
-      const payload = event.payload as { message: string };
-      errorMessage = payload.message;
-      isRecording = false;
-    });
-
-    // Listen for transcription events
-    unlistenTranscriptionPartial = await listen('transcription-partial', (event) => {
-      const payload = event.payload as { text: string };
-      partialText = payload.text;
-    });
-
-    unlistenTranscriptionCommitted = await listen('transcription-committed', (event) => {
-      const payload = event.payload as { text: string };
-      // Append to committed text
-      if (committedText) {
-        committedText += ' ' + payload.text;
-      } else {
-        committedText = payload.text;
-      }
-      // Clear partial text when committed
-      partialText = '';
-    });
-
-    unlistenTranscriptionError = await listen('transcription-error', (event) => {
-      const payload = event.payload as { message: string };
-      errorMessage = payload.message;
-    });
-
-    // Listen for processing status events
-    unlistenProcessingStatus = await listen('processing-status', (event) => {
-      const payload = event.payload as { status: string };
-      isProcessing = payload.status === 'processing';
-    });
-
-    // Listen for processed transcription
-    unlistenTranscriptionProcessed = await listen('transcription-processed', (event) => {
-      const payload = event.payload as { text: string; processing_time_ms: number };
-      processedText = payload.text;
-      committedText = payload.text; // Update committed text with processed version
-      isProcessing = false;
-    });
-
-    // Listen for pipeline state changes
-    unlistenPipelineState = await listen('pipeline-state', (event) => {
-      const payload = event.payload as { state: string; timestamp_ms: number };
-      pipelineState = payload.state;
-
-      // Update processing flag based on pipeline state
-      isProcessing = payload.state === 'processing';
-
-      console.log('Pipeline state:', payload.state);
-    });
-
-    // Listen for pipeline result (final text with clipboard copy)
-    unlistenPipelineResult = await listen('pipeline-result', (event) => {
-      const payload = event.payload as { text: string; processing_time_ms: number };
-      processedText = payload.text;
-      committedText = payload.text;
-
-      // Show "Copied!" indicator
-      showCopiedIndicator = true;
-
-      // Hide after 2 seconds
-      setTimeout(() => {
-        showCopiedIndicator = false;
-      }, 2000);
-
-      console.log('Pipeline completed:', payload.text.length, 'chars in', payload.processing_time_ms, 'ms');
-    });
-
-    // Listen for pipeline errors
-    unlistenPipelineError = await listen('pipeline-error', (event) => {
-      const payload = event.payload as { message: string; recoverable: boolean };
-      errorMessage = payload.message;
-      if (!payload.recoverable) {
+      // Listen for audio errors
+      unlistenAudioError = await listen('audio-error', (event) => {
+        const payload = event.payload as { message: string };
+        errorMessage = payload.message;
         isRecording = false;
-      }
-    });
+      });
 
-    // Listen for command detection
-    unlistenCommandDetected = await listen('command-detected', (event) => {
-      const payload = event.payload as { command_name: string | null; timestamp_ms: number };
-      detectedCommand = payload.command_name;
-      console.log('Command detected:', payload.command_name);
-    });
+      // Listen for transcription events
+      unlistenTranscriptionPartial = await listen('transcription-partial', (event) => {
+        const payload = event.payload as { text: string };
+        partialText = payload.text;
+      });
+
+      unlistenTranscriptionCommitted = await listen('transcription-committed', (event) => {
+        const payload = event.payload as { text: string };
+        // Append to committed text
+        if (committedText) {
+          committedText += ' ' + payload.text;
+        } else {
+          committedText = payload.text;
+        }
+        // Clear partial text when committed
+        partialText = '';
+      });
+
+      unlistenTranscriptionError = await listen('transcription-error', (event) => {
+        const payload = event.payload as { message: string };
+        errorMessage = payload.message;
+      });
+
+      // Listen for processing status events
+      unlistenProcessingStatus = await listen('processing-status', (event) => {
+        const payload = event.payload as { status: string };
+        isProcessing = payload.status === 'processing';
+      });
+
+      // Listen for processed transcription
+      unlistenTranscriptionProcessed = await listen('transcription-processed', (event) => {
+        const payload = event.payload as { text: string; processing_time_ms: number };
+        processedText = payload.text;
+        committedText = payload.text; // Update committed text with processed version
+        isProcessing = false;
+      });
+
+      // Listen for pipeline state changes
+      unlistenPipelineState = await listen('pipeline-state', (event) => {
+        const payload = event.payload as { state: string; timestamp_ms: number };
+        pipelineState = payload.state;
+
+        // Update processing flag based on pipeline state
+        isProcessing = payload.state === 'processing';
+
+        console.log('Pipeline state:', payload.state);
+      });
+
+      // Listen for pipeline result (final text with clipboard copy)
+      unlistenPipelineResult = await listen('pipeline-result', (event) => {
+        const payload = event.payload as { text: string; processing_time_ms: number };
+        processedText = payload.text;
+        committedText = payload.text;
+
+        // Show "Copied!" indicator
+        showCopiedIndicator = true;
+
+        // Hide after 2 seconds
+        setTimeout(() => {
+          showCopiedIndicator = false;
+        }, 2000);
+
+        console.log('Pipeline completed:', payload.text.length, 'chars in', payload.processing_time_ms, 'ms');
+      });
+
+      // Listen for pipeline errors
+      unlistenPipelineError = await listen('pipeline-error', (event) => {
+        const payload = event.payload as { message: string; recoverable: boolean };
+        errorMessage = payload.message;
+        if (!payload.recoverable) {
+          isRecording = false;
+        }
+      });
+
+      // Listen for command detection
+      unlistenCommandDetected = await listen('command-detected', (event) => {
+        const payload = event.payload as { command_name: string | null; timestamp_ms: number };
+        detectedCommand = payload.command_name;
+        console.log('Command detected:', payload.command_name);
+      });
+    } catch (err) {
+      console.warn('Tauri event listeners unavailable (running in browser?):', err);
+    }
   });
 
   onDestroy(() => {
