@@ -837,10 +837,13 @@ fn main() {
     };
 
     // Initialize output sink (clipboard by default)
-    let output_sink = Arc::new(
-        CombinedOutput::new(OutputMode::Clipboard)
-            .expect("Failed to initialize output sink")
-    );
+    let output_sink = match CombinedOutput::new(OutputMode::Clipboard) {
+        Ok(output) => Arc::new(output),
+        Err(e) => {
+            eprintln!("Fatal: Failed to initialize output sink: {e}");
+            std::process::exit(1);
+        }
+    };
 
     // Create pipeline orchestrator
     let pipeline = PipelineOrchestrator::new(
@@ -887,9 +890,13 @@ fn main() {
         .setup(move |app| {
             // Set up system tray - embed icon at compile time to avoid runtime path issues
             let icon_png_bytes = include_bytes!("../icons/32x32.png");
-            let icon_image = image::load_from_memory(icon_png_bytes)
-                .expect("Failed to decode embedded tray icon")
-                .to_rgba8();
+            let icon_image = match image::load_from_memory(icon_png_bytes) {
+                Ok(img) => img.to_rgba8(),
+                Err(e) => {
+                    eprintln!("Fatal: Failed to decode embedded tray icon: {e}");
+                    std::process::exit(1);
+                }
+            };
             let (width, height) = icon_image.dimensions();
             let icon_bytes = icon_image.into_raw();
             let icon = tauri::image::Image::new(

@@ -1,0 +1,34 @@
+"$schema" = "../gen/schemas/desktop-schema.json"
+
+[[permission]]
+identifier = "allow-all-commands"
+description = "Allow all custom app commands"
+commands.allow = [
+    "toggle_overlay",
+    "get_status",
+    "start_pipeline",
+    "stop_pipeline",
+    "is_recording",
+    "get_pipeline_state",
+    "get_config",
+    "save_config",
+    "set_stt_provider",
+    "save_api_key",
+    "get_stt_providers",
+    "get_llm_processors",
+    "set_llm_processor",
+    "set_output_mode",
+    "set_hotkey",
+    "get_dictionary",
+    "add_dictionary_entry",
+    "update_dictionary_entry",
+    "delete_dictionary_entry",
+    "search_dictionary",
+    "check_permissions",
+    "request_microphone_permission",
+    "open_system_preferences",
+]
+
+[default]
+description = "Default permissions for the Localtype app"
+permissions = ["allow-all-commands"]

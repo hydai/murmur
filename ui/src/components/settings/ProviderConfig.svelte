@@ -27,7 +27,8 @@
 
   async function loadProviders() {
     try {
-      providers = await invoke<Provider[]>('get_stt_providers');
+      const result = await invoke<Provider[]>('get_stt_providers');
+      providers = result;
     } catch (err) {
       error = `Failed to load providers: ${err}`;
       console.error(error);
