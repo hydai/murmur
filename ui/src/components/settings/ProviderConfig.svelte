@@ -1,12 +1,15 @@
 <script lang="ts">
   import { safeInvoke as invoke } from '../../lib/tauri';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
   interface Provider {
     id: string;
     name: string;
     configured: boolean;
     provider_type: string;
+    requires_api_key: boolean;
+    model_status: string | null;
   }
 
   let providers = $state<Provider[]>([]);
@@ -20,9 +23,37 @@
   let success = $state('');
   let editingExistingKey = $state(false);
 
+  // Apple STT locale state
+  let appleSttLocales = $state<string[]>([]);
+  let appleSttLocale = $state('auto');
+  let modelDownloadProgress = $state(0);
+  let modelDownloading = $state(false);
+
+  let unlistenProgress: UnlistenFn | null = null;
+
   onMount(async () => {
     await loadProviders();
     await loadConfig();
+
+    // Listen for model download progress events
+    unlistenProgress = await listen<{ locale: string; progress: number; finished: boolean }>(
+      'apple-stt-model-progress',
+      (event) => {
+        modelDownloadProgress = event.payload.progress;
+        if (event.payload.finished) {
+          modelDownloading = false;
+          modelDownloadProgress = 0;
+          // Reload providers to update model status
+          loadProviders();
+        }
+      }
+    );
+  });
+
+  onDestroy(() => {
+    if (unlistenProgress) {
+      unlistenProgress();
+    }
   });
 
   async function loadProviders() {
@@ -37,8 +68,9 @@
 
   async function loadConfig() {
     try {
-      const config = await invoke<{ stt_provider: string }>('get_config');
+      const config = await invoke<{ stt_provider: string; apple_stt_locale: string }>('get_config');
       currentProvider = config.stt_provider.toLowerCase();
+      appleSttLocale = config.apple_stt_locale || 'auto';
     } catch (err) {
       error = `Failed to load config: ${err}`;
       console.error(error);
@@ -48,6 +80,42 @@
   async function selectProvider(providerId: string) {
     const provider = providers.find(p => p.id === providerId);
     if (!provider) return;
+
+    // If provider doesn't require API key (local provider), activate directly
+    if (!provider.requires_api_key) {
+      // Check if model needs downloading first
+      if (provider.model_status === 'not_installed') {
+        error = 'Speech model not installed. Click "Download Model" first.';
+        return;
+      }
+      if (provider.model_status === 'unavailable') {
+        error = 'This provider requires macOS 26 or later.';
+        return;
+      }
+
+      try {
+        loading = true;
+        error = '';
+        success = '';
+
+        await invoke('set_stt_provider', { provider: providerId });
+        currentProvider = providerId;
+
+        // Load available locales for Apple STT
+        if (providerId === 'apple_stt') {
+          await loadAppleSttLocales();
+        }
+
+        success = `Switched to ${provider.name}`;
+        setTimeout(() => { success = ''; }, 3000);
+      } catch (err) {
+        error = `Failed to switch provider: ${err}`;
+        console.error(error);
+      } finally {
+        loading = false;
+      }
+      return;
+    }
 
     if (!provider.configured) {
       selectedProvider = provider;
@@ -137,6 +205,9 @@
   }
 
   function getProviderStatusClass(provider: Provider): string {
+    if (provider.model_status === 'unavailable') {
+      return 'unavailable';
+    }
     if (currentProvider === provider.id) {
       return 'active';
     }
@@ -147,7 +218,53 @@
   }
 
   function getProviderTypeLabel(providerType: string): string {
-    return providerType === 'streaming' ? 'Streaming' : 'Batch';
+    switch (providerType) {
+      case 'streaming': return 'Streaming';
+      case 'batch': return 'Batch';
+      case 'local': return 'Local (On-Device)';
+      default: return providerType;
+    }
+  }
+
+  async function downloadModel(provider: Provider) {
+    if (!provider.model_status || provider.model_status !== 'not_installed') return;
+
+    try {
+      modelDownloading = true;
+      modelDownloadProgress = 0;
+      error = '';
+
+      await invoke('download_apple_stt_model', { locale: appleSttLocale });
+    } catch (err) {
+      error = `Failed to start model download: ${err}`;
+      modelDownloading = false;
+      console.error(error);
+    }
+  }
+
+  async function loadAppleSttLocales() {
+    try {
+      appleSttLocales = await invoke<string[]>('get_apple_stt_locales');
+    } catch (err) {
+      console.error('Failed to load Apple STT locales:', err);
+    }
+  }
+
+  async function changeAppleSttLocale(event: Event) {
+    const target = event.target as HTMLSelectElement;
+    const locale = target.value;
+    appleSttLocale = locale;
+
+    try {
+      await invoke('set_apple_stt_locale', { locale });
+      // Reload providers to get updated model status for new locale
+      await loadProviders();
+      success = `Language set to ${locale === 'auto' ? 'Auto-detect' : locale}`;
+      setTimeout(() => { success = ''; }, 3000);
+    } catch (err) {
+      error = `Failed to set locale: ${err}`;
+      console.error(error);
+    }
   }
 </script>
 
@@ -174,7 +291,7 @@
         <div class="provider-header">
           <h3>{provider.name}</h3>
           <div class="provider-actions">
-            {#if provider.configured}
+            {#if provider.requires_api_key && provider.configured}
               <button
                 class="edit-key-btn"
                 onclick={(e) => { e.stopPropagation(); editApiKey(provider); }}
@@ -183,18 +300,56 @@
                 Edit Key
               </button>
             {/if}
-            {#if currentProvider === provider.id}
+            {#if provider.model_status === 'not_installed'}
+              <button
+                class="download-btn"
+                onclick={(e) => { e.stopPropagation(); downloadModel(provider); }}
+                disabled={modelDownloading}
+              >
+                {modelDownloading ? 'Downloading...' : 'Download Model'}
+              </button>
+            {/if}
+            {#if provider.model_status === 'unavailable'}
+              <span class="badge badge-unavailable">macOS 26+</span>
+            {:else if currentProvider === provider.id}
               <span class="badge badge-active">Active</span>
             {:else if provider.configured}
               <span class="badge badge-configured">Configured</span>
-            {:else}
+            {:else if !provider.requires_api_key && provider.model_status === 'installed'}
+              <span class="badge badge-configured">Ready</span>
+            {:else if provider.requires_api_key}
               <span class="badge badge-not-configured">Not Configured</span>
             {/if}
           </div>
         </div>
         <div class="provider-details">
           <span class="provider-type">{getProviderTypeLabel(provider.provider_type)}</span>
+          {#if !provider.requires_api_key}
+            <span class="provider-note">No API key required</span>
+          {/if}
         </div>
+
+        {#if modelDownloading && provider.id === 'apple_stt'}
+          <div class="progress-bar-container">
+            <div class="progress-bar" style="width: {modelDownloadProgress * 100}%"></div>
+          </div>
+        {/if}
+
+        {#if currentProvider === provider.id && provider.id === 'apple_stt' && appleSttLocales.length > 0}
+          <div class="locale-selector" onclick={(e) => e.stopPropagation()}>
+            <label for="apple-stt-locale">Language:</label>
+            <select
+              id="apple-stt-locale"
+              value={appleSttLocale}
+              onchange={changeAppleSttLocale}
+            >
+              <option value="auto">Auto-detect</option>
+              {#each appleSttLocales as locale}
+                <option value={locale}>{locale}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
       </div>
     {/each}
   </div>
@@ -304,6 +459,18 @@
     border-color: rgba(239, 68, 68, 0.3);
   }
 
+  .provider-card.unavailable {
+    opacity: 0.5;
+    cursor: not-allowed;
+    border-color: rgba(255, 255, 255, 0.05);
+  }
+
+  .provider-card.unavailable:hover {
+    transform: none;
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.05);
+  }
+
   .provider-header {
     display: flex;
     justify-content: space-between;
@@ -317,7 +484,8 @@
     align-items: center;
   }
 
-  .edit-key-btn {
+  .edit-key-btn,
+  .download-btn {
     padding: 4px 10px;
     border-radius: 6px;
     border: 1px solid rgba(255, 255, 255, 0.2);
@@ -328,10 +496,27 @@
     transition: all 0.2s ease;
   }
 
-  .edit-key-btn:hover {
+  .edit-key-btn:hover,
+  .download-btn:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.15);
     color: #fff;
     border-color: rgba(255, 255, 255, 0.4);
+  }
+
+  .download-btn {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.4);
+    color: #93c5fd;
+  }
+
+  .download-btn:hover:not(:disabled) {
+    background: rgba(59, 130, 246, 0.3);
+    border-color: rgba(59, 130, 246, 0.6);
+  }
+
+  .download-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   h3 {
@@ -363,6 +548,11 @@
     color: #fca5a5;
   }
 
+  .badge-unavailable {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.5);
+  }
+
   .provider-details {
     display: flex;
     gap: 8px;
@@ -372,6 +562,53 @@
   .provider-type {
     font-size: 13px;
     color: rgba(255, 255, 255, 0.6);
+  }
+
+  .provider-note {
+    font-size: 12px;
+    color: rgba(34, 197, 94, 0.8);
+  }
+
+  .progress-bar-container {
+    margin-top: 12px;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-bar {
+    height: 100%;
+    background: #3b82f6;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+
+  .locale-selector {
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .locale-selector label {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .locale-selector select {
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(0, 0, 0, 0.3);
+    color: #fff;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .locale-selector select:focus {
+    outline: none;
+    border-color: rgba(59, 130, 246, 0.6);
   }
 
   .loading {
