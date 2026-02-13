@@ -6,5 +6,7 @@
     <string>Murmur needs microphone access for voice-to-text transcription</string>
     <key>NSAccessibilityUsageDescription</key>
     <string>Murmur needs Accessibility permission to simulate keyboard input for typing transcribed text</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Murmur uses on-device speech recognition for privacy-first voice-to-text transcription</string>
 </dict>
 </plist>

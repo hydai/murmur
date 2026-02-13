@@ -12,6 +12,8 @@ use lt_llm::{CopilotProcessor, GeminiProcessor};
 use lt_output::CombinedOutput;
 use lt_pipeline::{PipelineEvent, PipelineOrchestrator, PipelineState};
 use lt_stt::{ElevenLabsProvider, GroqProvider, OpenAIProvider};
+#[cfg(target_os = "macos")]
+use lt_stt::AppleSttProvider;
 use std::sync::Arc;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -118,6 +120,7 @@ async fn set_stt_provider(provider: String) -> Result<(), String> {
         "elevenlabs" => SttProviderType::ElevenLabs,
         "openai" => SttProviderType::OpenAI,
         "groq" => SttProviderType::Groq,
+        "apple_stt" => SttProviderType::AppleStt,
         _ => return Err(format!("Unknown STT provider: {}", provider)),
     };
 
@@ -153,34 +156,142 @@ struct SttProviderInfo {
     id: String,
     provider_type: String,
     configured: bool,
+    requires_api_key: bool,
+    model_status: Option<String>,
 }
 
 #[tauri::command]
 async fn get_stt_providers() -> Result<Vec<SttProviderInfo>, String> {
     let config = get_config().await?;
 
-    let providers = vec![
+    let mut providers = vec![
         SttProviderInfo {
             name: "ElevenLabs Scribe".to_string(),
             id: "elevenlabs".to_string(),
             provider_type: "streaming".to_string(),
             configured: config.api_keys.contains_key("elevenlabs"),
+            requires_api_key: true,
+            model_status: None,
         },
         SttProviderInfo {
             name: "OpenAI Whisper".to_string(),
             id: "openai".to_string(),
             provider_type: "batch".to_string(),
             configured: config.api_keys.contains_key("openai"),
+            requires_api_key: true,
+            model_status: None,
         },
         SttProviderInfo {
             name: "Groq Whisper Turbo".to_string(),
             id: "groq".to_string(),
             provider_type: "batch".to_string(),
             configured: config.api_keys.contains_key("groq"),
+            requires_api_key: true,
+            model_status: None,
         },
     ];
 
+    // Add Apple STT on macOS
+    #[cfg(target_os = "macos")]
+    {
+        let available = lt_stt::apple::is_available();
+        let model_status = if !available {
+            "unavailable".to_string()
+        } else {
+            let locale = &config.apple_stt_locale;
+            let check_locale = if locale == "auto" {
+                sys_locale::get_locale()
+                    .unwrap_or_else(|| "en_US".to_string())
+                    .replace('-', "_")
+            } else {
+                locale.clone()
+            };
+            match lt_stt::apple::check_model_status(&check_locale) {
+                lt_stt::apple::SpeechModelStatus::Installed => "installed".to_string(),
+                lt_stt::apple::SpeechModelStatus::NotInstalled => "not_installed".to_string(),
+                lt_stt::apple::SpeechModelStatus::Downloading => "downloading".to_string(),
+                lt_stt::apple::SpeechModelStatus::Unavailable => "unavailable".to_string(),
+            }
+        };
+
+        providers.push(SttProviderInfo {
+            name: "Apple Speech".to_string(),
+            id: "apple_stt".to_string(),
+            provider_type: "local".to_string(),
+            configured: available && model_status == "installed",
+            requires_api_key: false,
+            model_status: Some(model_status),
+        });
+    }
+
     Ok(providers)
+}
+
+// ============================================================================
+// Apple STT Commands (macOS only)
+// ============================================================================
+
+#[tauri::command]
+async fn get_apple_stt_locales() -> Result<Vec<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        Ok(lt_stt::apple::get_supported_locales())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(vec![])
+    }
+}
+
+#[tauri::command]
+async fn download_apple_stt_model(locale: String, app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut rx = lt_stt::apple::download_model(&locale);
+        let app_clone = app.clone();
+
+        tauri::async_runtime::spawn(async move {
+            while let Some((progress, finished)) = rx.recv().await {
+                let _ = app_clone.emit(
+                    "apple-stt-model-progress",
+                    serde_json::json!({
+                        "locale": locale,
+                        "progress": progress,
+                        "finished": finished
+                    }),
+                );
+                if finished {
+                    break;
+                }
+            }
+        });
+
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (locale, app);
+        Err("Apple STT is only available on macOS".to_string())
+    }
+}
+
+#[tauri::command]
+async fn set_apple_stt_locale(locale: String) -> Result<(), String> {
+    let config_path = AppConfig::default_config_file()
+        .map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    let mut config = if config_path.exists() {
+        AppConfig::load_from_file(&config_path)
+            .map_err(|e| format!("Failed to load config: {}", e))?
+    } else {
+        AppConfig::default()
+    };
+
+    config.apple_stt_locale = locale;
+
+    config
+        .save_to_file(&config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -396,6 +507,18 @@ async fn start_pipeline(
                 })?
                 .clone();
             Box::new(GroqProvider::new(api_key))
+        }
+        SttProviderType::AppleStt => {
+            #[cfg(target_os = "macos")]
+            {
+                Box::new(AppleSttProvider::new(config.apple_stt_locale.clone()))
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err(
+                    "Apple STT is only available on macOS 26+".to_string()
+                );
+            }
         }
     };
 
@@ -991,7 +1114,10 @@ fn main() {
             open_settings_window,
             check_permissions,
             request_microphone_permission,
-            open_system_preferences
+            open_system_preferences,
+            get_apple_stt_locales,
+            download_apple_stt_model,
+            set_apple_stt_locale
         ])
         .setup(move |app| {
             // Set up system tray - embed icon at compile time to avoid runtime path issues

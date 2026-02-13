@@ -13,6 +13,8 @@ pub enum SttProviderType {
     ElevenLabs,
     OpenAI,
     Groq,
+    #[serde(rename = "apple_stt")]
+    AppleStt,
 }
 
 /// LLM processor type
@@ -65,6 +67,14 @@ pub struct AppConfig {
 
     /// UI preferences
     pub ui_preferences: UiPreferences,
+
+    /// Apple STT locale ("auto" = detect system locale, or e.g. "en_US", "ja_JP")
+    #[serde(default = "default_apple_stt_locale")]
+    pub apple_stt_locale: String,
+}
+
+fn default_apple_stt_locale() -> String {
+    "auto".to_string()
 }
 
 impl Default for AppConfig {
@@ -76,6 +86,7 @@ impl Default for AppConfig {
             llm_processor: LlmProcessorType::default(),
             output_mode: OutputMode::default(),
             ui_preferences: UiPreferences::default(),
+            apple_stt_locale: default_apple_stt_locale(),
         }
     }
 }

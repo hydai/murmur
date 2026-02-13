@@ -1,7 +1,8 @@
 # Murmur Default Configuration
 
 # STT Provider Selection
-# Options: "elevenlabs", "openai", "groq"
+# Options: "elevenlabs", "openai", "groq", "apple_stt"
+# "apple_stt" uses on-device Apple SpeechTranscriber (macOS 26+, no API key needed)
 stt_provider = "elevenlabs"
 
 # LLM Processor Selection
@@ -22,6 +23,10 @@ hotkey = "Ctrl+`"
 # elevenlabs = "your-elevenlabs-api-key"
 # openai = "your-openai-api-key"
 # groq = "your-groq-api-key"
+
+# Apple STT Locale
+# "auto" = detect system language, or set a specific locale (e.g. "en_US", "ja_JP", "zh_TW")
+apple_stt_locale = "auto"
 
 # UI Preferences
 [ui_preferences]
