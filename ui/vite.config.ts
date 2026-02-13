@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [svelte()],
   clearScreen: false,
   server: {
-    port: 5173,
+    port: parseInt(process.env.LOCALTYPE_DEV_PORT || '5173'),
     strictPort: true,
     watch: {
       ignored: ["**/crates/**"]
