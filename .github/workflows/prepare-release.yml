@@ -20,6 +20,18 @@ jobs:
         with:
           version: 0.22.1
 
-      - run: knope prepare-release
+      - name: Prepare release
+        run: |
+          set +e
+          output=$(knope prepare-release 2>&1)
+          exit_code=$?
+          echo "$output"
+          if [ $exit_code -ne 0 ]; then
+            if echo "$output" | grep -q "no_release"; then
+              echo "No releasable changes — skipping"
+              exit 0
+            fi
+            exit $exit_code
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
