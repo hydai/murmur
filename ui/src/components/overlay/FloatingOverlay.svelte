@@ -305,7 +305,7 @@
         </div>
       </div>
 
-      <div class="app-title">Localtype</div>
+      <div class="app-title">Murmur</div>
 
       {#if showCopiedIndicator}
         <div class="copied-indicator" transition:fly={{ y: -10, duration: 300 }}>

@@ -3,8 +3,8 @@
 <plist version="1.0">
 <dict>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Localtype needs microphone access for voice-to-text transcription</string>
+    <string>Murmur needs microphone access for voice-to-text transcription</string>
     <key>NSAccessibilityUsageDescription</key>
-    <string>Localtype needs Accessibility permission to simulate keyboard input for typing transcribed text</string>
+    <string>Murmur needs Accessibility permission to simulate keyboard input for typing transcribed text</string>
 </dict>
 </plist>

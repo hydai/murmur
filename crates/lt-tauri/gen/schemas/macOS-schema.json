@@ -177,10 +177,10 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "Default permissions for the Localtype app\n#### This default permission set includes:\n\n- `allow-all-commands`",
+          "description": "Default permissions for the Murmur app\n#### This default permission set includes:\n\n- `allow-all-commands`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the Localtype app\n#### This default permission set includes:\n\n- `allow-all-commands`"
+          "markdownDescription": "Default permissions for the Murmur app\n#### This default permission set includes:\n\n- `allow-all-commands`"
         },
         {
           "description": "Allow all custom app commands",

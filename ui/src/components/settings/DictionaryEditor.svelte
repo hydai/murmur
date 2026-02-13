@@ -255,7 +255,7 @@
           id="term"
           type="text"
           bind:value={formData.term}
-          placeholder="e.g., Localtype"
+          placeholder="e.g., Murmur"
           class="form-input"
         />
       </div>
@@ -308,7 +308,7 @@
           id="edit-term"
           type="text"
           bind:value={formData.term}
-          placeholder="e.g., Localtype"
+          placeholder="e.g., Murmur"
           class="form-input"
         />
       </div>

@@ -93,7 +93,7 @@ impl Default for AppConfig {
 impl AppConfig {
     /// Get the default config directory path
     pub fn default_config_dir() -> Result<PathBuf> {
-        directories::ProjectDirs::from("com", "localtype", "Localtype")
+        directories::ProjectDirs::from("com", "hydai", "Murmur")
             .map(|proj_dirs| proj_dirs.config_dir().to_path_buf())
             .ok_or_else(|| LocaltypeError::Config("Failed to get config directory".to_string()))
     }

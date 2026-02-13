@@ -30,5 +30,5 @@ commands.allow = [
 ]
 
 [default]
-description = "Default permissions for the Localtype app"
+description = "Default permissions for the Murmur app"
 permissions = ["allow-all-commands"]

@@ -357,7 +357,7 @@ async fn start_pipeline(
         SttProviderType::ElevenLabs => {
             let api_key = config.api_keys.get("elevenlabs")
                 .ok_or_else(|| {
-                    "ElevenLabs API key not configured. Please add your API key to ~/.config/localtype/config.toml".to_string()
+                    "ElevenLabs API key not configured. Please add your API key in Settings".to_string()
                 })?
                 .clone();
             Box::new(ElevenLabsProvider::new(api_key))
@@ -365,7 +365,7 @@ async fn start_pipeline(
         SttProviderType::OpenAI => {
             let api_key = config.api_keys.get("openai")
                 .ok_or_else(|| {
-                    "OpenAI API key not configured. Please add your API key to ~/.config/localtype/config.toml".to_string()
+                    "OpenAI API key not configured. Please add your API key in Settings".to_string()
                 })?
                 .clone();
             Box::new(OpenAIProvider::new(api_key))
@@ -373,7 +373,7 @@ async fn start_pipeline(
         SttProviderType::Groq => {
             let api_key = config.api_keys.get("groq")
                 .ok_or_else(|| {
-                    "Groq API key not configured. Please add your API key to ~/.config/localtype/config.toml".to_string()
+                    "Groq API key not configured. Please add your API key in Settings".to_string()
                 })?
                 .clone();
             Box::new(GroqProvider::new(api_key))
@@ -697,7 +697,7 @@ async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
         "settings",
         tauri::WebviewUrl::App("index.html?view=settings".into()),
     )
-    .title("Localtype Settings")
+    .title("Murmur Settings")
     .inner_size(720.0, 560.0)
     .resizable(true)
     .center()
@@ -774,9 +774,9 @@ fn rebuild_tray_menu(app: &tauri::AppHandle, is_recording: bool) -> Result<(), B
 
     // Update tooltip to reflect recording state
     let tooltip = if is_recording {
-        "Localtype - Recording"
+        "Murmur - Recording"
     } else {
-        "Localtype"
+        "Murmur"
     };
     tray.set_tooltip(Some(tooltip))?;
 
@@ -952,7 +952,7 @@ fn main() {
             let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(icon)
                 .menu(&menu)
-                .tooltip("Localtype")
+                .tooltip("Murmur")
                 .show_menu_on_left_click(true)
                 .on_menu_event(move |app, event| {
                     let app_handle = app.clone();
@@ -1090,7 +1090,7 @@ fn main() {
                 ),
             }
 
-            tracing::info!("Localtype started successfully with unified pipeline");
+            tracing::info!("Murmur started successfully with unified pipeline");
             Ok(())
         })
         .run(tauri::generate_context!())
