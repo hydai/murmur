@@ -1,12 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { fade, fly, slide } from 'svelte/transition';
-  import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import WaveformIndicator from './WaveformIndicator.svelte';
   import TranscriptionView from './TranscriptionView.svelte';
-  import SettingsPanel from '../settings/SettingsPanel.svelte';
 
   interface Props {
     status: string;
@@ -24,7 +23,6 @@
   let processedText = $state('');
   let pipelineState = $state('idle');
   let showCopiedIndicator = $state(false);
-  let showSettings = $state(false);
   let detectedCommand = $state<string | null>(null);
 
   let isDragging = $state(false);
@@ -45,7 +43,6 @@
   let unlistenPipelineResult: UnlistenFn | null = null;
   let unlistenPipelineError: UnlistenFn | null = null;
   let unlistenCommandDetected: UnlistenFn | null = null;
-  let unlistenOpenSettings: UnlistenFn | null = null;
 
   async function handleMouseDown(e: MouseEvent) {
     isDragging = true;
@@ -104,22 +101,9 @@
 
   async function openSettings() {
     try {
-      const appWindow = getCurrentWindow();
-      await appWindow.setSize(new LogicalSize(800, 600));
-      await appWindow.center();
+      await invoke('open_settings_window');
     } catch (err) {
-      console.warn('Failed to resize window for settings:', err);
-    }
-    showSettings = true;
-  }
-
-  async function closeSettings() {
-    showSettings = false;
-    try {
-      const appWindow = getCurrentWindow();
-      await appWindow.setSize(new LogicalSize(600, 200));
-    } catch (err) {
-      console.warn('Failed to resize window after settings:', err);
+      console.warn('Failed to open settings window:', err);
     }
   }
 
@@ -224,10 +208,6 @@
         console.log('Command detected:', payload.command_name);
       });
 
-      // Listen for tray menu "Open Settings" event
-      unlistenOpenSettings = await listen('open-settings', () => {
-        openSettings();
-      });
     } catch (err) {
       console.warn('Tauri event listeners unavailable (running in browser?):', err);
     }
@@ -246,7 +226,6 @@
     if (unlistenPipelineResult) unlistenPipelineResult();
     if (unlistenPipelineError) unlistenPipelineError();
     if (unlistenCommandDetected) unlistenCommandDetected();
-    if (unlistenOpenSettings) unlistenOpenSettings();
   });
 
   // Compute display state based on pipeline state
@@ -348,7 +327,7 @@
           <TranscriptionView partialText={partialText} committedText={committedText} />
         </div>
       {:else}
-        <div class="hint-text" transition:fade={{ duration: 200 }}>Press Cmd+Shift+Space to start</div>
+        <div class="hint-text" transition:fade={{ duration: 200 }}>Press Ctrl+` to start</div>
       {/if}
 
       <button class="record-button" class:recording={isRecording} onclick={toggleRecording}>
@@ -357,8 +336,6 @@
     </div>
   {/if}
 </div>
-
-<SettingsPanel visible={showSettings} onClose={closeSettings} />
 
 <style>
   .overlay-container {

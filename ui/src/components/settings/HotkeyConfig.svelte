@@ -2,7 +2,7 @@
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount } from 'svelte';
 
-  let currentHotkey = 'Cmd+Shift+Space';
+  let currentHotkey = 'Ctrl+`';
   let isRecording = false;
   let recordedKeys = [];
   let loading = false;

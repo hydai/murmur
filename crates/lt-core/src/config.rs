@@ -82,7 +82,7 @@ impl Default for AppConfig {
         Self {
             stt_provider: SttProviderType::default(),
             api_keys: HashMap::new(),
-            hotkey: "Cmd+Shift+L".to_string(),
+            hotkey: "Ctrl+`".to_string(),
             llm_processor: LlmProcessorType::default(),
             output_mode: OutputMode::default(),
             ui_preferences: UiPreferences::default(),
