@@ -7,14 +7,14 @@ on:
 jobs:
   build:
     if: github.head_ref == 'release' && github.event.pull_request.merged == true
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-darwin
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -26,14 +26,14 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli
 
-      - name: Build universal binary
-        run: cargo tauri build --target universal-apple-darwin
+      - name: Build arm64 binary
+        run: cargo tauri build --target aarch64-apple-darwin
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v6
         with:
-          name: murmur-universal-dmg
-          path: target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          name: murmur-arm64-dmg
+          path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
   publish:
@@ -57,7 +57,7 @@ jobs:
 
       - uses: actions/download-artifact@v5
         with:
-          name: murmur-universal-dmg
+          name: murmur-arm64-dmg
           path: artifacts/
 
       - name: Upload DMG to GitHub Release
