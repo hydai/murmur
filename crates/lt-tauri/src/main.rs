@@ -683,6 +683,30 @@ async fn search_dictionary(query: String) -> Result<Vec<lt_core::dictionary::Dic
     Ok(dict.search_entries(&query))
 }
 
+#[tauri::command]
+async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
+    // If settings window already exists, just focus it
+    if let Some(window) = app.get_webview_window("settings") {
+        window.set_focus().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    // Create new settings window
+    let _window = tauri::WebviewWindowBuilder::new(
+        &app,
+        "settings",
+        tauri::WebviewUrl::App("index.html?view=settings".into()),
+    )
+    .title("Localtype Settings")
+    .inner_size(720.0, 560.0)
+    .resizable(true)
+    .center()
+    .build()
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 // ============================================================================
 // Permission Management Commands
 // ============================================================================
@@ -883,6 +907,7 @@ fn main() {
             update_dictionary_entry,
             delete_dictionary_entry,
             search_dictionary,
+            open_settings_window,
             check_permissions,
             request_microphone_permission,
             open_system_preferences
@@ -949,11 +974,12 @@ fn main() {
                             });
                         }
                         "open_settings" => {
-                            if let Some(window) = app_handle.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                                let _ = window.emit("open-settings", ());
-                            }
+                            let handle = app_handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Err(e) = open_settings_window(handle).await {
+                                    tracing::warn!("Failed to open settings window: {}", e);
+                                }
+                            });
                         }
                         "toggle_overlay" => {
                             if let Some(window) = app_handle.get_webview_window("main") {

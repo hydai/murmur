@@ -7,6 +7,10 @@
 
   let { visible, onClose }: { visible: boolean; onClose: () => void } = $props();
 
+  // Detect standalone mode (rendered in its own window via ?view=settings)
+  const standalone = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('view') === 'settings';
+
   let activeTab = $state('providers');
 
   function switchTab(tab: string) {
@@ -15,44 +19,20 @@
 </script>
 
 {#if visible}
-  <div class="settings-overlay" onclick={onClose} onkeydown={(e) => e.key === 'Escape' && onClose()} role="presentation">
-    <div class="settings-panel" onclick={(e) => e.stopPropagation()} role="dialog">
+  {#if standalone}
+    <!-- Standalone window: no overlay backdrop, fill the window -->
+    <div class="settings-standalone">
       <div class="settings-header">
         <h1>Settings</h1>
         <button class="close-btn" onclick={onClose}>✕</button>
       </div>
 
       <div class="settings-tabs">
-        <button
-          class="tab-button {activeTab === 'providers' ? 'active' : ''}"
-          onclick={() => switchTab('providers')}
-        >
-          STT Providers
-        </button>
-        <button
-          class="tab-button {activeTab === 'llm' ? 'active' : ''}"
-          onclick={() => switchTab('llm')}
-        >
-          LLM Processor
-        </button>
-        <button
-          class="tab-button {activeTab === 'hotkey' ? 'active' : ''}"
-          onclick={() => switchTab('hotkey')}
-        >
-          Hotkey
-        </button>
-        <button
-          class="tab-button {activeTab === 'output' ? 'active' : ''}"
-          onclick={() => switchTab('output')}
-        >
-          Output
-        </button>
-        <button
-          class="tab-button {activeTab === 'dictionary' ? 'active' : ''}"
-          onclick={() => switchTab('dictionary')}
-        >
-          Dictionary
-        </button>
+        <button class="tab-button {activeTab === 'providers' ? 'active' : ''}" onclick={() => switchTab('providers')}>STT Providers</button>
+        <button class="tab-button {activeTab === 'llm' ? 'active' : ''}" onclick={() => switchTab('llm')}>LLM Processor</button>
+        <button class="tab-button {activeTab === 'hotkey' ? 'active' : ''}" onclick={() => switchTab('hotkey')}>Hotkey</button>
+        <button class="tab-button {activeTab === 'output' ? 'active' : ''}" onclick={() => switchTab('output')}>Output</button>
+        <button class="tab-button {activeTab === 'dictionary' ? 'active' : ''}" onclick={() => switchTab('dictionary')}>Dictionary</button>
       </div>
 
       <div class="settings-content">
@@ -69,10 +49,51 @@
         {/if}
       </div>
     </div>
-  </div>
+  {:else}
+    <!-- Inline overlay mode (original behavior) -->
+    <div class="settings-overlay" onclick={onClose} onkeydown={(e) => e.key === 'Escape' && onClose()} role="presentation">
+      <div class="settings-panel" onclick={(e) => e.stopPropagation()} role="dialog">
+        <div class="settings-header">
+          <h1>Settings</h1>
+          <button class="close-btn" onclick={onClose}>✕</button>
+        </div>
+
+        <div class="settings-tabs">
+          <button class="tab-button {activeTab === 'providers' ? 'active' : ''}" onclick={() => switchTab('providers')}>STT Providers</button>
+          <button class="tab-button {activeTab === 'llm' ? 'active' : ''}" onclick={() => switchTab('llm')}>LLM Processor</button>
+          <button class="tab-button {activeTab === 'hotkey' ? 'active' : ''}" onclick={() => switchTab('hotkey')}>Hotkey</button>
+          <button class="tab-button {activeTab === 'output' ? 'active' : ''}" onclick={() => switchTab('output')}>Output</button>
+          <button class="tab-button {activeTab === 'dictionary' ? 'active' : ''}" onclick={() => switchTab('dictionary')}>Dictionary</button>
+        </div>
+
+        <div class="settings-content">
+          {#if activeTab === 'providers'}
+            <ProviderConfig />
+          {:else if activeTab === 'llm'}
+            <LlmConfig />
+          {:else if activeTab === 'hotkey'}
+            <HotkeyConfig />
+          {:else if activeTab === 'output'}
+            <OutputConfig />
+          {:else if activeTab === 'dictionary'}
+            <DictionaryEditor />
+          {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
 {/if}
 
 <style>
+  .settings-standalone {
+    background: #1a1a1a;
+    width: 100%;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
   .settings-overlay {
     position: fixed;
     top: 0;
