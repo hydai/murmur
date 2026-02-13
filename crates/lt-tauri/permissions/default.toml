@@ -27,6 +27,10 @@ commands.allow = [
     "check_permissions",
     "request_microphone_permission",
     "open_system_preferences",
+    "open_settings_window",
+    "get_apple_stt_locales",
+    "download_apple_stt_model",
+    "set_apple_stt_locale",
 ]
 
 [default]
