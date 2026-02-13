@@ -62,8 +62,8 @@ fn main() {
         println!("cargo:rustc-link-search=native={}", toolchain_dir);
     }
 
-    // System Swift runtime — rpath so dyld can resolve at runtime.
-    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
+    // NOTE: rpath for Swift runtime is set in lt-tauri/build.rs (the binary crate).
+    // cargo:rustc-link-arg in a library crate does NOT propagate to the final binary.
 
     // Link Swift runtime dylibs from system.
     println!("cargo:rustc-link-lib=dylib=swiftCore");
