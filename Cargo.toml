@@ -10,6 +10,11 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+license = "Apache-2.0"
+repository = "https://github.com/hydai/murmur"
+homepage = "https://github.com/hydai/murmur"
+
 [workspace.dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"

@@ -2,6 +2,8 @@
 name = "lt-core"
 version = "0.1.0"
 edition = "2021"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 serde = { workspace = true }
