@@ -41,7 +41,8 @@ All phases complete! Localtype is a fully functional privacy-first voice typing 
 - ✅ Voice commands (shorten, translate, change tone, generate reply)
 - ✅ Personal dictionary for custom terms and aliases
 - ✅ macOS floating overlay window with glassmorphism UI
-- ✅ System tray integration with dynamic menu
+- ✅ System tray integration with dynamic menu (including "Open Settings" support)
+- ✅ Dynamic window resizing (600x200 overlay ↔ 800x600 settings panel)
 - ✅ Global hotkey support (Cmd+Shift+Space)
 - ✅ Complete privacy - all data goes directly to your chosen providers
 - ✅ Comprehensive permissions handling for microphone and accessibility

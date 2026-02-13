@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { fade, fly, slide } from 'svelte/transition';
-  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import WaveformIndicator from './WaveformIndicator.svelte';
@@ -45,6 +45,7 @@
   let unlistenPipelineResult: UnlistenFn | null = null;
   let unlistenPipelineError: UnlistenFn | null = null;
   let unlistenCommandDetected: UnlistenFn | null = null;
+  let unlistenOpenSettings: UnlistenFn | null = null;
 
   async function handleMouseDown(e: MouseEvent) {
     isDragging = true;
@@ -101,12 +102,25 @@
     }, 300);
   }
 
-  function openSettings() {
+  async function openSettings() {
+    try {
+      const appWindow = getCurrentWindow();
+      await appWindow.setSize(new LogicalSize(800, 600));
+      await appWindow.center();
+    } catch (err) {
+      console.warn('Failed to resize window for settings:', err);
+    }
     showSettings = true;
   }
 
-  function closeSettings() {
+  async function closeSettings() {
     showSettings = false;
+    try {
+      const appWindow = getCurrentWindow();
+      await appWindow.setSize(new LogicalSize(600, 200));
+    } catch (err) {
+      console.warn('Failed to resize window after settings:', err);
+    }
   }
 
   onMount(async () => {
@@ -209,6 +223,11 @@
         detectedCommand = payload.command_name;
         console.log('Command detected:', payload.command_name);
       });
+
+      // Listen for tray menu "Open Settings" event
+      unlistenOpenSettings = await listen('open-settings', () => {
+        openSettings();
+      });
     } catch (err) {
       console.warn('Tauri event listeners unavailable (running in browser?):', err);
     }
@@ -227,6 +246,7 @@
     if (unlistenPipelineResult) unlistenPipelineResult();
     if (unlistenPipelineError) unlistenPipelineError();
     if (unlistenCommandDetected) unlistenCommandDetected();
+    if (unlistenOpenSettings) unlistenOpenSettings();
   });
 
   // Compute display state based on pipeline state
