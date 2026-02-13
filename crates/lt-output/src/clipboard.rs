@@ -11,7 +11,7 @@ impl ClipboardOutput {
     pub fn new() -> Result<Self> {
         // Verify clipboard access works at construction time
         Clipboard::new()
-            .map_err(|e| lt_core::error::LocaltypeError::Output(e.to_string()))?;
+            .map_err(|e| lt_core::error::MurmurError::Output(e.to_string()))?;
 
         Ok(Self)
     }
@@ -29,11 +29,11 @@ impl OutputSink for ClipboardOutput {
         // arboard's set_text is not thread-safe, so we need to create a new clipboard instance
         // for each operation to avoid issues
         let mut clipboard = Clipboard::new()
-            .map_err(|e| lt_core::error::LocaltypeError::Output(e.to_string()))?;
+            .map_err(|e| lt_core::error::MurmurError::Output(e.to_string()))?;
 
         clipboard
             .set_text(text.to_string())
-            .map_err(|e| lt_core::error::LocaltypeError::Output(e.to_string()))?;
+            .map_err(|e| lt_core::error::MurmurError::Output(e.to_string()))?;
 
         tracing::info!("Text copied to clipboard ({} chars)", text.len());
         Ok(())

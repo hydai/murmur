@@ -1,4 +1,4 @@
-use lt_core::error::{LocaltypeError, Result};
+use lt_core::error::{MurmurError, Result};
 use lt_core::stt::AudioChunk;
 use std::io::Cursor;
 use tracing::debug;
@@ -89,15 +89,15 @@ impl AudioChunker {
             };
 
             let mut writer = hound::WavWriter::new(&mut cursor, spec)
-                .map_err(|e| LocaltypeError::Stt(format!("Failed to create WAV writer: {}", e)))?;
+                .map_err(|e| MurmurError::Stt(format!("Failed to create WAV writer: {}", e)))?;
 
             for &sample in samples {
                 writer.write_sample(sample)
-                    .map_err(|e| LocaltypeError::Stt(format!("Failed to write WAV sample: {}", e)))?;
+                    .map_err(|e| MurmurError::Stt(format!("Failed to write WAV sample: {}", e)))?;
             }
 
             writer.finalize()
-                .map_err(|e| LocaltypeError::Stt(format!("Failed to finalize WAV: {}", e)))?;
+                .map_err(|e| MurmurError::Stt(format!("Failed to finalize WAV: {}", e)))?;
         }
 
         Ok(cursor.into_inner())

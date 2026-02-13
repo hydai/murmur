@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use lt_core::error::{LocaltypeError, Result};
+use lt_core::error::{MurmurError, Result};
 use lt_core::llm::{LlmProcessor, ProcessingOutput, ProcessingTask};
 use std::time::Instant;
 
@@ -43,7 +43,7 @@ impl LlmProcessor for CopilotProcessor {
 
         // Build prompt from template
         let prompt = self.prompt_manager.build_prompt(&task).map_err(|e| {
-            LocaltypeError::Llm(format!("Failed to build prompt template: {}", e))
+            MurmurError::Llm(format!("Failed to build prompt template: {}", e))
         })?;
 
         tracing::debug!("Executing copilot CLI with prompt (length: {} chars)", prompt.len());
@@ -56,20 +56,20 @@ impl LlmProcessor for CopilotProcessor {
             .await
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::TimedOut {
-                    LocaltypeError::Llm("Copilot CLI timed out".to_string())
+                    MurmurError::Llm("Copilot CLI timed out".to_string())
                 } else if e.kind() == std::io::ErrorKind::NotFound {
-                    LocaltypeError::Llm(
+                    MurmurError::Llm(
                         "Copilot CLI not found. Please install copilot-cli.".to_string()
                     )
                 } else {
-                    LocaltypeError::Llm(format!("Failed to execute copilot CLI: {}", e))
+                    MurmurError::Llm(format!("Failed to execute copilot CLI: {}", e))
                 }
             })?;
 
         // Check exit code
         if output.exit_code != 0 {
             tracing::error!("Copilot CLI failed with exit code {}: {}", output.exit_code, output.stderr);
-            return Err(LocaltypeError::Llm(format!(
+            return Err(MurmurError::Llm(format!(
                 "Copilot CLI failed: {}",
                 output.stderr
             )));

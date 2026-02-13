@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use futures_util::{SinkExt, StreamExt};
 use lt_core::stt::{AudioChunk, SttProvider, TranscriptionEvent};
-use lt_core::error::{LocaltypeError, Result};
+use lt_core::error::{MurmurError, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -106,7 +106,7 @@ impl ElevenLabsProvider {
             "wss://api.elevenlabs.io/v1/speech-to-text/ws?model_id={}&language_code={}",
             self.model_id, self.language_code
         );
-        Url::parse(&url).map_err(|e| LocaltypeError::Stt(format!("Invalid URL: {}", e)))
+        Url::parse(&url).map_err(|e| MurmurError::Stt(format!("Invalid URL: {}", e)))
     }
 
     /// Connect to WebSocket with retry logic
@@ -119,7 +119,7 @@ impl ElevenLabsProvider {
                 .uri(ws_url.as_str())
                 .header("xi-api-key", &self.api_key)
                 .body(())
-                .map_err(|e| LocaltypeError::Stt(format!("Failed to build request: {}", e)))?;
+                .map_err(|e| MurmurError::Stt(format!("Failed to build request: {}", e)))?;
 
             match connect_async(request).await {
                 Ok((ws_stream, _)) => {
@@ -129,7 +129,7 @@ impl ElevenLabsProvider {
                 Err(e) => {
                     if retry_count >= self.reconnect_config.max_retries {
                         error!("Failed to connect after {} retries", retry_count);
-                        return Err(LocaltypeError::Stt(format!(
+                        return Err(MurmurError::Stt(format!(
                             "WebSocket connection failed after {} retries: {}",
                             retry_count, e
                         )));
@@ -316,10 +316,10 @@ impl SttProvider for ElevenLabsProvider {
         if let Some(tx) = tx_lock.as_ref() {
             tx.send(chunk)
                 .await
-                .map_err(|e| LocaltypeError::Stt(format!("Failed to send audio chunk: {}", e)))?;
+                .map_err(|e| MurmurError::Stt(format!("Failed to send audio chunk: {}", e)))?;
             Ok(())
         } else {
-            Err(LocaltypeError::Stt(
+            Err(MurmurError::Stt(
                 "Session not started".to_string(),
             ))
         }

@@ -1,5 +1,5 @@
 use lt_audio::AudioCapture;
-use lt_core::error::{LocaltypeError, Result};
+use lt_core::error::{MurmurError, Result};
 use lt_core::llm::LlmProcessor;
 use lt_core::output::OutputSink;
 use lt_core::stt::{SttProvider, TranscriptionEvent};
@@ -70,7 +70,7 @@ impl PipelineOrchestrator {
         let mut state = self.state.lock().await;
 
         if *state != PipelineState::Idle {
-            return Err(LocaltypeError::InvalidState(format!(
+            return Err(MurmurError::InvalidState(format!(
                 "Cannot start pipeline in {:?} state",
                 *state
             )));
@@ -279,7 +279,7 @@ impl PipelineOrchestrator {
         let mut capture = AudioCapture::new();
         capture.start().map_err(|e| {
             tracing::error!("Failed to start audio capture: {}", e);
-            LocaltypeError::Audio(e.to_string())
+            MurmurError::Audio(e.to_string())
         })?;
 
         // Subscribe to audio levels for waveform
@@ -333,7 +333,7 @@ impl PipelineOrchestrator {
 
         // Stop audio capture
         if let Some(mut capture) = self.audio_capture.lock().await.take() {
-            capture.stop().map_err(|e| LocaltypeError::Audio(e.to_string()))?;
+            capture.stop().map_err(|e| MurmurError::Audio(e.to_string()))?;
         }
 
         // Cancel tasks

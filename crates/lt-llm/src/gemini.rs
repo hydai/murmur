@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use lt_core::error::{LocaltypeError, Result};
+use lt_core::error::{MurmurError, Result};
 use lt_core::llm::{LlmProcessor, ProcessingOutput, ProcessingTask};
 use std::time::Instant;
 
@@ -68,7 +68,7 @@ impl LlmProcessor for GeminiProcessor {
 
         // Build prompt from template
         let prompt = self.prompt_manager.build_prompt(&task).map_err(|e| {
-            LocaltypeError::Llm(format!("Failed to build prompt template: {}", e))
+            MurmurError::Llm(format!("Failed to build prompt template: {}", e))
         })?;
 
         tracing::debug!("Executing gemini CLI with prompt (length: {} chars)", prompt.len());
@@ -91,20 +91,20 @@ impl LlmProcessor for GeminiProcessor {
             .await
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::TimedOut {
-                    LocaltypeError::Llm("Gemini CLI timed out".to_string())
+                    MurmurError::Llm("Gemini CLI timed out".to_string())
                 } else if e.kind() == std::io::ErrorKind::NotFound {
-                    LocaltypeError::Llm(
+                    MurmurError::Llm(
                         "Gemini CLI not found. Please install gemini-cli: https://github.com/google/generative-ai-cli".to_string()
                     )
                 } else {
-                    LocaltypeError::Llm(format!("Failed to execute gemini CLI: {}", e))
+                    MurmurError::Llm(format!("Failed to execute gemini CLI: {}", e))
                 }
             })?;
 
         // Check exit code
         if output.exit_code != 0 {
             tracing::error!("Gemini CLI failed with exit code {}: {}", output.exit_code, output.stderr);
-            return Err(LocaltypeError::Llm(format!(
+            return Err(MurmurError::Llm(format!(
                 "Gemini CLI failed: {}",
                 output.stderr
             )));

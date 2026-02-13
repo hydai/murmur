@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::error::{LocaltypeError, Result};
+use crate::error::{MurmurError, Result};
 use crate::output::OutputMode;
 
 /// STT provider type
@@ -95,7 +95,7 @@ impl AppConfig {
     pub fn default_config_dir() -> Result<PathBuf> {
         directories::ProjectDirs::from("com", "hydai", "Murmur")
             .map(|proj_dirs| proj_dirs.config_dir().to_path_buf())
-            .ok_or_else(|| LocaltypeError::Config("Failed to get config directory".to_string()))
+            .ok_or_else(|| MurmurError::Config("Failed to get config directory".to_string()))
     }
 
     /// Get the default config file path
@@ -113,7 +113,7 @@ impl AppConfig {
     /// Save config to TOML file
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let content = toml::to_string_pretty(self)
-            .map_err(|e| LocaltypeError::Config(format!("Failed to serialize config: {}", e)))?;
+            .map_err(|e| MurmurError::Config(format!("Failed to serialize config: {}", e)))?;
 
         // Ensure parent directory exists
         if let Some(parent) = path.as_ref().parent() {

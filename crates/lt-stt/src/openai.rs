@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use lt_core::error::{LocaltypeError, Result};
+use lt_core::error::{MurmurError, Result};
 use lt_core::stt::{AudioChunk, SttProvider, TranscriptionEvent};
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
@@ -51,7 +51,7 @@ impl OpenAIProvider {
         let part = Part::bytes(wav_bytes)
             .file_name("audio.wav")
             .mime_str("audio/wav")
-            .map_err(|e| LocaltypeError::Stt(format!("Failed to create multipart part: {}", e)))?;
+            .map_err(|e| MurmurError::Stt(format!("Failed to create multipart part: {}", e)))?;
 
         let form = Form::new()
             .part("file", part)
@@ -65,13 +65,13 @@ impl OpenAIProvider {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| LocaltypeError::Stt(format!("OpenAI API request failed: {}", e)))?;
+            .map_err(|e| MurmurError::Stt(format!("OpenAI API request failed: {}", e)))?;
 
         // Check status
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(LocaltypeError::Stt(format!(
+            return Err(MurmurError::Stt(format!(
                 "OpenAI API error ({}): {}",
                 status, error_text
             )));
@@ -81,7 +81,7 @@ impl OpenAIProvider {
         let whisper_response: WhisperResponse = response
             .json()
             .await
-            .map_err(|e| LocaltypeError::Stt(format!("Failed to parse OpenAI response: {}", e)))?;
+            .map_err(|e| MurmurError::Stt(format!("Failed to parse OpenAI response: {}", e)))?;
 
         Ok(whisper_response.text)
     }
@@ -232,10 +232,10 @@ impl SttProvider for OpenAIProvider {
         if let Some(tx) = tx_lock.as_ref() {
             tx.send(chunk)
                 .await
-                .map_err(|e| LocaltypeError::Stt(format!("Failed to send audio chunk: {}", e)))?;
+                .map_err(|e| MurmurError::Stt(format!("Failed to send audio chunk: {}", e)))?;
             Ok(())
         } else {
-            Err(LocaltypeError::Stt("Session not started".to_string()))
+            Err(MurmurError::Stt("Session not started".to_string()))
         }
     }
 

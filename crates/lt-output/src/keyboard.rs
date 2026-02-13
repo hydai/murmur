@@ -27,11 +27,11 @@ impl OutputSink for KeyboardOutput {
         // This is a limitation of the underlying CGEvent API on macOS
         let settings = Settings::default();
         let mut enigo = Enigo::new(&settings)
-            .map_err(|e| lt_core::error::LocaltypeError::Output(format!("Failed to initialize enigo: {}", e)))?;
+            .map_err(|e| lt_core::error::MurmurError::Output(format!("Failed to initialize enigo: {}", e)))?;
 
         // Type the text character by character
         enigo.text(text)
-            .map_err(|e| lt_core::error::LocaltypeError::Output(format!("Failed to type text: {}", e)))?;
+            .map_err(|e| lt_core::error::MurmurError::Output(format!("Failed to type text: {}", e)))?;
 
         tracing::info!("Text typed via keyboard simulation ({} chars)", text.len());
         Ok(())
