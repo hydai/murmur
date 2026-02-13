@@ -15,11 +15,7 @@ impl AudioResampler {
     /// * `input_sample_rate` - Input sample rate in Hz
     /// * `output_sample_rate` - Output sample rate in Hz (typically 16000)
     /// * `channels` - Number of input channels (will be converted to mono)
-    pub fn new(
-        input_sample_rate: u32,
-        output_sample_rate: u32,
-        channels: usize,
-    ) -> Result<Self> {
+    pub fn new(input_sample_rate: u32, output_sample_rate: u32, channels: usize) -> Result<Self> {
         if channels == 0 {
             return Err(AudioError::UnsupportedFormat(
                 "Number of channels must be > 0".to_string(),
@@ -53,8 +49,7 @@ impl AudioResampler {
             return Ok(mono_input);
         }
 
-        let ratio =
-            self.output_sample_rate as f64 / self.input_sample_rate as f64;
+        let ratio = self.output_sample_rate as f64 / self.input_sample_rate as f64;
         let output_len = (mono_input.len() as f64 * ratio).ceil() as usize;
 
         let mut output = Vec::with_capacity(output_len);

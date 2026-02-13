@@ -5,7 +5,7 @@ pub mod llm;
 pub mod output;
 pub mod stt;
 
-pub use config::{AppConfig, SttProviderType, LlmProcessorType, UiPreferences};
+pub use config::{AppConfig, LlmProcessorType, SttProviderType, UiPreferences};
 pub use dictionary::{DictionaryEntry, PersonalDictionary};
 pub use error::MurmurError;
 pub use llm::{LlmProcessor, ProcessingOutput, ProcessingTask};

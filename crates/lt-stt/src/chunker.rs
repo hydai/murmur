@@ -39,7 +39,11 @@ impl AudioChunker {
             self.last_flush_ms = chunk.timestamp_ms;
         }
 
-        debug!("Added {} samples to buffer (total: {} samples)", chunk.data.len(), self.buffer.len());
+        debug!(
+            "Added {} samples to buffer (total: {} samples)",
+            chunk.data.len(),
+            self.buffer.len()
+        );
     }
 
     /// Check if the buffer should be flushed based on duration
@@ -92,11 +96,13 @@ impl AudioChunker {
                 .map_err(|e| MurmurError::Stt(format!("Failed to create WAV writer: {}", e)))?;
 
             for &sample in samples {
-                writer.write_sample(sample)
+                writer
+                    .write_sample(sample)
                     .map_err(|e| MurmurError::Stt(format!("Failed to write WAV sample: {}", e)))?;
             }
 
-            writer.finalize()
+            writer
+                .finalize()
                 .map_err(|e| MurmurError::Stt(format!("Failed to finalize WAV: {}", e)))?;
         }
 

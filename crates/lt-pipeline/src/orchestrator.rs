@@ -8,8 +8,8 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::state::{PipelineEvent, PipelineState};
 use crate::commands::detect_command;
+use crate::state::{PipelineEvent, PipelineState};
 
 /// Pipeline orchestrator coordinating the full flow
 pub struct PipelineOrchestrator {
@@ -230,7 +230,10 @@ impl PipelineOrchestrator {
 
                         // Emit error but try to output raw transcription
                         let _ = event_tx.send(PipelineEvent::Error {
-                            message: format!("LLM processing failed: {}. Using raw transcription.", e),
+                            message: format!(
+                                "LLM processing failed: {}. Using raw transcription.",
+                                e
+                            ),
                             recoverable: true,
                         });
 
@@ -333,7 +336,9 @@ impl PipelineOrchestrator {
 
         // Stop audio capture
         if let Some(mut capture) = self.audio_capture.lock().await.take() {
-            capture.stop().map_err(|e| MurmurError::Audio(e.to_string()))?;
+            capture
+                .stop()
+                .map_err(|e| MurmurError::Audio(e.to_string()))?;
         }
 
         // Cancel tasks
@@ -357,7 +362,10 @@ impl PipelineOrchestrator {
         let mut state = self.state.lock().await;
 
         // Stop if still running
-        if *state != PipelineState::Idle && *state != PipelineState::Done && *state != PipelineState::Error {
+        if *state != PipelineState::Idle
+            && *state != PipelineState::Done
+            && *state != PipelineState::Error
+        {
             drop(state);
             self.stop().await?;
             state = self.state.lock().await;

@@ -42,11 +42,15 @@ impl LlmProcessor for CopilotProcessor {
         let start_time = Instant::now();
 
         // Build prompt from template
-        let prompt = self.prompt_manager.build_prompt(&task).map_err(|e| {
-            MurmurError::Llm(format!("Failed to build prompt template: {}", e))
-        })?;
+        let prompt = self
+            .prompt_manager
+            .build_prompt(&task)
+            .map_err(|e| MurmurError::Llm(format!("Failed to build prompt template: {}", e)))?;
 
-        tracing::debug!("Executing copilot CLI with prompt (length: {} chars)", prompt.len());
+        tracing::debug!(
+            "Executing copilot CLI with prompt (length: {} chars)",
+            prompt.len()
+        );
 
         // Execute copilot CLI
         // Format: copilot --prompt "prompt"
@@ -59,7 +63,7 @@ impl LlmProcessor for CopilotProcessor {
                     MurmurError::Llm("Copilot CLI timed out".to_string())
                 } else if e.kind() == std::io::ErrorKind::NotFound {
                     MurmurError::Llm(
-                        "Copilot CLI not found. Please install copilot-cli.".to_string()
+                        "Copilot CLI not found. Please install copilot-cli.".to_string(),
                     )
                 } else {
                     MurmurError::Llm(format!("Failed to execute copilot CLI: {}", e))
@@ -68,7 +72,11 @@ impl LlmProcessor for CopilotProcessor {
 
         // Check exit code
         if output.exit_code != 0 {
-            tracing::error!("Copilot CLI failed with exit code {}: {}", output.exit_code, output.stderr);
+            tracing::error!(
+                "Copilot CLI failed with exit code {}: {}",
+                output.exit_code,
+                output.stderr
+            );
             return Err(MurmurError::Llm(format!(
                 "Copilot CLI failed: {}",
                 output.stderr

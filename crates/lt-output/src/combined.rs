@@ -63,8 +63,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_combined_output_clipboard_only() {
-        let output = CombinedOutput::new(OutputMode::Clipboard)
-            .expect("Failed to create combined output");
+        let output =
+            CombinedOutput::new(OutputMode::Clipboard).expect("Failed to create combined output");
 
         assert_eq!(output.mode(), OutputMode::Clipboard);
         assert!(output.clipboard.is_some());
@@ -73,8 +73,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_combined_output_keyboard_only() {
-        let output = CombinedOutput::new(OutputMode::Keyboard)
-            .expect("Failed to create combined output");
+        let output =
+            CombinedOutput::new(OutputMode::Keyboard).expect("Failed to create combined output");
 
         assert_eq!(output.mode(), OutputMode::Keyboard);
         assert!(output.clipboard.is_none());
@@ -83,8 +83,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_combined_output_both() {
-        let output = CombinedOutput::new(OutputMode::Both)
-            .expect("Failed to create combined output");
+        let output =
+            CombinedOutput::new(OutputMode::Both).expect("Failed to create combined output");
 
         assert_eq!(output.mode(), OutputMode::Both);
         assert!(output.clipboard.is_some());

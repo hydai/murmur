@@ -29,11 +29,7 @@ impl CliExecutor {
     }
 
     /// Execute a CLI command and capture output
-    pub async fn execute(
-        &self,
-        program: &str,
-        args: &[&str],
-    ) -> Result<CliOutput, std::io::Error> {
+    pub async fn execute(&self, program: &str, args: &[&str]) -> Result<CliOutput, std::io::Error> {
         let mut child = Command::new(program)
             .args(args)
             .stdout(Stdio::piped())

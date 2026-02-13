@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use futures_util::{SinkExt, StreamExt};
-use lt_core::stt::{AudioChunk, SttProvider, TranscriptionEvent};
 use lt_core::error::{MurmurError, Result};
+use lt_core::stt::{AudioChunk, SttProvider, TranscriptionEvent};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -110,7 +110,13 @@ impl ElevenLabsProvider {
     }
 
     /// Connect to WebSocket with retry logic
-    async fn connect_with_retry(&self) -> Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>> {
+    async fn connect_with_retry(
+        &self,
+    ) -> Result<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    > {
         let ws_url = self.build_ws_url()?;
         let mut retry_count = 0;
 
@@ -154,7 +160,6 @@ impl ElevenLabsProvider {
             }
         }
     }
-
 }
 
 #[async_trait]
@@ -319,9 +324,7 @@ impl SttProvider for ElevenLabsProvider {
                 .map_err(|e| MurmurError::Stt(format!("Failed to send audio chunk: {}", e)))?;
             Ok(())
         } else {
-            Err(MurmurError::Stt(
-                "Session not started".to_string(),
-            ))
+            Err(MurmurError::Stt("Session not started".to_string()))
         }
     }
 

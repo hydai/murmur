@@ -1,7 +1,7 @@
+use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_tungstenite::accept_async;
-use futures_util::{StreamExt, SinkExt};
 
 /// Mock WebSocket server for testing
 pub struct MockWebSocketServer {
@@ -26,12 +26,21 @@ impl MockWebSocketServer {
                         if let Ok(msg) = msg {
                             if msg.is_text() || msg.is_binary() {
                                 // Send mock partial transcript
-                                let response = r#"{"type":"partial_transcript","text":"test","timestamp":0}"#;
-                                let _ = write.send(tokio_tungstenite::tungstenite::Message::Text(response.to_string().into())).await;
+                                let response =
+                                    r#"{"type":"partial_transcript","text":"test","timestamp":0}"#;
+                                let _ = write
+                                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                                        response.to_string().into(),
+                                    ))
+                                    .await;
 
                                 // Send mock final transcript
                                 let response = r#"{"type":"final_transcript","text":"test complete","timestamp":100}"#;
-                                let _ = write.send(tokio_tungstenite::tungstenite::Message::Text(response.to_string().into())).await;
+                                let _ = write
+                                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                                        response.to_string().into(),
+                                    ))
+                                    .await;
                             }
                         }
                     }
@@ -57,7 +66,12 @@ async fn test_mock_websocket_server() {
     let (mut write, mut read) = ws_stream.split();
 
     // Send a test message
-    write.send(tokio_tungstenite::tungstenite::Message::Text("test".to_string().into())).await.unwrap();
+    write
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            "test".to_string().into(),
+        ))
+        .await
+        .unwrap();
 
     // Receive responses
     let msg1 = read.next().await.unwrap().unwrap();
@@ -98,11 +112,11 @@ async fn test_exponential_backoff() {
         .collect();
 
     // Verify exponential growth then cap
-    assert_eq!(delays[0], 1000);   // 1s
-    assert_eq!(delays[1], 2000);   // 2s
-    assert_eq!(delays[2], 4000);   // 4s
-    assert_eq!(delays[3], 8000);   // 8s
-    assert_eq!(delays[4], 16000);  // 16s
-    assert_eq!(delays[5], 30000);  // capped at 30s
-    assert_eq!(delays[9], 30000);  // still capped
+    assert_eq!(delays[0], 1000); // 1s
+    assert_eq!(delays[1], 2000); // 2s
+    assert_eq!(delays[2], 4000); // 4s
+    assert_eq!(delays[3], 8000); // 8s
+    assert_eq!(delays[4], 16000); // 16s
+    assert_eq!(delays[5], 30000); // capped at 30s
+    assert_eq!(delays[9], 30000); // still capped
 }

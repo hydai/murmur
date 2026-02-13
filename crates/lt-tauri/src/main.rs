@@ -3,19 +3,19 @@
 
 mod permissions;
 
-use lt_core::config::{SttProviderType, LlmProcessorType};
+use lt_core::config::{LlmProcessorType, SttProviderType};
 use lt_core::llm::LlmProcessor;
 use lt_core::output::OutputMode;
 use lt_core::stt::SttProvider;
 use lt_core::{AppConfig, PersonalDictionary};
-use lt_llm::{GeminiProcessor, CopilotProcessor};
+use lt_llm::{CopilotProcessor, GeminiProcessor};
 use lt_output::CombinedOutput;
 use lt_pipeline::{PipelineEvent, PipelineOrchestrator, PipelineState};
 use lt_stt::{ElevenLabsProvider, GroqProvider, OpenAIProvider};
 use std::sync::Arc;
-use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use tokio::sync::Mutex;
 
@@ -59,7 +59,9 @@ struct ErrorEvent {
 
 #[tauri::command]
 fn toggle_overlay(app: tauri::AppHandle) -> Result<bool, String> {
-    let window = app.get_webview_window("main").ok_or("Main window not found")?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
     let is_visible = window.is_visible().map_err(|e| e.to_string())?;
 
     if is_visible {
@@ -83,8 +85,7 @@ async fn get_config() -> Result<AppConfig, String> {
         .map_err(|e| format!("Failed to get config path: {}", e))?;
 
     if config_path.exists() {
-        AppConfig::load_from_file(&config_path)
-            .map_err(|e| format!("Failed to load config: {}", e))
+        AppConfig::load_from_file(&config_path).map_err(|e| format!("Failed to load config: {}", e))
     } else {
         Ok(AppConfig::default())
     }
@@ -95,7 +96,8 @@ async fn save_config(config: AppConfig) -> Result<(), String> {
     let config_path = AppConfig::default_config_file()
         .map_err(|e| format!("Failed to get config path: {}", e))?;
 
-    config.save_to_file(&config_path)
+    config
+        .save_to_file(&config_path)
         .map_err(|e| format!("Failed to save config: {}", e))
 }
 
@@ -121,7 +123,8 @@ async fn set_stt_provider(provider: String) -> Result<(), String> {
 
     config.stt_provider = provider_type;
 
-    config.save_to_file(&config_path)
+    config
+        .save_to_file(&config_path)
         .map_err(|e| format!("Failed to save config: {}", e))
 }
 
@@ -139,7 +142,8 @@ async fn save_api_key(provider: String, api_key: String) -> Result<(), String> {
 
     config.api_keys.insert(provider.to_lowercase(), api_key);
 
-    config.save_to_file(&config_path)
+    config
+        .save_to_file(&config_path)
         .map_err(|e| format!("Failed to save config: {}", e))
 }
 
@@ -232,7 +236,8 @@ async fn set_llm_processor(processor: String) -> Result<(), String> {
 
     config.llm_processor = processor_type;
 
-    config.save_to_file(&config_path)
+    config
+        .save_to_file(&config_path)
         .map_err(|e| format!("Failed to save config: {}", e))
 }
 
@@ -258,7 +263,8 @@ async fn set_output_mode(mode: String) -> Result<(), String> {
 
     config.output_mode = output_mode;
 
-    config.save_to_file(&config_path)
+    config
+        .save_to_file(&config_path)
         .map_err(|e| format!("Failed to save config: {}", e))
 }
 
@@ -287,7 +293,8 @@ async fn set_hotkey(hotkey: String, app: tauri::AppHandle) -> Result<(), String>
 
     // Update config
     config.hotkey = hotkey.clone();
-    config.save_to_file(&config_path)
+    config
+        .save_to_file(&config_path)
         .map_err(|e| format!("Failed to save config: {}", e))?;
 
     // Register new hotkey
@@ -303,7 +310,10 @@ async fn set_hotkey(hotkey: String, app: tauri::AppHandle) -> Result<(), String>
                 let is_currently_recording = {
                     let pipeline = state.pipeline.lock().await;
                     let current_state = pipeline.get_state().await;
-                    matches!(current_state, PipelineState::Recording | PipelineState::Transcribing)
+                    matches!(
+                        current_state,
+                        PipelineState::Recording | PipelineState::Transcribing
+                    )
                 };
 
                 if is_currently_recording {
@@ -336,7 +346,10 @@ async fn start_pipeline(
     // Check if pipeline is already running
     let current_state = pipeline.get_state().await;
     if current_state != PipelineState::Idle {
-        return Err(format!("Pipeline is already running (state: {:?})", current_state));
+        return Err(format!(
+            "Pipeline is already running (state: {:?})",
+            current_state
+        ));
     }
 
     // Load config and get API key
@@ -354,15 +367,20 @@ async fn start_pipeline(
     // Create STT provider based on config
     let stt: Box<dyn SttProvider> = match config.stt_provider {
         SttProviderType::ElevenLabs => {
-            let api_key = config.api_keys.get("elevenlabs")
+            let api_key = config
+                .api_keys
+                .get("elevenlabs")
                 .ok_or_else(|| {
-                    "ElevenLabs API key not configured. Please add your API key in Settings".to_string()
+                    "ElevenLabs API key not configured. Please add your API key in Settings"
+                        .to_string()
                 })?
                 .clone();
             Box::new(ElevenLabsProvider::new(api_key))
         }
         SttProviderType::OpenAI => {
-            let api_key = config.api_keys.get("openai")
+            let api_key = config
+                .api_keys
+                .get("openai")
                 .ok_or_else(|| {
                     "OpenAI API key not configured. Please add your API key in Settings".to_string()
                 })?
@@ -370,7 +388,9 @@ async fn start_pipeline(
             Box::new(OpenAIProvider::new(api_key))
         }
         SttProviderType::Groq => {
-            let api_key = config.api_keys.get("groq")
+            let api_key = config
+                .api_keys
+                .get("groq")
                 .ok_or_else(|| {
                     "Groq API key not configured. Please add your API key in Settings".to_string()
                 })?
@@ -387,7 +407,10 @@ async fn start_pipeline(
     let event_task = tauri::async_runtime::spawn(async move {
         while let Ok(event) = event_rx.recv().await {
             match event {
-                PipelineEvent::StateChanged { state, timestamp_ms } => {
+                PipelineEvent::StateChanged {
+                    state,
+                    timestamp_ms,
+                } => {
                     let state_str = match state {
                         PipelineState::Idle => "idle",
                         PipelineState::Recording => "recording",
@@ -397,73 +420,117 @@ async fn start_pipeline(
                         PipelineState::Error => "error",
                     };
 
-                    let _ = app_clone.emit("pipeline-state", PipelineStateEvent {
-                        state: state_str.to_string(),
-                        timestamp_ms,
-                    });
+                    let _ = app_clone.emit(
+                        "pipeline-state",
+                        PipelineStateEvent {
+                            state: state_str.to_string(),
+                            timestamp_ms,
+                        },
+                    );
 
                     // Also emit recording-state for compatibility
-                    let is_recording = matches!(state, PipelineState::Recording | PipelineState::Transcribing);
-                    let _ = app_clone.emit("recording-state", serde_json::json!({
-                        "is_recording": is_recording
-                    }));
+                    let is_recording = matches!(
+                        state,
+                        PipelineState::Recording | PipelineState::Transcribing
+                    );
+                    let _ = app_clone.emit(
+                        "recording-state",
+                        serde_json::json!({
+                            "is_recording": is_recording
+                        }),
+                    );
 
                     // Update tray menu to reflect recording state
                     if let Err(e) = rebuild_tray_menu(&app_clone, is_recording) {
                         tracing::warn!("Failed to update tray menu: {}", e);
                     }
                 }
-                PipelineEvent::AudioLevel { rms, voice_active, timestamp_ms } => {
-                    let _ = app_clone.emit("audio-level", AudioLevelEvent {
-                        rms,
-                        voice_active,
-                        timestamp_ms,
-                    });
+                PipelineEvent::AudioLevel {
+                    rms,
+                    voice_active,
+                    timestamp_ms,
+                } => {
+                    let _ = app_clone.emit(
+                        "audio-level",
+                        AudioLevelEvent {
+                            rms,
+                            voice_active,
+                            timestamp_ms,
+                        },
+                    );
                 }
                 PipelineEvent::PartialTranscription { text, timestamp_ms } => {
-                    let _ = app_clone.emit("transcription-partial", TranscriptionEvent {
-                        text,
-                        timestamp_ms,
-                    });
+                    let _ = app_clone.emit(
+                        "transcription-partial",
+                        TranscriptionEvent { text, timestamp_ms },
+                    );
                 }
                 PipelineEvent::CommittedTranscription { text, timestamp_ms } => {
-                    let _ = app_clone.emit("transcription-committed", TranscriptionEvent {
-                        text,
-                        timestamp_ms,
-                    });
+                    let _ = app_clone.emit(
+                        "transcription-committed",
+                        TranscriptionEvent { text, timestamp_ms },
+                    );
                 }
-                PipelineEvent::CommandDetected { command_name, timestamp_ms } => {
-                    let _ = app_clone.emit("command-detected", serde_json::json!({
-                        "command_name": command_name,
-                        "timestamp_ms": timestamp_ms
-                    }));
+                PipelineEvent::CommandDetected {
+                    command_name,
+                    timestamp_ms,
+                } => {
+                    let _ = app_clone.emit(
+                        "command-detected",
+                        serde_json::json!({
+                            "command_name": command_name,
+                            "timestamp_ms": timestamp_ms
+                        }),
+                    );
                 }
-                PipelineEvent::FinalResult { text, processing_time_ms } => {
-                    tracing::info!("Pipeline completed: {} chars in {}ms", text.len(), processing_time_ms);
+                PipelineEvent::FinalResult {
+                    text,
+                    processing_time_ms,
+                } => {
+                    tracing::info!(
+                        "Pipeline completed: {} chars in {}ms",
+                        text.len(),
+                        processing_time_ms
+                    );
 
-                    let _ = app_clone.emit("pipeline-result", FinalResultEvent {
-                        text: text.clone(),
-                        processing_time_ms,
-                    });
+                    let _ = app_clone.emit(
+                        "pipeline-result",
+                        FinalResultEvent {
+                            text: text.clone(),
+                            processing_time_ms,
+                        },
+                    );
 
                     // Emit as transcription-processed for compatibility
-                    let _ = app_clone.emit("transcription-processed", serde_json::json!({
-                        "text": text,
-                        "processing_time_ms": processing_time_ms
-                    }));
+                    let _ = app_clone.emit(
+                        "transcription-processed",
+                        serde_json::json!({
+                            "text": text,
+                            "processing_time_ms": processing_time_ms
+                        }),
+                    );
                 }
-                PipelineEvent::Error { message, recoverable } => {
+                PipelineEvent::Error {
+                    message,
+                    recoverable,
+                } => {
                     tracing::error!("Pipeline error: {} (recoverable: {})", message, recoverable);
 
-                    let _ = app_clone.emit("pipeline-error", ErrorEvent {
-                        message: message.clone(),
-                        recoverable,
-                    });
+                    let _ = app_clone.emit(
+                        "pipeline-error",
+                        ErrorEvent {
+                            message: message.clone(),
+                            recoverable,
+                        },
+                    );
 
                     // Emit as audio-error for compatibility
-                    let _ = app_clone.emit("audio-error", serde_json::json!({
-                        "message": message
-                    }));
+                    let _ = app_clone.emit(
+                        "audio-error",
+                        serde_json::json!({
+                            "message": message
+                        }),
+                    );
                 }
             }
         }
@@ -473,11 +540,10 @@ async fn start_pipeline(
     *state.event_task.lock().await = Some(event_task);
 
     // Start the pipeline
-    pipeline.start(stt).await
-        .map_err(|e| {
-            tracing::error!("Failed to start pipeline: {}", e);
-            format!("Failed to start pipeline: {}", e)
-        })?;
+    pipeline.start(stt).await.map_err(|e| {
+        tracing::error!("Failed to start pipeline: {}", e);
+        format!("Failed to start pipeline: {}", e)
+    })?;
 
     tracing::info!("Pipeline started successfully");
     Ok(())
@@ -492,11 +558,10 @@ async fn stop_pipeline(
 
     let pipeline = state.pipeline.lock().await;
 
-    pipeline.stop().await
-        .map_err(|e| {
-            tracing::error!("Failed to stop pipeline: {}", e);
-            format!("Failed to stop pipeline: {}", e)
-        })?;
+    pipeline.stop().await.map_err(|e| {
+        tracing::error!("Failed to stop pipeline: {}", e);
+        format!("Failed to stop pipeline: {}", e)
+    })?;
 
     tracing::info!("Pipeline stopped successfully");
     Ok(())
@@ -507,7 +572,10 @@ async fn is_recording(state: tauri::State<'_, AppState>) -> Result<bool, String>
     let pipeline = state.pipeline.lock().await;
     let current_state = pipeline.get_state().await;
 
-    Ok(matches!(current_state, PipelineState::Recording | PipelineState::Transcribing))
+    Ok(matches!(
+        current_state,
+        PipelineState::Recording | PipelineState::Transcribing
+    ))
 }
 
 #[tauri::command]
@@ -667,7 +735,9 @@ async fn delete_dictionary_entry(
 }
 
 #[tauri::command]
-async fn search_dictionary(query: String) -> Result<Vec<lt_core::dictionary::DictionaryEntry>, String> {
+async fn search_dictionary(
+    query: String,
+) -> Result<Vec<lt_core::dictionary::DictionaryEntry>, String> {
     let dict_path = AppConfig::default_config_dir()
         .map_err(|e| format!("Failed to get config dir: {}", e))?
         .join("dictionary.json");
@@ -748,17 +818,26 @@ fn create_recording_icon(original_bytes: &[u8], _width: u32, _height: u32) -> Ve
 }
 
 /// Helper function to rebuild tray menu with updated recording state
-fn rebuild_tray_menu(app: &tauri::AppHandle, is_recording: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn rebuild_tray_menu(
+    app: &tauri::AppHandle,
+    is_recording: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let tray = app.tray_by_id("main-tray").ok_or("Tray not found")?;
 
     // Build menu items
     let toggle_item = MenuItemBuilder::with_id(
         "toggle_recording",
-        if is_recording { "⏸ Stop Recording" } else { "⏺ Start Recording" }
-    ).build(app)?;
+        if is_recording {
+            "⏸ Stop Recording"
+        } else {
+            "⏺ Start Recording"
+        },
+    )
+    .build(app)?;
 
     let settings_item = MenuItemBuilder::with_id("open_settings", "⚙ Open Settings").build(app)?;
-    let overlay_item = MenuItemBuilder::with_id("toggle_overlay", "👁 Show/Hide Overlay").build(app)?;
+    let overlay_item =
+        MenuItemBuilder::with_id("toggle_overlay", "👁 Show/Hide Overlay").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
     let menu = MenuBuilder::new(app)
@@ -841,7 +920,10 @@ fn main() {
             if path.exists() {
                 match PersonalDictionary::load_from_file(path) {
                     Ok(dict) => {
-                        tracing::info!("Loaded personal dictionary with {} entries", dict.entries.len());
+                        tracing::info!(
+                            "Loaded personal dictionary with {} entries",
+                            dict.entries.len()
+                        );
                         dict
                     }
                     Err(e) => {

@@ -67,10 +67,7 @@ pub fn check_accessibility_permission() -> PermissionStatus {
         end tell
     "#;
 
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output();
+    let output = Command::new("osascript").arg("-e").arg(script).output();
 
     match output {
         Ok(result) if result.status.success() => {
@@ -97,8 +94,12 @@ pub fn request_microphone_permission() -> Result<(), String> {
 #[cfg(target_os = "macos")]
 pub fn open_system_preferences(section: &str) -> Result<(), String> {
     let url = match section {
-        "microphone" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-        "accessibility" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        "microphone" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        }
+        "accessibility" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        }
         _ => return Err(format!("Unknown preferences section: {}", section)),
     };
 

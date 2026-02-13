@@ -10,8 +10,7 @@ impl ClipboardOutput {
     /// Create a new clipboard output sink
     pub fn new() -> Result<Self> {
         // Verify clipboard access works at construction time
-        Clipboard::new()
-            .map_err(|e| lt_core::error::MurmurError::Output(e.to_string()))?;
+        Clipboard::new().map_err(|e| lt_core::error::MurmurError::Output(e.to_string()))?;
 
         Ok(Self)
     }
@@ -28,8 +27,8 @@ impl OutputSink for ClipboardOutput {
     async fn output_text(&self, text: &str) -> Result<()> {
         // arboard's set_text is not thread-safe, so we need to create a new clipboard instance
         // for each operation to avoid issues
-        let mut clipboard = Clipboard::new()
-            .map_err(|e| lt_core::error::MurmurError::Output(e.to_string()))?;
+        let mut clipboard =
+            Clipboard::new().map_err(|e| lt_core::error::MurmurError::Output(e.to_string()))?;
 
         clipboard
             .set_text(text.to_string())
@@ -50,7 +49,11 @@ mod tests {
         let test_text = "Hello, clipboard!";
 
         let result = output.output_text(test_text).await;
-        assert!(result.is_ok(), "Failed to write to clipboard: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to write to clipboard: {:?}",
+            result.err()
+        );
 
         // Verify by reading back from clipboard
         let mut clipboard = Clipboard::new().expect("Failed to create clipboard");

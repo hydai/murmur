@@ -79,8 +79,12 @@ impl PersonalDictionary {
             .iter()
             .filter(|e| {
                 e.term.to_lowercase().contains(&query_lower)
-                    || e.aliases.iter().any(|a| a.to_lowercase().contains(&query_lower))
-                    || e.description.as_ref().is_some_and(|d| d.to_lowercase().contains(&query_lower))
+                    || e.aliases
+                        .iter()
+                        .any(|a| a.to_lowercase().contains(&query_lower))
+                    || e.description
+                        .as_ref()
+                        .is_some_and(|d| d.to_lowercase().contains(&query_lower))
             })
             .cloned()
             .collect()
@@ -126,25 +130,34 @@ mod tests {
             description: None,
         });
 
-        let updated = dict.update_entry("Localtype", DictionaryEntry {
-            term: "Localtype".to_string(),
-            aliases: vec!["local type".to_string(), "local-type".to_string()],
-            description: Some("Updated description".to_string()),
-        });
+        let updated = dict.update_entry(
+            "Localtype",
+            DictionaryEntry {
+                term: "Localtype".to_string(),
+                aliases: vec!["local type".to_string(), "local-type".to_string()],
+                description: Some("Updated description".to_string()),
+            },
+        );
 
         assert!(updated);
         assert_eq!(dict.entries[0].aliases.len(), 2);
-        assert_eq!(dict.entries[0].description, Some("Updated description".to_string()));
+        assert_eq!(
+            dict.entries[0].description,
+            Some("Updated description".to_string())
+        );
     }
 
     #[test]
     fn test_update_nonexistent_entry() {
         let mut dict = PersonalDictionary::new();
-        let updated = dict.update_entry("NonExistent", DictionaryEntry {
-            term: "Test".to_string(),
-            aliases: vec![],
-            description: None,
-        });
+        let updated = dict.update_entry(
+            "NonExistent",
+            DictionaryEntry {
+                term: "Test".to_string(),
+                aliases: vec![],
+                description: None,
+            },
+        );
 
         assert!(!updated);
     }

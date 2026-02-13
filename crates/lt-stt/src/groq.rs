@@ -71,7 +71,10 @@ impl GroqProvider {
         // Check status
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(MurmurError::Stt(format!(
                 "Groq API error ({}): {}",
                 status, error_text

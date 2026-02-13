@@ -17,19 +17,11 @@ pub struct AudioChunk {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TranscriptionEvent {
     /// Partial (interim) transcription
-    Partial {
-        text: String,
-        timestamp_ms: u64,
-    },
+    Partial { text: String, timestamp_ms: u64 },
     /// Committed (final) transcription
-    Committed {
-        text: String,
-        timestamp_ms: u64,
-    },
+    Committed { text: String, timestamp_ms: u64 },
     /// Error during transcription
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 /// Unified STT provider trait

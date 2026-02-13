@@ -35,15 +35,9 @@ pub enum PipelineEvent {
         timestamp_ms: u64,
     },
     /// Partial transcription
-    PartialTranscription {
-        text: String,
-        timestamp_ms: u64,
-    },
+    PartialTranscription { text: String, timestamp_ms: u64 },
     /// Committed transcription
-    CommittedTranscription {
-        text: String,
-        timestamp_ms: u64,
-    },
+    CommittedTranscription { text: String, timestamp_ms: u64 },
     /// Command detected in transcription
     CommandDetected {
         command_name: Option<String>,
@@ -55,10 +49,7 @@ pub enum PipelineEvent {
         processing_time_ms: u64,
     },
     /// Error occurred
-    Error {
-        message: String,
-        recoverable: bool,
-    },
+    Error { message: String, recoverable: bool },
 }
 
 #[cfg(test)]
@@ -98,7 +89,10 @@ mod tests {
         let deserialized: PipelineEvent = serde_json::from_str(&serialized).unwrap();
 
         match deserialized {
-            PipelineEvent::StateChanged { state, timestamp_ms } => {
+            PipelineEvent::StateChanged {
+                state,
+                timestamp_ms,
+            } => {
                 assert_eq!(state, PipelineState::Recording);
                 assert_eq!(timestamp_ms, 1000);
             }

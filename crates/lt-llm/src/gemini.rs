@@ -67,11 +67,15 @@ impl LlmProcessor for GeminiProcessor {
         let start_time = Instant::now();
 
         // Build prompt from template
-        let prompt = self.prompt_manager.build_prompt(&task).map_err(|e| {
-            MurmurError::Llm(format!("Failed to build prompt template: {}", e))
-        })?;
+        let prompt = self
+            .prompt_manager
+            .build_prompt(&task)
+            .map_err(|e| MurmurError::Llm(format!("Failed to build prompt template: {}", e)))?;
 
-        tracing::debug!("Executing gemini CLI with prompt (length: {} chars)", prompt.len());
+        tracing::debug!(
+            "Executing gemini CLI with prompt (length: {} chars)",
+            prompt.len()
+        );
 
         // Execute gemini CLI
         // Format: gemini -p "prompt" --output-format json -m gemini-2.5-flash
@@ -103,7 +107,11 @@ impl LlmProcessor for GeminiProcessor {
 
         // Check exit code
         if output.exit_code != 0 {
-            tracing::error!("Gemini CLI failed with exit code {}: {}", output.exit_code, output.stderr);
+            tracing::error!(
+                "Gemini CLI failed with exit code {}: {}",
+                output.exit_code,
+                output.stderr
+            );
             return Err(MurmurError::Llm(format!(
                 "Gemini CLI failed: {}",
                 output.stderr
@@ -160,23 +168,14 @@ mod tests {
 
         // Test with "text" field
         let json1 = r#"{"text": "Hello world"}"#;
-        assert_eq!(
-            processor.parse_json_output(json1).unwrap(),
-            "Hello world"
-        );
+        assert_eq!(processor.parse_json_output(json1).unwrap(), "Hello world");
 
         // Test with "content" field
         let json2 = r#"{"content": "Hello world"}"#;
-        assert_eq!(
-            processor.parse_json_output(json2).unwrap(),
-            "Hello world"
-        );
+        assert_eq!(processor.parse_json_output(json2).unwrap(), "Hello world");
 
         // Test with plain text fallback
         let plain = "Hello world";
-        assert_eq!(
-            processor.parse_json_output(plain).unwrap(),
-            "Hello world"
-        );
+        assert_eq!(processor.parse_json_output(plain).unwrap(), "Hello world");
     }
 }

@@ -57,10 +57,12 @@ exit 0
     fs::set_permissions(&mock_cli_path, perms).unwrap();
 
     let executor = CliExecutor::new();
-    let result = executor.execute(
-        mock_cli_path.to_str().unwrap(),
-        &["-p", "test prompt", "--output-format", "json"]
-    ).await;
+    let result = executor
+        .execute(
+            mock_cli_path.to_str().unwrap(),
+            &["-p", "test prompt", "--output-format", "json"],
+        )
+        .await;
 
     assert!(result.is_ok());
     let output = result.unwrap();
@@ -90,10 +92,9 @@ exit 1
     fs::set_permissions(&mock_cli_path, perms).unwrap();
 
     let executor = CliExecutor::new();
-    let result = executor.execute(
-        mock_cli_path.to_str().unwrap(),
-        &["-p", "test prompt"]
-    ).await;
+    let result = executor
+        .execute(mock_cli_path.to_str().unwrap(), &["-p", "test prompt"])
+        .await;
 
     assert!(result.is_ok());
     let output = result.unwrap();
@@ -139,7 +140,10 @@ async fn test_fallback_behavior_simulation() {
 
         if secondary_result.is_err() {
             // Both failed - this would trigger raw transcription fallback
-            assert!(true, "Both CLIs unavailable - fallback to raw transcription");
+            assert!(
+                true,
+                "Both CLIs unavailable - fallback to raw transcription"
+            );
         }
     }
 }

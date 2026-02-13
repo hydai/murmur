@@ -13,18 +13,11 @@ pub enum ProcessingTask {
         dictionary_terms: Vec<String>,
     },
     /// Shorten text
-    Shorten {
-        text: String,
-    },
+    Shorten { text: String },
     /// Change tone
-    ChangeTone {
-        text: String,
-        target_tone: String,
-    },
+    ChangeTone { text: String, target_tone: String },
     /// Generate reply
-    GenerateReply {
-        context: String,
-    },
+    GenerateReply { context: String },
     /// Translate
     Translate {
         text: String,
