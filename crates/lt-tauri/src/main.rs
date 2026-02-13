@@ -794,6 +794,8 @@ fn main() {
         })
         .unwrap_or_default();
 
+    let startup_hotkey = config.hotkey.clone();
+
     // Initialize LLM processor based on config
     let llm_processor: Arc<dyn LlmProcessor> = match config.llm_processor {
         LlmProcessorType::Gemini => {
@@ -882,7 +884,7 @@ fn main() {
             request_microphone_permission,
             open_system_preferences
         ])
-        .setup(|app| {
+        .setup(move |app| {
             // Set up system tray - embed icon at compile time to avoid runtime path issues
             let icon_png_bytes = include_bytes!("../icons/32x32.png");
             let icon_image = image::load_from_memory(icon_png_bytes)
@@ -1017,9 +1019,10 @@ fn main() {
             let app_handle = app.handle().clone();
 
             // Register the shortcut handler first
+            let hotkey_for_handler = startup_hotkey.clone();
             if let Err(e) =
                 app.global_shortcut()
-                    .on_shortcut("Cmd+Shift+L", move |_app, _shortcut, _event| {
+                    .on_shortcut(startup_hotkey.as_str(), move |_app, _shortcut, _event| {
                         // Toggle pipeline using the cloned handle
                         let handle = app_handle.clone();
 
@@ -1046,11 +1049,11 @@ fn main() {
             }
 
             // Try to register the global shortcut (non-fatal if it fails)
-            match app.global_shortcut().register("Cmd+Shift+L") {
-                Ok(_) => tracing::info!("Global shortcut Cmd+Shift+L registered successfully"),
+            match app.global_shortcut().register(hotkey_for_handler.as_str()) {
+                Ok(_) => tracing::info!("Global shortcut {} registered successfully", hotkey_for_handler),
                 Err(e) => tracing::warn!(
-                    "Failed to register global shortcut: {}. The app will still work, but you'll need to use the window controls.",
-                    e
+                    "Failed to register global shortcut {}: {}. The app will still work, but you'll need to use the window controls.",
+                    hotkey_for_handler, e
                 ),
             }
 
