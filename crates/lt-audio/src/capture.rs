@@ -54,7 +54,7 @@ impl AudioCapture {
             .default_input_device()
             .ok_or(AudioError::NoInputDevice)?;
 
-        let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
+        let device_name = device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "Unknown".to_string());
         info!("Using audio input device: {}", device_name);
 
         // Get default input config

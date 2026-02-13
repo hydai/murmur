@@ -155,44 +155,6 @@ impl ElevenLabsProvider {
         }
     }
 
-    /// Convert i16 PCM to WAV bytes
-    fn pcm_to_wav(&self, samples: &[i16]) -> Vec<u8> {
-        let sample_rate = 16000u32;
-        let num_channels = 1u16;
-        let bits_per_sample = 16u16;
-        let byte_rate = sample_rate * num_channels as u32 * bits_per_sample as u32 / 8;
-        let block_align = num_channels * bits_per_sample / 8;
-        let data_size = (samples.len() * 2) as u32;
-        let file_size = 36 + data_size;
-
-        let mut wav = Vec::with_capacity((44 + data_size) as usize);
-
-        // RIFF header
-        wav.extend_from_slice(b"RIFF");
-        wav.extend_from_slice(&file_size.to_le_bytes());
-        wav.extend_from_slice(b"WAVE");
-
-        // fmt chunk
-        wav.extend_from_slice(b"fmt ");
-        wav.extend_from_slice(&16u32.to_le_bytes()); // chunk size
-        wav.extend_from_slice(&1u16.to_le_bytes()); // audio format (PCM)
-        wav.extend_from_slice(&num_channels.to_le_bytes());
-        wav.extend_from_slice(&sample_rate.to_le_bytes());
-        wav.extend_from_slice(&byte_rate.to_le_bytes());
-        wav.extend_from_slice(&block_align.to_le_bytes());
-        wav.extend_from_slice(&bits_per_sample.to_le_bytes());
-
-        // data chunk
-        wav.extend_from_slice(b"data");
-        wav.extend_from_slice(&data_size.to_le_bytes());
-
-        // audio data
-        for sample in samples {
-            wav.extend_from_slice(&sample.to_le_bytes());
-        }
-
-        wav
-    }
 }
 
 #[async_trait]

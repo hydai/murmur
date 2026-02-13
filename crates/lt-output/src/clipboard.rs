@@ -4,17 +4,16 @@ use lt_core::error::Result;
 use lt_core::output::OutputSink;
 
 /// Clipboard output sink using arboard
-pub struct ClipboardOutput {
-    clipboard: Clipboard,
-}
+pub struct ClipboardOutput;
 
 impl ClipboardOutput {
     /// Create a new clipboard output sink
     pub fn new() -> Result<Self> {
-        let clipboard = Clipboard::new()
+        // Verify clipboard access works at construction time
+        Clipboard::new()
             .map_err(|e| lt_core::error::LocaltypeError::Output(e.to_string()))?;
 
-        Ok(Self { clipboard })
+        Ok(Self)
     }
 }
 

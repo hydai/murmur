@@ -327,7 +327,7 @@ impl PipelineOrchestrator {
 
     /// Stop the pipeline
     pub async fn stop(&self) -> Result<()> {
-        let mut state = self.state.lock().await;
+        let state = self.state.lock().await;
 
         tracing::info!("Stopping pipeline (current state: {:?})", *state);
 
