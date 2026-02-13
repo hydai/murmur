@@ -18,16 +18,11 @@ type SpeechTranscriptionCallback = unsafe extern "C" fn(
     is_final: bool,
 );
 
-type SpeechErrorCallback = unsafe extern "C" fn(
-    ctx: *mut std::ffi::c_void,
-    message: *const std::ffi::c_char,
-);
+type SpeechErrorCallback =
+    unsafe extern "C" fn(ctx: *mut std::ffi::c_void, message: *const std::ffi::c_char);
 
-type SpeechModelProgressCallback = unsafe extern "C" fn(
-    ctx: *mut std::ffi::c_void,
-    progress: f64,
-    finished: bool,
-);
+type SpeechModelProgressCallback =
+    unsafe extern "C" fn(ctx: *mut std::ffi::c_void, progress: f64, finished: bool);
 
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,11 +171,7 @@ struct DownloadContext {
     progress_tx: mpsc::Sender<(f64, bool)>,
 }
 
-unsafe extern "C" fn on_model_progress(
-    ctx: *mut std::ffi::c_void,
-    progress: f64,
-    finished: bool,
-) {
+unsafe extern "C" fn on_model_progress(ctx: *mut std::ffi::c_void, progress: f64, finished: bool) {
     if ctx.is_null() {
         return;
     }

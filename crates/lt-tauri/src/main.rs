@@ -11,9 +11,9 @@ use lt_core::{AppConfig, PersonalDictionary};
 use lt_llm::{CopilotProcessor, GeminiProcessor};
 use lt_output::CombinedOutput;
 use lt_pipeline::{PipelineEvent, PipelineOrchestrator, PipelineState};
-use lt_stt::{ElevenLabsProvider, GroqProvider, OpenAIProvider};
 #[cfg(target_os = "macos")]
 use lt_stt::AppleSttProvider;
+use lt_stt::{ElevenLabsProvider, GroqProvider, OpenAIProvider};
 use std::sync::Arc;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -527,9 +527,7 @@ async fn start_pipeline(
             }
             #[cfg(not(target_os = "macos"))]
             {
-                return Err(
-                    "Apple STT is only available on macOS 26+".to_string()
-                );
+                return Err("Apple STT is only available on macOS 26+".to_string());
             }
         }
     };
@@ -1143,21 +1141,16 @@ fn main() {
             };
             let (width, height) = icon_image.dimensions();
             let icon_bytes = icon_image.into_raw();
-            let icon = tauri::image::Image::new(
-                &icon_bytes,
-                width,
-                height
-            );
+            let icon = tauri::image::Image::new(&icon_bytes, width, height);
 
             // Build initial menu
-            let toggle_item = MenuItemBuilder::with_id("toggle_recording", "⏺ Start Recording")
-                .build(app)?;
-            let settings_item = MenuItemBuilder::with_id("open_settings", "⚙ Open Settings")
-                .build(app)?;
-            let overlay_item = MenuItemBuilder::with_id("toggle_overlay", "👁 Show/Hide Overlay")
-                .build(app)?;
-            let quit_item = MenuItemBuilder::with_id("quit", "Quit")
-                .build(app)?;
+            let toggle_item =
+                MenuItemBuilder::with_id("toggle_recording", "⏺ Start Recording").build(app)?;
+            let settings_item =
+                MenuItemBuilder::with_id("open_settings", "⚙ Open Settings").build(app)?;
+            let overlay_item =
+                MenuItemBuilder::with_id("toggle_overlay", "👁 Show/Hide Overlay").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
             let menu = MenuBuilder::new(app)
                 .item(&toggle_item)
@@ -1182,7 +1175,10 @@ fn main() {
                                 let is_currently_recording = {
                                     let pipeline = state.pipeline.lock().await;
                                     let current_state = pipeline.get_state().await;
-                                    matches!(current_state, PipelineState::Recording | PipelineState::Transcribing)
+                                    matches!(
+                                        current_state,
+                                        PipelineState::Recording | PipelineState::Transcribing
+                                    )
                                 };
 
                                 if is_currently_recording {
@@ -1271,36 +1267,39 @@ fn main() {
             let app_handle = app.handle().clone();
 
             // Register the shortcut handler (on_shortcut registers internally)
-            if let Err(e) =
-                app.global_shortcut()
-                    .on_shortcut(startup_hotkey.as_str(), move |_app, _shortcut, event| {
-                        // Only process key PRESS, not release
-                        if event.state != ShortcutState::Pressed {
-                            return;
+            if let Err(e) = app.global_shortcut().on_shortcut(
+                startup_hotkey.as_str(),
+                move |_app, _shortcut, event| {
+                    // Only process key PRESS, not release
+                    if event.state != ShortcutState::Pressed {
+                        return;
+                    }
+
+                    // Toggle pipeline using the cloned handle
+                    let handle = app_handle.clone();
+
+                    tauri::async_runtime::spawn(async move {
+                        let state = handle.state::<AppState>();
+
+                        let is_currently_recording = {
+                            let pipeline = state.pipeline.lock().await;
+                            let current_state = pipeline.get_state().await;
+                            matches!(
+                                current_state,
+                                PipelineState::Recording | PipelineState::Transcribing
+                            )
+                        };
+
+                        if is_currently_recording {
+                            // Stop pipeline
+                            let _ = stop_pipeline(handle.clone(), state).await;
+                        } else {
+                            // Start pipeline
+                            let _ = start_pipeline(handle.clone(), state).await;
                         }
-
-                        // Toggle pipeline using the cloned handle
-                        let handle = app_handle.clone();
-
-                        tauri::async_runtime::spawn(async move {
-                            let state = handle.state::<AppState>();
-
-                            let is_currently_recording = {
-                                let pipeline = state.pipeline.lock().await;
-                                let current_state = pipeline.get_state().await;
-                                matches!(current_state, PipelineState::Recording | PipelineState::Transcribing)
-                            };
-
-                            if is_currently_recording {
-                                // Stop pipeline
-                                let _ = stop_pipeline(handle.clone(), state).await;
-                            } else {
-                                // Start pipeline
-                                let _ = start_pipeline(handle.clone(), state).await;
-                            }
-                        });
-                    })
-            {
+                    });
+                },
+            ) {
                 tracing::warn!("Failed to set up shortcut handler: {}", e);
             }
             // Note: on_shortcut() internally registers the shortcut, so no
