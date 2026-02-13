@@ -1,0 +1,23 @@
+[package]
+versioned_files = ["crates/lt-tauri/Cargo.toml"]
+changelog = "CHANGELOG.md"
+
+[github]
+owner = "hydai"
+repo = "murmur"
+
+[[workflows]]
+name = "prepare-release"
+
+[[workflows.steps]]
+type = "PrepareRelease"
+
+[[workflows.steps]]
+type = "CreatePullRequest"
+base = "main"
+
+[[workflows]]
+name = "release"
+
+[[workflows.steps]]
+type = "Release"
