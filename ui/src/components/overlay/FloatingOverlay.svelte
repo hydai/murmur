@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { fade, fly, slide } from 'svelte/transition';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { invoke } from '@tauri-apps/api/core';
+  import { safeInvoke as invoke } from '../../lib/tauri';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import WaveformIndicator from './WaveformIndicator.svelte';
   import TranscriptionView from './TranscriptionView.svelte';

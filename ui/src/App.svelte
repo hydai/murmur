@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { safeInvoke as invoke } from './lib/tauri';
   import FloatingOverlay from './components/overlay/FloatingOverlay.svelte';
 
   let status = $state('Initializing...');
