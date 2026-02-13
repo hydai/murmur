@@ -3,35 +3,33 @@ name: Prepare Release
 on:
   push:
     branches: [master]
+  workflow_dispatch:
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   prepare-release:
+    if: "!contains(github.event.head_commit.message, 'chore: prepare release')"
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - uses: knope-dev/action@v2.1.0
         with:
-          version: 0.22.1
+          version: 0.22.2
 
-      - name: Prepare release
-        run: |
-          set +e
-          output=$(knope prepare-release 2>&1)
-          exit_code=$?
-          echo "$output"
-          if [ $exit_code -ne 0 ]; then
-            if echo "$output" | grep -q "no_release"; then
-              echo "No releasable changes — skipping"
-              exit 0
-            fi
-            exit $exit_code
-          fi
+      - name: Prepare Release
+        run: knope prepare-release --verbose
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true

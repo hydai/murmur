@@ -1,5 +1,5 @@
 [package]
-versioned_files = ["crates/lt-tauri/Cargo.toml"]
+versioned_files = ["crates/lt-tauri/Cargo.toml", "Cargo.lock"]
 changelog = "CHANGELOG.md"
 
 [github]
@@ -18,6 +18,10 @@ type = "PrepareRelease"
 
 [[workflows.steps]]
 type = "Command"
+command = "git commit --signoff -m \"chore: prepare release $version\""
+
+[[workflows.steps]]
+type = "Command"
 command = "git push --force --set-upstream origin release"
 
 [[workflows.steps]]
@@ -25,10 +29,10 @@ type = "CreatePullRequest"
 base = "master"
 
 [workflows.steps.title]
-template = "chore: release $version"
+template = "chore: release murmur $version"
 
 [workflows.steps.body]
-template = "$changelog"
+template = "Merging this PR will create a new release.\n\n$changelog"
 
 [[workflows]]
 name = "release"
