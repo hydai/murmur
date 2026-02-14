@@ -9,9 +9,9 @@ use lt_core::llm::LlmProcessor;
 use lt_core::output::OutputMode;
 use lt_core::stt::SttProvider;
 use lt_core::{AppConfig, PersonalDictionary};
-use lt_llm::{CopilotProcessor, GeminiProcessor};
 #[cfg(target_os = "macos")]
 use lt_llm::AppleLlmProcessor;
+use lt_llm::{CopilotProcessor, GeminiProcessor};
 use lt_output::CombinedOutput;
 use lt_pipeline::{PipelineEvent, PipelineOrchestrator, PipelineState};
 #[cfg(target_os = "macos")]
@@ -354,7 +354,9 @@ fn create_llm_processor(processor_type: &LlmProcessorType) -> Arc<dyn LlmProcess
             }
             #[cfg(not(target_os = "macos"))]
             {
-                tracing::warn!("Apple Intelligence is only available on macOS, falling back to Gemini");
+                tracing::warn!(
+                    "Apple Intelligence is only available on macOS, falling back to Gemini"
+                );
                 Arc::new(GeminiProcessor::new())
             }
         }
@@ -384,7 +386,7 @@ async fn set_llm_processor(
         _ => return Err(format!("Unknown LLM processor: {}", processor)),
     };
 
-    config.llm_processor = processor_type.clone();
+    config.llm_processor = processor_type;
 
     config
         .save_to_file(&config_path)
