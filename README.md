@@ -1,16 +1,23 @@
+<p align="center">
+  <img src="murmur.png" alt="Murmur" width="128" />
+</p>
+
 # Murmur
 
 Privacy-first BYOK (Bring Your Own Key) voice typing application built with Tauri 2 and Svelte 5.
 
 ## Features
 
-- Real-time speech-to-text with multiple providers (ElevenLabs, OpenAI, Groq)
+- Real-time speech-to-text with multiple providers (Apple, ElevenLabs, OpenAI, Groq)
+- Apple STT: on-device speech recognition via macOS — no API key needed
 - LLM post-processing via local CLI tools (gemini-cli, copilot-cli)
 - Voice commands (shorten, translate, change tone, generate reply)
 - Personal dictionary for custom terms and aliases
 - macOS floating overlay window with glassmorphism UI
+- Audio cues for state feedback (recording start/stop, errors)
 - System tray integration with dynamic menu
 - Global hotkey support (configurable, default Ctrl+`)
+- Auto-opens settings on first launch for easy onboarding
 - Complete privacy — all data goes directly to your chosen providers
 - Comprehensive permissions handling for microphone and accessibility
 
@@ -30,6 +37,7 @@ murmur/
 │   │       └── error.rs          # MurmurError
 │   ├── lt-audio/                 # Audio capture (cpal + resampling + VAD)
 │   ├── lt-stt/                   # STT providers (ElevenLabs, OpenAI, Groq)
+│   ├── lt-stt-apple/             # Swift FFI bridge for Apple SpeechTranscriber
 │   ├── lt-llm/                   # LLM post-processing via CLI
 │   ├── lt-output/                # Output (clipboard + keyboard simulation)
 │   ├── lt-pipeline/              # Pipeline orchestration + voice commands
@@ -38,7 +46,7 @@ murmur/
 │   └── src/
 │       ├── components/
 │       │   ├── overlay/          # FloatingOverlay, WaveformIndicator, TranscriptionView
-│       │   └── settings/         # SettingsPanel, provider config, DictionaryEditor
+│       │   └── settings/         # SettingsPanel (standalone 720x560 window)
 │       └── lib/                  # Tauri IPC wrapper
 ├── config/default.toml           # Default settings template
 └── prompts/                      # LLM prompt templates
@@ -57,7 +65,7 @@ murmur/
 # Run the full app in development mode
 cargo tauri dev
 
-# Run all tests (111 tests)
+# Run all tests (93 tests)
 cargo test --workspace
 
 # Build release binary
@@ -93,6 +101,8 @@ Default configuration template: `config/default.toml`
 - `SttProvider` trait: Unified interface for streaming and batch STT
 - `TranscriptionEvent`: Partial/Committed/Error events
 - `AudioChunk`: PCM audio data wrapper
+- Apple STT provider: on-device speech recognition via Swift FFI bridge (lt-stt-apple)
+- Audio cues for state feedback (recording start/stop, errors) replace visual overlay indicators
 
 **LLM Processing**
 - `LlmProcessor` trait: Text post-processing via local CLI tools
@@ -117,7 +127,9 @@ Default configuration template: `config/default.toml`
 
    If these are not installed, the app will output raw transcriptions without post-processing.
 
-3. **API Keys Required**: You must provide your own API keys for STT providers (ElevenLabs, OpenAI, or Groq). This is by design for privacy — no third-party servers.
+3. **API Keys Required**: You must provide your own API keys for cloud STT providers (ElevenLabs, OpenAI, or Groq). Apple STT is a free on-device alternative that requires no API key.
+
+4. **Apple STT**: Requires macOS 26+ for downloading speech recognition models on-device.
 
 ## License
 
