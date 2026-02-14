@@ -1019,6 +1019,10 @@ fn main() {
         })
         .unwrap_or_default();
 
+    let is_first_launch = AppConfig::default_config_file()
+        .map(|path| !path.exists())
+        .unwrap_or(false);
+
     let startup_hotkey = config.hotkey.clone();
 
     // Initialize LLM processor based on config
@@ -1279,6 +1283,17 @@ fn main() {
             }
             // Note: on_shortcut() internally registers the shortcut, so no
             // separate register() call is needed.
+
+            if is_first_launch {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                    if let Err(e) = open_settings_window(handle).await {
+                        tracing::warn!("Failed to auto-open settings on first launch: {}", e);
+                    }
+                });
+                tracing::info!("First launch detected — opening settings window");
+            }
 
             tracing::info!("Murmur started successfully with unified pipeline");
             Ok(())
