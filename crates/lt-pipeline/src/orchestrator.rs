@@ -5,7 +5,7 @@ use lt_core::output::OutputSink;
 use lt_core::stt::{SttProvider, TranscriptionEvent};
 use lt_core::PersonalDictionary;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::commands::detect_command;
@@ -15,7 +15,7 @@ use crate::state::{PipelineEvent, PipelineState};
 pub struct PipelineOrchestrator {
     audio_capture: Arc<Mutex<Option<AudioCapture>>>,
     stt_provider: Arc<Mutex<Option<Box<dyn SttProvider>>>>,
-    llm_processor: Arc<dyn LlmProcessor>,
+    llm_processor: Arc<RwLock<Arc<dyn LlmProcessor>>>,
     output_sink: Arc<dyn OutputSink>,
     dictionary: Arc<Mutex<PersonalDictionary>>,
     state: Arc<Mutex<PipelineState>>,
@@ -38,7 +38,7 @@ impl PipelineOrchestrator {
         Self {
             audio_capture: Arc::new(Mutex::new(None)),
             stt_provider: Arc::new(Mutex::new(None)),
-            llm_processor,
+            llm_processor: Arc::new(RwLock::new(llm_processor)),
             output_sink,
             dictionary,
             state: Arc::new(Mutex::new(PipelineState::Idle)),
@@ -63,6 +63,13 @@ impl PipelineOrchestrator {
     /// Get reference to the dictionary for updates
     pub fn get_dictionary(&self) -> Arc<Mutex<PersonalDictionary>> {
         self.dictionary.clone()
+    }
+
+    /// Hot-swap the LLM processor. Takes effect on the next recording.
+    pub async fn set_llm_processor(&self, processor: Arc<dyn LlmProcessor>) {
+        let mut guard = self.llm_processor.write().await;
+        *guard = processor;
+        tracing::info!("LLM processor hot-swapped (takes effect on next recording)");
     }
 
     /// Start the pipeline with the provided STT provider
@@ -107,7 +114,9 @@ impl PipelineOrchestrator {
         // Subscribe to transcription events
         let mut event_rx = stt.subscribe_events().await;
         let event_tx = self.event_tx.clone();
-        let llm_processor = self.llm_processor.clone();
+        // Clone the processor under a read lock so the current recording
+        // uses a snapshot; hot-swaps take effect on the next recording.
+        let llm_processor = self.llm_processor.read().await.clone();
         let output_sink = self.output_sink.clone();
         let dictionary = self.dictionary.clone();
         let state_arc = self.state.clone();
@@ -158,6 +167,10 @@ impl PipelineOrchestrator {
                         }
                         full_transcription.push_str(text);
                         last_timestamp = *timestamp_ms;
+
+                        // Reset partial tracker so it only holds text
+                        // from partials AFTER this commit (the uncommitted tail)
+                        last_partial_text.clear();
                     }
                     TranscriptionEvent::Error { message } => {
                         tracing::error!("STT error: {}", message);
@@ -170,14 +183,20 @@ impl PipelineOrchestrator {
                 }
             }
 
-            // Fallback: use last partial when no Committed events were received
-            // (Apple STT only sends cumulative Partial events, never Committed)
-            if full_transcription.is_empty() && !last_partial_text.is_empty() {
+            // Append any uncommitted trailing partial text.
+            // Covers two cases:
+            // 1. No commits at all (e.g. Apple STT only sent partials) — partial becomes the full text
+            // 2. Commits + trailing partials — appends the uncommitted tail after the last commit
+            if !last_partial_text.is_empty() {
                 tracing::info!(
-                    "No committed transcription received, using last partial text ({} chars)",
-                    last_partial_text.len()
+                    "Appending trailing partial text ({} chars, had_commits={})",
+                    last_partial_text.len(),
+                    !full_transcription.is_empty()
                 );
-                full_transcription = last_partial_text;
+                if !full_transcription.is_empty() {
+                    full_transcription.push(' ');
+                }
+                full_transcription.push_str(&last_partial_text);
             }
 
             // When transcription finishes (channel closed), trigger LLM processing

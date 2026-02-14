@@ -334,8 +334,38 @@ async fn get_llm_processors() -> Result<Vec<LlmProcessorInfo>, String> {
     Ok(processors)
 }
 
+/// Create an LLM processor from its config type.
+/// Shared between startup and hot-swap to avoid duplicating the factory logic.
+fn create_llm_processor(processor_type: &LlmProcessorType) -> Arc<dyn LlmProcessor> {
+    match processor_type {
+        LlmProcessorType::Gemini => {
+            tracing::info!("Using Gemini CLI as LLM processor");
+            Arc::new(GeminiProcessor::new())
+        }
+        LlmProcessorType::Copilot => {
+            tracing::info!("Using Copilot CLI as LLM processor");
+            Arc::new(CopilotProcessor::new())
+        }
+        LlmProcessorType::AppleLlm => {
+            #[cfg(target_os = "macos")]
+            {
+                tracing::info!("Using Apple Intelligence as LLM processor");
+                Arc::new(AppleLlmProcessor::new())
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                tracing::warn!("Apple Intelligence is only available on macOS, falling back to Gemini");
+                Arc::new(GeminiProcessor::new())
+            }
+        }
+    }
+}
+
 #[tauri::command]
-async fn set_llm_processor(processor: String) -> Result<(), String> {
+async fn set_llm_processor(
+    processor: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
     let config_path = AppConfig::default_config_file()
         .map_err(|e| format!("Failed to get config path: {}", e))?;
 
@@ -354,11 +384,18 @@ async fn set_llm_processor(processor: String) -> Result<(), String> {
         _ => return Err(format!("Unknown LLM processor: {}", processor)),
     };
 
-    config.llm_processor = processor_type;
+    config.llm_processor = processor_type.clone();
 
     config
         .save_to_file(&config_path)
-        .map_err(|e| format!("Failed to save config: {}", e))
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    // Hot-swap the live pipeline's LLM processor
+    let new_processor = create_llm_processor(&processor_type);
+    let pipeline = state.pipeline.lock().await;
+    pipeline.set_llm_processor(new_processor).await;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -1038,28 +1075,7 @@ fn main() {
     let startup_hotkey = config.hotkey.clone();
 
     // Initialize LLM processor based on config
-    let llm_processor: Arc<dyn LlmProcessor> = match config.llm_processor {
-        LlmProcessorType::Gemini => {
-            tracing::info!("Using Gemini CLI as LLM processor");
-            Arc::new(GeminiProcessor::new())
-        }
-        LlmProcessorType::Copilot => {
-            tracing::info!("Using Copilot CLI as LLM processor");
-            Arc::new(CopilotProcessor::new())
-        }
-        LlmProcessorType::AppleLlm => {
-            #[cfg(target_os = "macos")]
-            {
-                tracing::info!("Using Apple Intelligence as LLM processor");
-                Arc::new(AppleLlmProcessor::new())
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                tracing::warn!("Apple Intelligence is only available on macOS, falling back to Gemini");
-                Arc::new(GeminiProcessor::new())
-            }
-        }
-    };
+    let llm_processor = create_llm_processor(&config.llm_processor);
 
     // Load dictionary (or create empty if not exists)
     let dictionary = {
