@@ -69,11 +69,20 @@ impl PipelineOrchestrator {
     pub async fn start(&self, stt_provider: Box<dyn SttProvider>) -> Result<()> {
         let mut state = self.state.lock().await;
 
-        if *state != PipelineState::Idle {
-            return Err(MurmurError::InvalidState(format!(
-                "Cannot start pipeline in {:?} state",
-                *state
-            )));
+        match *state {
+            PipelineState::Recording | PipelineState::Transcribing | PipelineState::Processing => {
+                return Err(MurmurError::InvalidState(format!(
+                    "Cannot start pipeline in {:?} state",
+                    *state
+                )));
+            }
+            PipelineState::Done | PipelineState::Error => {
+                // Reset from completed/error state to allow new recording
+                *state = PipelineState::Idle;
+            }
+            PipelineState::Idle => {
+                // Already idle, ready to start
+            }
         }
 
         tracing::info!("Starting pipeline");
@@ -106,6 +115,7 @@ impl PipelineOrchestrator {
         // Spawn transcription event handler
         let transcription_task = tokio::spawn(async move {
             let mut full_transcription = String::new();
+            let mut last_partial_text = String::new();
             let mut last_timestamp = 0u64;
 
             while let Some(event) = event_rx.recv().await {
@@ -117,6 +127,11 @@ impl PipelineOrchestrator {
                             timestamp_ms: *timestamp_ms,
                         });
                         last_timestamp = *timestamp_ms;
+
+                        // Track latest partial for fallback (Apple STT only sends partials)
+                        if !text.is_empty() {
+                            last_partial_text = text.clone();
+                        }
 
                         // Transition to Transcribing if we have text
                         if !text.is_empty() {
@@ -153,6 +168,16 @@ impl PipelineOrchestrator {
                         break; // Exit loop — let post-processing run or transition to Idle
                     }
                 }
+            }
+
+            // Fallback: use last partial when no Committed events were received
+            // (Apple STT only sends cumulative Partial events, never Committed)
+            if full_transcription.is_empty() && !last_partial_text.is_empty() {
+                tracing::info!(
+                    "No committed transcription received, using last partial text ({} chars)",
+                    last_partial_text.len()
+                );
+                full_transcription = last_partial_text;
             }
 
             // When transcription finishes (channel closed), trigger LLM processing
@@ -192,14 +217,22 @@ impl PipelineOrchestrator {
 
                 let task = detection.task;
 
+                tracing::info!(
+                    "Starting LLM post-processing: input_len={} chars",
+                    full_transcription.len()
+                );
+                tracing::debug!("LLM input text: {:?}", &full_transcription);
+
                 let start_time = std::time::Instant::now();
 
                 match llm_processor.process(task).await {
                     Ok(output) => {
                         tracing::info!(
-                            "LLM processing successful (took {}ms)",
-                            output.processing_time_ms
+                            "LLM processing successful (took {}ms, output_len={} chars)",
+                            output.processing_time_ms,
+                            output.text.len()
                         );
+                        tracing::debug!("LLM output text: {:?}", &output.text);
 
                         // Output to clipboard/keyboard
                         if let Err(e) = output_sink.output_text(&output.text).await {
@@ -354,19 +387,13 @@ impl PipelineOrchestrator {
         // to return None, which triggers stt.stop_session() for clean shutdown.
         // This is important for Apple STT's destroyAndWait() synchronization.
 
-        // Abort transcription task (force stop — no LLM processing on stop)
-        if let Some(task) = self.transcription_task.lock().await.take() {
-            task.abort();
-        }
+        // DON'T abort transcription_task — let it finish naturally.
+        // The flow: audio capture stops → chunk channel closes → audio_task
+        // calls stt.stop_session() → STT processes remaining audio → event
+        // channel closes → transcription task exits loop → post-processing
+        // runs (LLM, clipboard copy, FinalResult, Done state transition).
 
-        // Transition to Idle immediately — no race window
-        {
-            let mut state = self.state.lock().await;
-            *state = PipelineState::Idle;
-        }
-        self.emit_state_change(PipelineState::Idle);
-
-        tracing::info!("Pipeline stopped");
+        tracing::info!("Pipeline stopped (post-processing will continue)");
         Ok(())
     }
 
