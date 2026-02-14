@@ -41,11 +41,8 @@ impl LlmProcessor for CopilotProcessor {
     async fn process(&self, task: ProcessingTask) -> Result<ProcessingOutput> {
         let start_time = Instant::now();
 
-        // Build prompt from template
-        let prompt = self
-            .prompt_manager
-            .build_prompt(&task)
-            .map_err(|e| MurmurError::Llm(format!("Failed to build prompt template: {}", e)))?;
+        // Build prompt from embedded template
+        let prompt = self.prompt_manager.build_prompt(&task);
 
         tracing::debug!(
             "Executing copilot CLI with prompt (length: {} chars)",
