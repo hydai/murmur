@@ -31,8 +31,10 @@ cargo tauri build
 
 - `crates/lt-core/` - Domain types and traits (STT, LLM, config, dictionary, output)
 - `crates/lt-stt-apple/` - Swift FFI bridge for Apple SpeechTranscriber (on-device STT)
+- `crates/lt-llm-apple/` - Swift FFI bridge for Apple Foundation Models (on-device LLM)
 - `crates/lt-tauri/` - Tauri app, system tray, IPC commands, pipeline orchestration
 - `ui/` - Svelte 5 + TypeScript frontend
+- `ui/src/components/history/` - HistoryPanel (transcription history with search)
 - `ui/src/components/overlay/` - FloatingOverlay (main UI), WaveformIndicator, TranscriptionView
 - `ui/src/components/settings/` - SettingsPanel (standalone 720x560 window)
 - `ui/src/lib/tauri.ts` - `safeInvoke()` wrapper that guards against IPC readiness
@@ -61,5 +63,6 @@ cargo tauri build
 ## Common Pitfalls
 
 - Tauri IPC may not be ready immediately on startup — always use `safeInvoke()`.
+- Use `writeText()` from `@tauri-apps/plugin-clipboard-manager` for clipboard writes — `navigator.clipboard` doesn't work reliably in Tauri webviews.
 - The `macos-private-api` feature is required for transparent windows (not Mac App Store compatible).
 - Apple STT requires macOS 26+ for speech recognition model downloads.

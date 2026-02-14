@@ -10,7 +10,8 @@ Privacy-first BYOK (Bring Your Own Key) voice typing application built with Taur
 
 - Real-time speech-to-text with multiple providers (Apple, ElevenLabs, OpenAI, Groq)
 - Apple STT: on-device speech recognition via macOS — no API key needed
-- LLM post-processing via local CLI tools (gemini-cli, copilot-cli)
+- LLM post-processing via local CLI tools (gemini-cli, copilot-cli) or Apple Foundation Models (on-device)
+- Transcription history with search, copy, and persistent storage
 - Voice commands (shorten, translate, change tone, generate reply)
 - Personal dictionary for custom terms and aliases
 - macOS floating overlay window with glassmorphism UI
@@ -39,12 +40,14 @@ murmur/
 │   ├── lt-stt/                   # STT providers (ElevenLabs, OpenAI, Groq)
 │   ├── lt-stt-apple/             # Swift FFI bridge for Apple SpeechTranscriber
 │   ├── lt-llm/                   # LLM post-processing via CLI
+│   ├── lt-llm-apple/             # Apple Foundation Models (on-device LLM via Swift FFI)
 │   ├── lt-output/                # Output (clipboard + keyboard simulation)
 │   ├── lt-pipeline/              # Pipeline orchestration + voice commands
 │   └── lt-tauri/                 # Tauri app (IPC, state, events, window)
 ├── ui/                           # Svelte 5 + TypeScript frontend
 │   └── src/
 │       ├── components/
+│       │   ├── history/          # HistoryPanel (transcription history with search)
 │       │   ├── overlay/          # FloatingOverlay, WaveformIndicator, TranscriptionView
 │       │   └── settings/         # SettingsPanel (standalone 720x560 window)
 │       └── lib/                  # Tauri IPC wrapper
@@ -105,9 +108,10 @@ Default configuration template: `config/default.toml`
 - Audio cues for state feedback (recording start/stop, errors) replace visual overlay indicators
 
 **LLM Processing**
-- `LlmProcessor` trait: Text post-processing via local CLI tools
+- `LlmProcessor` trait: Text post-processing via local CLI tools or Apple Foundation Models
 - `ProcessingTask`: PostProcess/Shorten/ChangeTone/GenerateReply/Translate
 - `ProcessingOutput`: Processed text with metadata
+- Apple Foundation Models provider: on-device LLM via Swift FFI bridge (lt-llm-apple)
 
 **Configuration**
 - `AppConfig`: TOML-based configuration (API keys, providers, hotkeys, UI preferences)
@@ -121,11 +125,11 @@ Default configuration template: `config/default.toml`
 
 1. **Mac App Store**: The app uses the `macos-private-api` feature for transparent windows, which is not allowed in the Mac App Store. This is intentional for direct distribution.
 
-2. **CLI Tools Required**: To use LLM post-processing features, you need to install local CLI tools:
+2. **CLI Tools Required**: To use LLM post-processing via CLI, you need to install local CLI tools:
    - `gemini-cli` for Gemini models
    - `copilot-cli` for GitHub Copilot
 
-   If these are not installed, the app will output raw transcriptions without post-processing.
+   Alternatively, Apple Foundation Models can be used for on-device LLM processing with no external tools. If no LLM provider is configured, the app will output raw transcriptions without post-processing.
 
 3. **API Keys Required**: You must provide your own API keys for cloud STT providers (ElevenLabs, OpenAI, or Groq). Apple STT is a free on-device alternative that requires no API key.
 
