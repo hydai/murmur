@@ -1161,15 +1161,15 @@ fn rebuild_tray_menu(
     let toggle_item = MenuItemBuilder::with_id(
         "toggle_recording",
         if is_recording {
-            "⏸ Stop Recording"
+            "Stop Recording"
         } else {
-            "⏺ Start Recording"
+            "Start Recording"
         },
     )
     .build(app)?;
 
-    let settings_item = MenuItemBuilder::with_id("open_settings", "⚙ Open Settings").build(app)?;
-    let history_item = MenuItemBuilder::with_id("open_history", "📋 History").build(app)?;
+    let settings_item = MenuItemBuilder::with_id("open_settings", "Open Settings").build(app)?;
+    let history_item = MenuItemBuilder::with_id("open_history", "History").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
     let menu = MenuBuilder::new(app)
@@ -1343,10 +1343,10 @@ fn main() {
 
             // Build initial menu
             let toggle_item =
-                MenuItemBuilder::with_id("toggle_recording", "⏺ Start Recording").build(app)?;
+                MenuItemBuilder::with_id("toggle_recording", "Start Recording").build(app)?;
             let settings_item =
-                MenuItemBuilder::with_id("open_settings", "⚙ Open Settings").build(app)?;
-            let history_item = MenuItemBuilder::with_id("open_history", "📋 History").build(app)?;
+                MenuItemBuilder::with_id("open_settings", "Open Settings").build(app)?;
+            let history_item = MenuItemBuilder::with_id("open_history", "History").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
             let menu = MenuBuilder::new(app)
