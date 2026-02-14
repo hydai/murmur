@@ -1,5 +1,6 @@
 <script>
   import { safeInvoke as invoke } from '../../lib/tauri';
+  import { writeText } from '@tauri-apps/plugin-clipboard-manager';
   import { onMount } from 'svelte';
 
   let entries = [];
@@ -76,7 +77,7 @@
 
   async function copyText(text) {
     try {
-      await navigator.clipboard.writeText(text);
+      await writeText(text);
       success = 'Copied to clipboard';
       setTimeout(() => { success = ''; }, 2000);
     } catch (err) {
