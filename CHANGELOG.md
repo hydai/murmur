@@ -1,4 +1,19 @@
 # Changelog
+## 0.2.1 (2026-02-14)
+
+### Features
+
+- add Apple Foundation Models as on-device LLM provider
+- add transcription history with persistent storage and UI
+
+### Fixes
+
+- LLM hot-swap on settings change and trailing partial transcription loss
+- resolve cargo fmt and clippy issues
+- add history commands to Tauri ACL permissions allowlist
+- use Tauri clipboard plugin for history copy button
+- remove emoji prefixes from tray menu for consistent macOS style
+
 ## 0.1.4 (2026-02-14)
 
 ### Features
