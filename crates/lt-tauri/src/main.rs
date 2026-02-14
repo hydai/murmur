@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod permissions;
+mod sound;
 
 use lt_core::config::{LlmProcessorType, SttProviderType};
 use lt_core::llm::LlmProcessor;
@@ -57,23 +58,6 @@ struct FinalResultEvent {
 struct ErrorEvent {
     message: String,
     recoverable: bool,
-}
-
-#[tauri::command]
-fn toggle_overlay(app: tauri::AppHandle) -> Result<bool, String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or("Main window not found")?;
-    let is_visible = window.is_visible().map_err(|e| e.to_string())?;
-
-    if is_visible {
-        window.hide().map_err(|e| e.to_string())?;
-    } else {
-        window.show().map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
-    }
-
-    Ok(!is_visible)
 }
 
 #[tauri::command]
@@ -547,6 +531,11 @@ async fn start_pipeline(
                     state,
                     timestamp_ms,
                 } => {
+                    match state {
+                        PipelineState::Recording => sound::play_start_sound(),
+                        PipelineState::Done | PipelineState::Error => sound::play_stop_sound(),
+                        _ => {}
+                    }
                     tracing::info!("Pipeline state changed: {:?}", state);
                     let state_str = match state {
                         PipelineState::Idle => "idle",
@@ -973,14 +962,11 @@ fn rebuild_tray_menu(
     .build(app)?;
 
     let settings_item = MenuItemBuilder::with_id("open_settings", "⚙ Open Settings").build(app)?;
-    let overlay_item =
-        MenuItemBuilder::with_id("toggle_overlay", "👁 Show/Hide Overlay").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
     let menu = MenuBuilder::new(app)
         .item(&toggle_item)
         .item(&settings_item)
-        .item(&overlay_item)
         .separator()
         .item(&quit_item)
         .build()?;
@@ -1105,7 +1091,6 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
-            toggle_overlay,
             get_status,
             start_pipeline,
             stop_pipeline,
@@ -1152,14 +1137,11 @@ fn main() {
                 MenuItemBuilder::with_id("toggle_recording", "⏺ Start Recording").build(app)?;
             let settings_item =
                 MenuItemBuilder::with_id("open_settings", "⚙ Open Settings").build(app)?;
-            let overlay_item =
-                MenuItemBuilder::with_id("toggle_overlay", "👁 Show/Hide Overlay").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
             let menu = MenuBuilder::new(app)
                 .item(&toggle_item)
                 .item(&settings_item)
-                .item(&overlay_item)
                 .separator()
                 .item(&quit_item)
                 .build()?;
@@ -1199,17 +1181,6 @@ fn main() {
                                     tracing::warn!("Failed to open settings window: {}", e);
                                 }
                             });
-                        }
-                        "toggle_overlay" => {
-                            if let Some(window) = app_handle.get_webview_window("main") {
-                                let is_visible = window.is_visible().unwrap_or(false);
-                                if is_visible {
-                                    let _ = window.hide();
-                                } else {
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
-                                }
-                            }
                         }
                         "quit" => {
                             app_handle.exit(0);

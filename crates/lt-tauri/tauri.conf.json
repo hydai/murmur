@@ -28,6 +28,7 @@
       {
         "title": "Murmur",
         "label": "main",
+        "visible": false,
         "width": 600,
         "height": 200,
         "decorations": false,
