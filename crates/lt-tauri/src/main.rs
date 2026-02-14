@@ -468,11 +468,14 @@ async fn start_pipeline(
 
     // Check if pipeline is already running
     let current_state = pipeline.get_state().await;
-    if current_state != PipelineState::Idle {
-        return Err(format!(
-            "Pipeline is already running (state: {:?})",
-            current_state
-        ));
+    match current_state {
+        PipelineState::Recording | PipelineState::Transcribing | PipelineState::Processing => {
+            return Err(format!(
+                "Pipeline is already running (state: {:?})",
+                current_state
+            ));
+        }
+        _ => {} // Idle, Done, Error are all acceptable starting states
     }
 
     // Load config and get API key
@@ -544,6 +547,7 @@ async fn start_pipeline(
                     state,
                     timestamp_ms,
                 } => {
+                    tracing::info!("Pipeline state changed: {:?}", state);
                     let state_str = match state {
                         PipelineState::Idle => "idle",
                         PipelineState::Recording => "recording",
