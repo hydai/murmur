@@ -8,7 +8,7 @@ use lt_core::config::{LlmProcessorType, SttProviderType};
 use lt_core::llm::LlmProcessor;
 use lt_core::output::OutputMode;
 use lt_core::stt::SttProvider;
-use lt_core::{AppConfig, PersonalDictionary};
+use lt_core::{AppConfig, PersonalDictionary, TranscriptionHistory};
 #[cfg(target_os = "macos")]
 use lt_llm::AppleLlmProcessor;
 use lt_llm::{CopilotProcessor, GeminiProcessor};
@@ -576,6 +576,10 @@ async fn start_pipeline(
 
     // Spawn task to forward pipeline events to frontend
     let event_task = tauri::async_runtime::spawn(async move {
+        // Track raw transcription and command for history
+        let mut raw_transcription = String::new();
+        let mut detected_command: Option<String> = None;
+
         while let Ok(event) = event_rx.recv().await {
             match event {
                 PipelineEvent::StateChanged {
@@ -643,6 +647,12 @@ async fn start_pipeline(
                     );
                 }
                 PipelineEvent::CommittedTranscription { text, timestamp_ms } => {
+                    // Accumulate raw transcription for history
+                    if !raw_transcription.is_empty() {
+                        raw_transcription.push(' ');
+                    }
+                    raw_transcription.push_str(&text);
+
                     let _ = app_clone.emit(
                         "transcription-committed",
                         TranscriptionEvent { text, timestamp_ms },
@@ -652,6 +662,9 @@ async fn start_pipeline(
                     command_name,
                     timestamp_ms,
                 } => {
+                    // Capture command for history
+                    detected_command = command_name.clone();
+
                     let _ = app_clone.emit(
                         "command-detected",
                         serde_json::json!({
@@ -686,6 +699,34 @@ async fn start_pipeline(
                             "processing_time_ms": processing_time_ms
                         }),
                     );
+
+                    // Save to history
+                    let timestamp_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
+                    let raw = std::mem::take(&mut raw_transcription);
+                    let cmd = detected_command.take();
+                    let entry = lt_core::history::HistoryEntry {
+                        id: timestamp_ms.to_string(),
+                        final_text: text,
+                        raw_text: if raw.is_empty() { None } else { Some(raw) },
+                        timestamp_ms,
+                        processing_time_ms,
+                        command_name: cmd,
+                    };
+                    if let Ok(config_dir) = AppConfig::default_config_dir() {
+                        let history_path = config_dir.join("history.json");
+                        let mut history = if history_path.exists() {
+                            TranscriptionHistory::load_from_file(&history_path).unwrap_or_default()
+                        } else {
+                            TranscriptionHistory::new()
+                        };
+                        history.add_entry(entry);
+                        if let Err(e) = history.save_to_file(&history_path) {
+                            tracing::warn!("Failed to save history: {}", e);
+                        }
+                    }
                 }
                 PipelineEvent::Error {
                     message,
@@ -954,6 +995,121 @@ async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 // ============================================================================
+// History Commands
+// ============================================================================
+
+#[tauri::command]
+async fn get_history(
+    offset: usize,
+    limit: usize,
+) -> Result<Vec<lt_core::history::HistoryEntry>, String> {
+    let history_path = AppConfig::default_config_dir()
+        .map_err(|e| format!("Failed to get config dir: {}", e))?
+        .join("history.json");
+
+    let history = if history_path.exists() {
+        TranscriptionHistory::load_from_file(&history_path)
+            .map_err(|e| format!("Failed to load history: {}", e))?
+    } else {
+        TranscriptionHistory::new()
+    };
+
+    let entries: Vec<_> = history
+        .entries
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .collect();
+
+    Ok(entries)
+}
+
+#[tauri::command]
+async fn search_history(query: String) -> Result<Vec<lt_core::history::HistoryEntry>, String> {
+    let history_path = AppConfig::default_config_dir()
+        .map_err(|e| format!("Failed to get config dir: {}", e))?
+        .join("history.json");
+
+    let history = if history_path.exists() {
+        TranscriptionHistory::load_from_file(&history_path)
+            .map_err(|e| format!("Failed to load history: {}", e))?
+    } else {
+        TranscriptionHistory::new()
+    };
+
+    Ok(history.search_entries(&query))
+}
+
+#[tauri::command]
+async fn delete_history_entry(id: String) -> Result<(), String> {
+    let history_path = AppConfig::default_config_dir()
+        .map_err(|e| format!("Failed to get config dir: {}", e))?
+        .join("history.json");
+
+    let mut history = if history_path.exists() {
+        TranscriptionHistory::load_from_file(&history_path)
+            .map_err(|e| format!("Failed to load history: {}", e))?
+    } else {
+        return Err("History file not found".to_string());
+    };
+
+    if !history.delete_entry(&id) {
+        return Err(format!("History entry '{}' not found", id));
+    }
+
+    history
+        .save_to_file(&history_path)
+        .map_err(|e| format!("Failed to save history: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn clear_history() -> Result<(), String> {
+    let history_path = AppConfig::default_config_dir()
+        .map_err(|e| format!("Failed to get config dir: {}", e))?
+        .join("history.json");
+
+    let mut history = if history_path.exists() {
+        TranscriptionHistory::load_from_file(&history_path)
+            .map_err(|e| format!("Failed to load history: {}", e))?
+    } else {
+        TranscriptionHistory::new()
+    };
+
+    history.clear();
+    history
+        .save_to_file(&history_path)
+        .map_err(|e| format!("Failed to save history: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn open_history_window(app: tauri::AppHandle) -> Result<(), String> {
+    // If history window already exists, just focus it
+    if let Some(window) = app.get_webview_window("history") {
+        window.set_focus().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    // Create new history window
+    let _window = tauri::WebviewWindowBuilder::new(
+        &app,
+        "history",
+        tauri::WebviewUrl::App("index.html?view=history".into()),
+    )
+    .title("Murmur History")
+    .inner_size(720.0, 560.0)
+    .resizable(true)
+    .center()
+    .build()
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+// ============================================================================
 // Permission Management Commands
 // ============================================================================
 
@@ -1013,11 +1169,13 @@ fn rebuild_tray_menu(
     .build(app)?;
 
     let settings_item = MenuItemBuilder::with_id("open_settings", "⚙ Open Settings").build(app)?;
+    let history_item = MenuItemBuilder::with_id("open_history", "📋 History").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
     let menu = MenuBuilder::new(app)
         .item(&toggle_item)
         .item(&settings_item)
+        .item(&history_item)
         .separator()
         .item(&quit_item)
         .build()?;
@@ -1157,6 +1315,11 @@ fn main() {
             delete_dictionary_entry,
             search_dictionary,
             open_settings_window,
+            get_history,
+            search_history,
+            delete_history_entry,
+            clear_history,
+            open_history_window,
             check_permissions,
             request_microphone_permission,
             open_system_preferences,
@@ -1183,11 +1346,13 @@ fn main() {
                 MenuItemBuilder::with_id("toggle_recording", "⏺ Start Recording").build(app)?;
             let settings_item =
                 MenuItemBuilder::with_id("open_settings", "⚙ Open Settings").build(app)?;
+            let history_item = MenuItemBuilder::with_id("open_history", "📋 History").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
             let menu = MenuBuilder::new(app)
                 .item(&toggle_item)
                 .item(&settings_item)
+                .item(&history_item)
                 .separator()
                 .item(&quit_item)
                 .build()?;
@@ -1225,6 +1390,14 @@ fn main() {
                             tauri::async_runtime::spawn(async move {
                                 if let Err(e) = open_settings_window(handle).await {
                                     tracing::warn!("Failed to open settings window: {}", e);
+                                }
+                            });
+                        }
+                        "open_history" => {
+                            let handle = app_handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Err(e) = open_history_window(handle).await {
+                                    tracing::warn!("Failed to open history window: {}", e);
                                 }
                             });
                         }

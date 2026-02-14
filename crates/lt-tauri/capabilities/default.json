@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capability granting all app commands and plugin permissions",
-  "windows": ["main", "settings"],
+  "windows": ["main", "settings", "history"],
   "permissions": [
     "core:default",
     "global-shortcut:default",

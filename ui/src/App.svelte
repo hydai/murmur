@@ -3,6 +3,7 @@
   import { safeInvoke as invoke } from './lib/tauri';
   import FloatingOverlay from './components/overlay/FloatingOverlay.svelte';
   import SettingsPanel from './components/settings/SettingsPanel.svelte';
+  import HistoryPanel from './components/history/HistoryPanel.svelte';
 
   const params = new URLSearchParams(window.location.search);
   const view = params.get('view');
@@ -10,7 +11,7 @@
   let status = $state('Initializing...');
 
   onMount(async () => {
-    if (view === 'settings') return;
+    if (view === 'settings' || view === 'history') return;
     try {
       status = await invoke<string>('get_status');
     } catch (err) {
@@ -27,6 +28,8 @@
 
 {#if view === 'settings'}
   <SettingsPanel visible={true} onClose={closeSettingsWindow} />
+{:else if view === 'history'}
+  <HistoryPanel />
 {:else}
   <FloatingOverlay {status} />
 {/if}
