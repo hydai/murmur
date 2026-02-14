@@ -10,6 +10,8 @@ use lt_core::output::OutputMode;
 use lt_core::stt::SttProvider;
 use lt_core::{AppConfig, PersonalDictionary};
 use lt_llm::{CopilotProcessor, GeminiProcessor};
+#[cfg(target_os = "macos")]
+use lt_llm::AppleLlmProcessor;
 use lt_output::CombinedOutput;
 use lt_pipeline::{PipelineEvent, PipelineOrchestrator, PipelineState};
 #[cfg(target_os = "macos")]
@@ -307,7 +309,7 @@ async fn get_llm_processors() -> Result<Vec<LlmProcessorInfo>, String> {
     let gemini_available = gemini.health_check().await.unwrap_or(false);
     let copilot_available = copilot.health_check().await.unwrap_or(false);
 
-    let processors = vec![
+    let mut processors = vec![
         LlmProcessorInfo {
             name: "Gemini CLI".to_string(),
             id: "gemini".to_string(),
@@ -319,6 +321,15 @@ async fn get_llm_processors() -> Result<Vec<LlmProcessorInfo>, String> {
             available: copilot_available,
         },
     ];
+
+    #[cfg(target_os = "macos")]
+    {
+        processors.push(LlmProcessorInfo {
+            name: "Apple Intelligence".to_string(),
+            id: "apple_llm".to_string(),
+            available: AppleLlmProcessor::is_available(),
+        });
+    }
 
     Ok(processors)
 }
@@ -339,6 +350,7 @@ async fn set_llm_processor(processor: String) -> Result<(), String> {
     let processor_type = match processor.to_lowercase().as_str() {
         "gemini" => LlmProcessorType::Gemini,
         "copilot" => LlmProcessorType::Copilot,
+        "apple_llm" => LlmProcessorType::AppleLlm,
         _ => return Err(format!("Unknown LLM processor: {}", processor)),
     };
 
@@ -1034,6 +1046,18 @@ fn main() {
         LlmProcessorType::Copilot => {
             tracing::info!("Using Copilot CLI as LLM processor");
             Arc::new(CopilotProcessor::new())
+        }
+        LlmProcessorType::AppleLlm => {
+            #[cfg(target_os = "macos")]
+            {
+                tracing::info!("Using Apple Intelligence as LLM processor");
+                Arc::new(AppleLlmProcessor::new())
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                tracing::warn!("Apple Intelligence is only available on macOS, falling back to Gemini");
+                Arc::new(GeminiProcessor::new())
+            }
         }
     };
 

@@ -24,6 +24,8 @@ pub enum LlmProcessorType {
     #[default]
     Gemini,
     Copilot,
+    #[serde(rename = "apple_llm")]
+    AppleLlm,
 }
 
 /// UI preferences
