@@ -4,6 +4,13 @@
 
 Privacy-first BYOK voice typing app built with Tauri 2 + Svelte 5. Rust backend, TypeScript frontend.
 
+## Setup
+
+```bash
+# Enable the pre-commit hook (fmt + clippy checks)
+git config core.hooksPath .githooks
+```
+
 ## Build & Test
 
 ```bash
