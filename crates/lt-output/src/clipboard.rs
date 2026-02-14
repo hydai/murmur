@@ -46,8 +46,12 @@ mod tests {
     #[tokio::test]
     async fn test_clipboard_output() {
         let output = ClipboardOutput::new().expect("Failed to create clipboard output");
-        let test_text = "Hello, clipboard!";
 
+        // Save current clipboard content so we can restore it after the test
+        let mut clipboard = Clipboard::new().expect("Failed to create clipboard");
+        let saved = clipboard.get_text().ok();
+
+        let test_text = "Hello, clipboard!";
         let result = output.output_text(test_text).await;
         assert!(
             result.is_ok(),
@@ -56,8 +60,12 @@ mod tests {
         );
 
         // Verify by reading back from clipboard
-        let mut clipboard = Clipboard::new().expect("Failed to create clipboard");
         let read_text = clipboard.get_text().expect("Failed to read from clipboard");
         assert_eq!(read_text, test_text);
+
+        // Restore previous clipboard content
+        if let Some(prev) = saved {
+            let _ = clipboard.set_text(prev);
+        }
     }
 }
