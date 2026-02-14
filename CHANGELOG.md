@@ -1,4 +1,18 @@
 # Changelog
+## 0.1.4 (2026-02-14)
+
+### Features
+
+- replace visual overlay with audio cues for state feedback
+- auto-open settings window on first launch
+
+### Fixes
+
+- embed prompt templates at compile time with include_str!()
+- allow pipeline restart from Error/Done states
+- restore clipboard content after test
+- use partial transcription fallback and allow post-processing after stop
+
 ## 0.1.3 (2026-02-13)
 
 ### Features
