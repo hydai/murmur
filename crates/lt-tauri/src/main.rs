@@ -1375,7 +1375,7 @@ fn rebuild_tray_menu(
     tray.set_tooltip(Some(tooltip))?;
 
     // Update icon to reflect recording state using embedded icon
-    let icon_png_bytes = include_bytes!("../icons/32x32.png");
+    let icon_png_bytes = include_bytes!("../icons/tray-icon.png");
     if let Ok(icon_image) = image::load_from_memory(icon_png_bytes) {
         let rgba_image = icon_image.to_rgba8();
         let (width, height) = rgba_image.dimensions();
@@ -1516,7 +1516,7 @@ fn main() {
         ])
         .setup(move |app| {
             // Set up system tray - embed icon at compile time to avoid runtime path issues
-            let icon_png_bytes = include_bytes!("../icons/32x32.png");
+            let icon_png_bytes = include_bytes!("../icons/tray-icon.png");
             let icon_image = match image::load_from_memory(icon_png_bytes) {
                 Ok(img) => img.to_rgba8(),
                 Err(e) => {
