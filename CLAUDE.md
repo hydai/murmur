@@ -57,11 +57,19 @@ cargo tauri build
 
 ### LLM Model Configuration
 - Each LLM processor has a `DEFAULT_MODEL` constant and `with_model(Option<String>)` constructor
-- Defaults: Gemini → `gemini-3-flash-preview`, Copilot → `gpt-5-mini`, Apple → system default
+- CLI defaults: Gemini → `gemini-3-flash-preview`, Copilot → `gpt-5-mini`, Apple → system default
+- HTTP API defaults: OpenAI → `gpt-4o-mini`, Claude → `claude-sonnet-4-20250514`, Gemini API → `gemini-2.0-flash`
 - `AppConfig.llm_model` stores the user override (`None` = use provider default)
-- `create_llm_processor()` in `main.rs` is the single factory — accepts `(type, model)` and is used at both startup and hot-swap
+- `create_llm_processor()` in `main.rs` is the single factory — accepts `(type, model, config)` and is used at both startup and hot-swap
 - `set_llm_model` IPC command saves config and hot-swaps the processor; empty string resets to default
 - When adding a new LLM provider: add `DEFAULT_MODEL`, `with_model()`, and update the factory + `get_llm_processors()`
+
+### HTTP API LLM Providers
+- `HttpLlmProcessor` in `crates/lt-llm/src/http_api.rs` — single struct with `ApiFormat` enum for OpenAI/Claude/Gemini API formats
+- API keys stored in `AppConfig.api_keys` HashMap: `"openai"` (shared with STT), `"anthropic"`, `"google_ai"`, `"custom_llm"`
+- `HttpLlmConfig` in `AppConfig` stores `custom_base_url` and `custom_display_name` for custom endpoints
+- Custom endpoint uses OpenAI-compatible format (works with Ollama, LM Studio, Azure OpenAI)
+- `set_custom_llm_endpoint` IPC command saves custom endpoint config
 
 ### Tauri Events
 - Rust emits events like `audio-level`, `recording-state`, `pipeline-state`, `open-settings`
