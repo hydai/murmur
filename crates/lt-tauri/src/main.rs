@@ -11,7 +11,7 @@ use lt_core::stt::SttProvider;
 use lt_core::{AppConfig, PersonalDictionary, TranscriptionHistory};
 #[cfg(target_os = "macos")]
 use lt_llm::AppleLlmProcessor;
-use lt_llm::{CopilotProcessor, GeminiProcessor};
+use lt_llm::{CopilotProcessor, GeminiProcessor, HttpLlmProcessor};
 use lt_output::CombinedOutput;
 use lt_pipeline::{PipelineEvent, PipelineOrchestrator, PipelineState};
 #[cfg(target_os = "macos")]
@@ -299,11 +299,17 @@ struct LlmProcessorInfo {
     id: String,
     available: bool,
     default_model: String,
+    provider_type: String,
+    requires_api_key: bool,
+    configured: bool,
+    api_key_name: Option<String>,
 }
 
 #[tauri::command]
 async fn get_llm_processors() -> Result<Vec<LlmProcessorInfo>, String> {
-    // Check health for each processor
+    let config = get_config().await?;
+
+    // Check health for CLI processors
     let gemini = GeminiProcessor::new();
     let copilot = CopilotProcessor::new();
 
@@ -311,17 +317,26 @@ async fn get_llm_processors() -> Result<Vec<LlmProcessorInfo>, String> {
     let copilot_available = copilot.health_check().await.unwrap_or(false);
 
     let mut processors = vec![
+        // CLI processors
         LlmProcessorInfo {
             name: "Gemini CLI".to_string(),
             id: "gemini".to_string(),
             available: gemini_available,
             default_model: lt_llm::gemini::DEFAULT_MODEL.to_string(),
+            provider_type: "cli".to_string(),
+            requires_api_key: false,
+            configured: true,
+            api_key_name: None,
         },
         LlmProcessorInfo {
             name: "Copilot CLI".to_string(),
             id: "copilot".to_string(),
             available: copilot_available,
             default_model: lt_llm::copilot::DEFAULT_MODEL.to_string(),
+            provider_type: "cli".to_string(),
+            requires_api_key: false,
+            configured: true,
+            api_key_name: None,
         },
     ];
 
@@ -332,8 +347,64 @@ async fn get_llm_processors() -> Result<Vec<LlmProcessorInfo>, String> {
             id: "apple_llm".to_string(),
             available: AppleLlmProcessor::is_available(),
             default_model: lt_llm::apple::DEFAULT_MODEL.to_string(),
+            provider_type: "local".to_string(),
+            requires_api_key: false,
+            configured: true,
+            api_key_name: None,
         });
     }
+
+    // HTTP API processors
+    let openai_configured = config.api_keys.contains_key("openai");
+    let anthropic_configured = config.api_keys.contains_key("anthropic");
+    let google_ai_configured = config.api_keys.contains_key("google_ai");
+    let custom_configured = config.api_keys.contains_key("custom_llm");
+
+    processors.push(LlmProcessorInfo {
+        name: "OpenAI API".to_string(),
+        id: "openai_api".to_string(),
+        available: openai_configured,
+        default_model: lt_llm::http_api::OPENAI_DEFAULT_MODEL.to_string(),
+        provider_type: "http".to_string(),
+        requires_api_key: true,
+        configured: openai_configured,
+        api_key_name: Some("openai".to_string()),
+    });
+    processors.push(LlmProcessorInfo {
+        name: "Claude API".to_string(),
+        id: "claude_api".to_string(),
+        available: anthropic_configured,
+        default_model: lt_llm::http_api::CLAUDE_DEFAULT_MODEL.to_string(),
+        provider_type: "http".to_string(),
+        requires_api_key: true,
+        configured: anthropic_configured,
+        api_key_name: Some("anthropic".to_string()),
+    });
+    processors.push(LlmProcessorInfo {
+        name: "Gemini API".to_string(),
+        id: "gemini_api".to_string(),
+        available: google_ai_configured,
+        default_model: lt_llm::http_api::GEMINI_API_DEFAULT_MODEL.to_string(),
+        provider_type: "http".to_string(),
+        requires_api_key: true,
+        configured: google_ai_configured,
+        api_key_name: Some("google_ai".to_string()),
+    });
+
+    let custom_name = config
+        .http_llm_config
+        .custom_display_name
+        .unwrap_or_else(|| "Custom Endpoint".to_string());
+    processors.push(LlmProcessorInfo {
+        name: custom_name,
+        id: "custom_api".to_string(),
+        available: custom_configured && config.http_llm_config.custom_base_url.is_some(),
+        default_model: lt_llm::http_api::OPENAI_DEFAULT_MODEL.to_string(),
+        provider_type: "custom".to_string(),
+        requires_api_key: true,
+        configured: custom_configured,
+        api_key_name: Some("custom_llm".to_string()),
+    });
 
     Ok(processors)
 }
@@ -343,6 +414,7 @@ async fn get_llm_processors() -> Result<Vec<LlmProcessorInfo>, String> {
 fn create_llm_processor(
     processor_type: &LlmProcessorType,
     model: Option<String>,
+    config: &AppConfig,
 ) -> Arc<dyn LlmProcessor> {
     match processor_type {
         LlmProcessorType::Gemini => {
@@ -367,6 +439,43 @@ fn create_llm_processor(
                 Arc::new(GeminiProcessor::with_model(model))
             }
         }
+        LlmProcessorType::OpenAiApi => {
+            let api_key = config.api_keys.get("openai").cloned().unwrap_or_default();
+            tracing::info!("Using OpenAI API as LLM processor");
+            Arc::new(HttpLlmProcessor::openai(api_key, model))
+        }
+        LlmProcessorType::ClaudeApi => {
+            let api_key = config
+                .api_keys
+                .get("anthropic")
+                .cloned()
+                .unwrap_or_default();
+            tracing::info!("Using Claude API as LLM processor");
+            Arc::new(HttpLlmProcessor::claude(api_key, model))
+        }
+        LlmProcessorType::GeminiApi => {
+            let api_key = config
+                .api_keys
+                .get("google_ai")
+                .cloned()
+                .unwrap_or_default();
+            tracing::info!("Using Gemini API as LLM processor");
+            Arc::new(HttpLlmProcessor::gemini_api(api_key, model))
+        }
+        LlmProcessorType::CustomApi => {
+            let api_key = config
+                .api_keys
+                .get("custom_llm")
+                .cloned()
+                .unwrap_or_default();
+            let base_url = config
+                .http_llm_config
+                .custom_base_url
+                .clone()
+                .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
+            tracing::info!("Using custom endpoint ({}) as LLM processor", base_url);
+            Arc::new(HttpLlmProcessor::custom(base_url, api_key, model))
+        }
     }
 }
 
@@ -390,6 +499,10 @@ async fn set_llm_processor(
         "gemini" => LlmProcessorType::Gemini,
         "copilot" => LlmProcessorType::Copilot,
         "apple_llm" => LlmProcessorType::AppleLlm,
+        "openai_api" => LlmProcessorType::OpenAiApi,
+        "claude_api" => LlmProcessorType::ClaudeApi,
+        "gemini_api" => LlmProcessorType::GeminiApi,
+        "custom_api" => LlmProcessorType::CustomApi,
         _ => return Err(format!("Unknown LLM processor: {}", processor)),
     };
 
@@ -400,7 +513,7 @@ async fn set_llm_processor(
         .map_err(|e| format!("Failed to save config: {}", e))?;
 
     // Hot-swap the live pipeline's LLM processor
-    let new_processor = create_llm_processor(&processor_type, config.llm_model.clone());
+    let new_processor = create_llm_processor(&processor_type, config.llm_model.clone(), &config);
     let pipeline = state.pipeline.lock().await;
     pipeline.set_llm_processor(new_processor).await;
 
@@ -431,7 +544,8 @@ async fn set_llm_model(model: String, state: tauri::State<'_, AppState>) -> Resu
         .map_err(|e| format!("Failed to save config: {}", e))?;
 
     // Hot-swap the live pipeline's LLM processor with new model
-    let new_processor = create_llm_processor(&config.llm_processor, config.llm_model.clone());
+    let new_processor =
+        create_llm_processor(&config.llm_processor, config.llm_model.clone(), &config);
     let pipeline = state.pipeline.lock().await;
     pipeline.set_llm_processor(new_processor).await;
 
@@ -441,6 +555,33 @@ async fn set_llm_model(model: String, state: tauri::State<'_, AppState>) -> Resu
     );
 
     Ok(())
+}
+
+#[tauri::command]
+async fn set_custom_llm_endpoint(
+    base_url: String,
+    display_name: Option<String>,
+) -> Result<(), String> {
+    let config_path = AppConfig::default_config_file()
+        .map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    let mut config = if config_path.exists() {
+        AppConfig::load_from_file(&config_path)
+            .map_err(|e| format!("Failed to load config: {}", e))?
+    } else {
+        AppConfig::default()
+    };
+
+    config.http_llm_config.custom_base_url = if base_url.is_empty() {
+        None
+    } else {
+        Some(base_url)
+    };
+    config.http_llm_config.custom_display_name = display_name;
+
+    config
+        .save_to_file(&config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))
 }
 
 #[tauri::command]
@@ -1278,7 +1419,8 @@ fn main() {
     let startup_hotkey = config.hotkey.clone();
 
     // Initialize LLM processor based on config
-    let llm_processor = create_llm_processor(&config.llm_processor, config.llm_model.clone());
+    let llm_processor =
+        create_llm_processor(&config.llm_processor, config.llm_model.clone(), &config);
 
     // Load dictionary (or create empty if not exists)
     let dictionary = {
@@ -1351,6 +1493,7 @@ fn main() {
             get_llm_processors,
             set_llm_processor,
             set_llm_model,
+            set_custom_llm_endpoint,
             set_output_mode,
             set_hotkey,
             get_dictionary,

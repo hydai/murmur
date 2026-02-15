@@ -26,6 +26,25 @@ pub enum LlmProcessorType {
     Copilot,
     #[serde(rename = "apple_llm")]
     AppleLlm,
+    #[serde(rename = "openai_api")]
+    OpenAiApi,
+    #[serde(rename = "claude_api")]
+    ClaudeApi,
+    #[serde(rename = "gemini_api")]
+    GeminiApi,
+    #[serde(rename = "custom_api")]
+    CustomApi,
+}
+
+/// HTTP LLM provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HttpLlmConfig {
+    /// Custom base URL (only for CustomApi)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_base_url: Option<String>,
+    /// Display name for custom endpoint in UI
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_display_name: Option<String>,
 }
 
 /// UI preferences
@@ -77,6 +96,10 @@ pub struct AppConfig {
     /// Apple STT locale ("auto" = detect system locale, or e.g. "en_US", "ja_JP")
     #[serde(default = "default_apple_stt_locale")]
     pub apple_stt_locale: String,
+
+    /// HTTP LLM provider configuration
+    #[serde(default)]
+    pub http_llm_config: HttpLlmConfig,
 }
 
 fn default_apple_stt_locale() -> String {
@@ -94,6 +117,7 @@ impl Default for AppConfig {
             output_mode: OutputMode::default(),
             ui_preferences: UiPreferences::default(),
             apple_stt_locale: default_apple_stt_locale(),
+            http_llm_config: HttpLlmConfig::default(),
         }
     }
 }

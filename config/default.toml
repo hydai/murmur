@@ -6,11 +6,16 @@
 stt_provider = "elevenlabs"
 
 # LLM Processor Selection
-# Options: "gemini", "copilot"
+# CLI providers: "gemini", "copilot"
+# HTTP API providers: "openai_api", "claude_api", "gemini_api", "custom_api"
+# Local: "apple_llm"
 llm_processor = "gemini"
 
 # LLM Model Override (optional)
-# Leave commented to use provider defaults: gemini → "gemini-3-flash-preview", copilot → "gpt-5-mini"
+# Leave commented to use provider defaults:
+#   gemini CLI → "gemini-3-flash-preview", copilot CLI → "gpt-5-mini"
+#   openai_api → "gpt-4o-mini", claude_api → "claude-sonnet-4-20250514"
+#   gemini_api → "gemini-2.0-flash"
 # llm_model = "gemini-3-flash-preview"
 
 # Output Mode
@@ -25,12 +30,20 @@ hotkey = "Ctrl+`"
 # Store your API keys here or use environment variables
 [api_keys]
 # elevenlabs = "your-elevenlabs-api-key"
-# openai = "your-openai-api-key"
+# openai = "your-openai-api-key"       # shared between STT (Whisper) and LLM (Chat Completions)
 # groq = "your-groq-api-key"
+# anthropic = "your-anthropic-api-key"  # for Claude API
+# google_ai = "your-google-ai-key"     # for Gemini API (distinct from Gemini CLI)
+# custom_llm = "your-custom-api-key"   # for custom OpenAI-compatible endpoints
 
 # Apple STT Locale
 # "auto" = detect system language, or set a specific locale (e.g. "en_US", "ja_JP", "zh_TW")
 apple_stt_locale = "auto"
+
+# HTTP LLM Provider Configuration (for custom_api)
+# [http_llm_config]
+# custom_base_url = "http://localhost:11434/v1"  # e.g., Ollama, LM Studio
+# custom_display_name = "Local Ollama"
 
 # UI Preferences
 [ui_preferences]
