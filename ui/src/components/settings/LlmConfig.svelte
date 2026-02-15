@@ -4,7 +4,10 @@
 
   let processors = [];
   let currentProcessor = '';
+  let currentModel = '';
+  let defaultModel = '';
   let loading = false;
+  let modelLoading = false;
   let error = '';
   let success = '';
 
@@ -26,10 +29,17 @@
     try {
       const config = await invoke('get_config');
       currentProcessor = config.llm_processor.toLowerCase();
+      currentModel = config.llm_model || '';
+      updateDefaultModel();
     } catch (err) {
       error = `Failed to load config: ${err}`;
       console.error(error);
     }
+  }
+
+  function updateDefaultModel() {
+    const active = processors.find(p => p.id === currentProcessor);
+    defaultModel = active?.default_model || '';
   }
 
   async function selectProcessor(processorId) {
@@ -48,6 +58,7 @@
 
       await invoke('set_llm_processor', { processor: processorId });
       currentProcessor = processorId;
+      updateDefaultModel();
       success = `Switched to ${processor.name}`;
       setTimeout(() => { success = ''; }, 3000);
     } catch (err) {
@@ -55,6 +66,25 @@
       console.error(error);
     } finally {
       loading = false;
+    }
+  }
+
+  async function saveModel() {
+    try {
+      modelLoading = true;
+      error = '';
+      success = '';
+
+      await invoke('set_llm_model', { model: currentModel });
+      success = currentModel
+        ? `Model set to ${currentModel}`
+        : `Reset to default model (${defaultModel})`;
+      setTimeout(() => { success = ''; }, 3000);
+    } catch (err) {
+      error = `Failed to set model: ${err}`;
+      console.error(error);
+    } finally {
+      modelLoading = false;
     }
   }
 
@@ -120,6 +150,29 @@
         {/if}
       </div>
     {/each}
+  </div>
+
+  <div class="model-section">
+    <h3 class="model-title">Model Override</h3>
+    <p class="model-description">
+      Override the default model for the active processor. Leave empty to use the default.
+    </p>
+    <div class="model-input-row">
+      <input
+        type="text"
+        class="model-input"
+        bind:value={currentModel}
+        placeholder={defaultModel || 'default'}
+        on:keypress={(e) => e.key === 'Enter' && saveModel()}
+      />
+      <button
+        class="model-apply-btn"
+        on:click={saveModel}
+        disabled={modelLoading}
+      >
+        {modelLoading ? 'Applying...' : 'Apply'}
+      </button>
+    </div>
   </div>
 
   {#if loading}
@@ -251,6 +304,72 @@
   .hint-icon {
     font-size: 14px;
     flex-shrink: 0;
+  }
+
+  .model-section {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .model-title {
+    margin: 0 0 6px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+  }
+
+  .model-description {
+    margin-bottom: 12px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 13px;
+  }
+
+  .model-input-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .model-input {
+    flex: 1;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.05);
+    color: #fff;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s ease;
+  }
+
+  .model-input:focus {
+    border-color: rgba(59, 130, 246, 0.6);
+  }
+
+  .model-input::placeholder {
+    color: rgba(255, 255, 255, 0.3);
+  }
+
+  .model-apply-btn {
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: none;
+    background: rgba(59, 130, 246, 0.3);
+    color: #93c5fd;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+  }
+
+  .model-apply-btn:hover:not(:disabled) {
+    background: rgba(59, 130, 246, 0.5);
+  }
+
+  .model-apply-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .loading {
