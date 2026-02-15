@@ -10,7 +10,10 @@ use crate::prompts::PromptManager;
 pub struct GeminiProcessor {
     executor: CliExecutor,
     prompt_manager: PromptManager,
+    model: String,
 }
+
+pub const DEFAULT_MODEL: &str = "gemini-3-flash-preview";
 
 impl GeminiProcessor {
     /// Create a new Gemini processor with default settings
@@ -18,6 +21,19 @@ impl GeminiProcessor {
         Self {
             executor: CliExecutor::with_timeout(30),
             prompt_manager: PromptManager::new(),
+            model: DEFAULT_MODEL.to_string(),
+        }
+    }
+
+    /// Create a new Gemini processor with an optional model override
+    pub fn with_model(model: Option<String>) -> Self {
+        let model = model
+            .filter(|m| !m.is_empty())
+            .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+        Self {
+            executor: CliExecutor::with_timeout(30),
+            prompt_manager: PromptManager::new(),
+            model,
         }
     }
 
@@ -26,6 +42,7 @@ impl GeminiProcessor {
         Self {
             executor: CliExecutor::with_timeout(timeout_secs),
             prompt_manager: PromptManager::new(),
+            model: DEFAULT_MODEL.to_string(),
         }
     }
 
@@ -75,7 +92,7 @@ impl LlmProcessor for GeminiProcessor {
         );
 
         // Execute gemini CLI
-        // Format: gemini -p "prompt" --output-format json -m gemini-2.5-flash
+        // Format: gemini -p "prompt" --output-format json -m <model>
         let output = self
             .executor
             .execute(
@@ -86,7 +103,7 @@ impl LlmProcessor for GeminiProcessor {
                     "--output-format",
                     "json",
                     "-m",
-                    "gemini-2.5-flash",
+                    &self.model,
                 ],
             )
             .await

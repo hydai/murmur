@@ -60,11 +60,18 @@ pub struct AppleLlmProcessor {
     prompt_manager: PromptManager,
 }
 
+pub const DEFAULT_MODEL: &str = "(system default)";
+
 impl AppleLlmProcessor {
     pub fn new() -> Self {
         Self {
             prompt_manager: PromptManager::new(),
         }
+    }
+
+    /// Create processor (model parameter ignored — Apple uses the system model).
+    pub fn with_model(_model: Option<String>) -> Self {
+        Self::new()
     }
 
     /// Check if Apple Foundation Models is available (static, no instance needed).

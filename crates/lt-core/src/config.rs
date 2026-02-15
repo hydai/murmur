@@ -64,6 +64,10 @@ pub struct AppConfig {
     /// Selected LLM processor
     pub llm_processor: LlmProcessorType,
 
+    /// Optional LLM model name override (None = use provider default)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_model: Option<String>,
+
     /// Output mode
     pub output_mode: OutputMode,
 
@@ -86,6 +90,7 @@ impl Default for AppConfig {
             api_keys: HashMap::new(),
             hotkey: "Ctrl+`".to_string(),
             llm_processor: LlmProcessorType::default(),
+            llm_model: None,
             output_mode: OutputMode::default(),
             ui_preferences: UiPreferences::default(),
             apple_stt_locale: default_apple_stt_locale(),
