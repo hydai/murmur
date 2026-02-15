@@ -298,6 +298,7 @@ struct LlmProcessorInfo {
     name: String,
     id: String,
     available: bool,
+    default_model: String,
 }
 
 #[tauri::command]
@@ -314,11 +315,13 @@ async fn get_llm_processors() -> Result<Vec<LlmProcessorInfo>, String> {
             name: "Gemini CLI".to_string(),
             id: "gemini".to_string(),
             available: gemini_available,
+            default_model: lt_llm::gemini::DEFAULT_MODEL.to_string(),
         },
         LlmProcessorInfo {
             name: "Copilot CLI".to_string(),
             id: "copilot".to_string(),
             available: copilot_available,
+            default_model: lt_llm::copilot::DEFAULT_MODEL.to_string(),
         },
     ];
 
@@ -328,36 +331,40 @@ async fn get_llm_processors() -> Result<Vec<LlmProcessorInfo>, String> {
             name: "Apple Intelligence".to_string(),
             id: "apple_llm".to_string(),
             available: AppleLlmProcessor::is_available(),
+            default_model: lt_llm::apple::DEFAULT_MODEL.to_string(),
         });
     }
 
     Ok(processors)
 }
 
-/// Create an LLM processor from its config type.
+/// Create an LLM processor from its config type and optional model override.
 /// Shared between startup and hot-swap to avoid duplicating the factory logic.
-fn create_llm_processor(processor_type: &LlmProcessorType) -> Arc<dyn LlmProcessor> {
+fn create_llm_processor(
+    processor_type: &LlmProcessorType,
+    model: Option<String>,
+) -> Arc<dyn LlmProcessor> {
     match processor_type {
         LlmProcessorType::Gemini => {
             tracing::info!("Using Gemini CLI as LLM processor");
-            Arc::new(GeminiProcessor::new())
+            Arc::new(GeminiProcessor::with_model(model))
         }
         LlmProcessorType::Copilot => {
             tracing::info!("Using Copilot CLI as LLM processor");
-            Arc::new(CopilotProcessor::new())
+            Arc::new(CopilotProcessor::with_model(model))
         }
         LlmProcessorType::AppleLlm => {
             #[cfg(target_os = "macos")]
             {
                 tracing::info!("Using Apple Intelligence as LLM processor");
-                Arc::new(AppleLlmProcessor::new())
+                Arc::new(AppleLlmProcessor::with_model(model))
             }
             #[cfg(not(target_os = "macos"))]
             {
                 tracing::warn!(
                     "Apple Intelligence is only available on macOS, falling back to Gemini"
                 );
-                Arc::new(GeminiProcessor::new())
+                Arc::new(GeminiProcessor::with_model(model))
             }
         }
     }
@@ -393,9 +400,45 @@ async fn set_llm_processor(
         .map_err(|e| format!("Failed to save config: {}", e))?;
 
     // Hot-swap the live pipeline's LLM processor
-    let new_processor = create_llm_processor(&processor_type);
+    let new_processor = create_llm_processor(&processor_type, config.llm_model.clone());
     let pipeline = state.pipeline.lock().await;
     pipeline.set_llm_processor(new_processor).await;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_llm_model(model: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let config_path = AppConfig::default_config_file()
+        .map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    let mut config = if config_path.exists() {
+        AppConfig::load_from_file(&config_path)
+            .map_err(|e| format!("Failed to load config: {}", e))?
+    } else {
+        AppConfig::default()
+    };
+
+    // Empty string means reset to default
+    config.llm_model = if model.trim().is_empty() {
+        None
+    } else {
+        Some(model.trim().to_string())
+    };
+
+    config
+        .save_to_file(&config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    // Hot-swap the live pipeline's LLM processor with new model
+    let new_processor = create_llm_processor(&config.llm_processor, config.llm_model.clone());
+    let pipeline = state.pipeline.lock().await;
+    pipeline.set_llm_processor(new_processor).await;
+
+    tracing::info!(
+        "LLM model updated to: {}",
+        config.llm_model.as_deref().unwrap_or("(provider default)")
+    );
 
     Ok(())
 }
@@ -1235,7 +1278,7 @@ fn main() {
     let startup_hotkey = config.hotkey.clone();
 
     // Initialize LLM processor based on config
-    let llm_processor = create_llm_processor(&config.llm_processor);
+    let llm_processor = create_llm_processor(&config.llm_processor, config.llm_model.clone());
 
     // Load dictionary (or create empty if not exists)
     let dictionary = {
@@ -1307,6 +1350,7 @@ fn main() {
             get_stt_providers,
             get_llm_processors,
             set_llm_processor,
+            set_llm_model,
             set_output_mode,
             set_hotkey,
             get_dictionary,

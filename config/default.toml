@@ -9,6 +9,10 @@ stt_provider = "elevenlabs"
 # Options: "gemini", "copilot"
 llm_processor = "gemini"
 
+# LLM Model Override (optional)
+# Leave commented to use provider defaults: gemini → "gemini-3-flash-preview", copilot → "gpt-5-mini"
+# llm_model = "gemini-3-flash-preview"
+
 # Output Mode
 # Options: "clipboard", "keyboard", "both"
 output_mode = "clipboard"
