@@ -29,10 +29,15 @@ cargo tauri build
 
 ## Project Structure
 
-- `crates/lt-core/` - Domain types and traits (STT, LLM, config, dictionary, output)
-- `crates/lt-stt-apple/` - Swift FFI bridge for Apple SpeechTranscriber (on-device STT)
+- `crates/lt-audio/` - Audio capture, cpal resampling, voice activity detection (VAD)
+- `crates/lt-core/` - Domain types and traits (STT, LLM, config, dictionary, history, output)
+- `crates/lt-llm/` - LLM processors (Gemini CLI, Copilot CLI, HTTP API for OpenAI/Claude/Gemini/custom)
 - `crates/lt-llm-apple/` - Swift FFI bridge for Apple Foundation Models (on-device LLM)
-- `crates/lt-tauri/` - Tauri app, system tray, IPC commands, pipeline orchestration
+- `crates/lt-output/` - Output routing (clipboard, keyboard simulation, combined mode)
+- `crates/lt-pipeline/` - Pipeline orchestration, state machine, voice command detection
+- `crates/lt-stt/` - STT providers (ElevenLabs, OpenAI, Groq, Apple wrapper)
+- `crates/lt-stt-apple/` - Swift FFI bridge for Apple SpeechTranscriber (on-device STT)
+- `crates/lt-tauri/` - Tauri app, system tray, IPC commands
 - `crates/lt-tauri/permissions/default.toml` - ACL command allowlist (update when adding IPC commands)
 - `ui/` - Svelte 5 + TypeScript frontend
 - `ui/src/components/history/` - HistoryPanel (transcription history with search)
@@ -76,6 +81,24 @@ cargo tauri build
 - Additional events: `apple-stt-model-progress`, `transcription-partial`, `transcription-committed`, `pipeline-result`, `pipeline-error`, `command-detected`
 - The frontend listens for these in `FloatingOverlay.svelte`'s `onMount`
 - The `open-settings` event is emitted from the system tray menu in `main.rs`
+
+### Pipeline State Machine
+- States: Idle → Recording → Transcribing → Processing → Done / Error
+- Reference: `crates/lt-pipeline/src/state.rs`
+
+### Voice Commands
+- Detection: `crates/lt-pipeline/src/commands.rs` (`detect_command()`)
+- Prefixes: `"shorten:"`, `"make it formal:"`, `"make it casual:"`, `"reply to:"`, `"translate to [language]:"`
+- Default (no prefix): PostProcess with dictionary terms
+
+### Output Modes
+- `OutputMode` in `crates/lt-core/src/output.rs`: Clipboard (default), Keyboard, Both
+- Implementations in `crates/lt-output/src/`
+
+### Settings Window
+- 6 tabs: STT Providers, LLM Processor, Hotkey, Output, Dictionary, About
+- Component files in `ui/src/components/settings/`
+- About tab includes auto-updater (`@tauri-apps/plugin-updater`)
 
 ## Common Pitfalls
 
