@@ -33,6 +33,7 @@ cargo tauri build
 - `crates/lt-stt-apple/` - Swift FFI bridge for Apple SpeechTranscriber (on-device STT)
 - `crates/lt-llm-apple/` - Swift FFI bridge for Apple Foundation Models (on-device LLM)
 - `crates/lt-tauri/` - Tauri app, system tray, IPC commands, pipeline orchestration
+- `crates/lt-tauri/permissions/default.toml` - ACL command allowlist (update when adding IPC commands)
 - `ui/` - Svelte 5 + TypeScript frontend
 - `ui/src/components/history/` - HistoryPanel (transcription history with search)
 - `ui/src/components/overlay/` - FloatingOverlay (main UI), WaveformIndicator, TranscriptionView
@@ -53,6 +54,14 @@ cargo tauri build
 - Event listeners from Tauri use `listen()` from `@tauri-apps/api/event` — always clean up with unlisten in `onDestroy`
 - Window operations use `getCurrentWindow()` and `LogicalSize` from `@tauri-apps/api/window`
 - Settings is a standalone window (720x560), separate from the overlay
+
+### LLM Model Configuration
+- Each LLM processor has a `DEFAULT_MODEL` constant and `with_model(Option<String>)` constructor
+- Defaults: Gemini → `gemini-3-flash-preview`, Copilot → `gpt-5-mini`, Apple → system default
+- `AppConfig.llm_model` stores the user override (`None` = use provider default)
+- `create_llm_processor()` in `main.rs` is the single factory — accepts `(type, model)` and is used at both startup and hot-swap
+- `set_llm_model` IPC command saves config and hot-swaps the processor; empty string resets to default
+- When adding a new LLM provider: add `DEFAULT_MODEL`, `with_model()`, and update the factory + `get_llm_processors()`
 
 ### Tauri Events
 - Rust emits events like `audio-level`, `recording-state`, `pipeline-state`, `open-settings`
