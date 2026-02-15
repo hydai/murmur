@@ -1,4 +1,17 @@
 # Changelog
+## 0.2.4 (2026-02-15)
+
+### Features
+
+- add HTTP API LLM providers (OpenAI, Claude, Gemini API, Custom)
+- redesign LLM settings UI with API provider sections
+- update app logo and add microphone tray icon
+- add auto-update support with tauri-plugin-updater
+
+### Fixes
+
+- add signing secrets to CI build step
+
 ## 0.2.3 (2026-02-15)
 
 ### Features
