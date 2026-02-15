@@ -10,8 +10,9 @@ Privacy-first BYOK (Bring Your Own Key) voice typing application built with Taur
 
 - Real-time speech-to-text with multiple providers (Apple, ElevenLabs, OpenAI, Groq)
 - Apple STT: on-device speech recognition via macOS — no API key needed
-- LLM post-processing via local CLI tools (gemini-cli, copilot-cli) or Apple Foundation Models (on-device)
+- LLM post-processing via HTTP APIs (OpenAI, Claude, Gemini API, custom OpenAI-compatible endpoints), local CLI tools (gemini-cli, copilot-cli), or Apple Foundation Models (on-device)
 - Configurable LLM model selection per provider (override defaults from Settings)
+- Output modes: clipboard (default), keyboard simulation, or both
 - Transcription history with search, copy, and persistent storage
 - Voice commands (shorten, translate, change tone, generate reply)
 - Personal dictionary for custom terms and aliases
@@ -20,6 +21,7 @@ Privacy-first BYOK (Bring Your Own Key) voice typing application built with Taur
 - System tray integration with dynamic menu
 - Global hotkey support (configurable, default Ctrl+`)
 - Auto-opens settings on first launch for easy onboarding
+- Auto-updater for seamless in-app updates
 - Complete privacy — all data goes directly to your chosen providers
 - Comprehensive permissions handling for microphone and accessibility
 
@@ -35,12 +37,13 @@ murmur/
 │   │       ├── llm.rs            # LlmProcessor trait, ProcessingTask, ProcessingOutput
 │   │       ├── config.rs         # AppConfig (TOML-based)
 │   │       ├── dictionary.rs     # PersonalDictionary, DictionaryEntry
-│   │       ├── output.rs         # OutputSink trait
+│   │       ├── history.rs         # TranscriptionHistory, HistoryEntry
+│   │       ├── output.rs         # OutputSink trait, OutputMode
 │   │       └── error.rs          # MurmurError
 │   ├── lt-audio/                 # Audio capture (cpal + resampling + VAD)
 │   ├── lt-stt/                   # STT providers (ElevenLabs, OpenAI, Groq)
 │   ├── lt-stt-apple/             # Swift FFI bridge for Apple SpeechTranscriber
-│   ├── lt-llm/                   # LLM post-processing via CLI
+│   ├── lt-llm/                   # LLM post-processing (HTTP APIs + CLI)
 │   ├── lt-llm-apple/             # Apple Foundation Models (on-device LLM via Swift FFI)
 │   ├── lt-output/                # Output (clipboard + keyboard simulation)
 │   ├── lt-pipeline/              # Pipeline orchestration + voice commands
@@ -109,7 +112,7 @@ Default configuration template: `config/default.toml`
 - Audio cues for state feedback (recording start/stop, errors) replace visual overlay indicators
 
 **LLM Processing**
-- `LlmProcessor` trait: Text post-processing via local CLI tools or Apple Foundation Models
+- `LlmProcessor` trait: Text post-processing via HTTP APIs (OpenAI, Claude, Gemini API, custom endpoints), local CLI tools, or Apple Foundation Models
 - `ProcessingTask`: PostProcess/Shorten/ChangeTone/GenerateReply/Translate
 - `ProcessingOutput`: Processed text with metadata
 - Apple Foundation Models provider: on-device LLM via Swift FFI bridge (lt-llm-apple)
@@ -126,13 +129,12 @@ Default configuration template: `config/default.toml`
 
 1. **Mac App Store**: The app uses the `macos-private-api` feature for transparent windows, which is not allowed in the Mac App Store. This is intentional for direct distribution.
 
-2. **CLI Tools Required**: To use LLM post-processing via CLI, you need to install local CLI tools:
-   - `gemini-cli` for Gemini models (default model: `gemini-3-flash-preview`)
-   - `copilot-cli` for GitHub Copilot (default model: `gpt-5-mini`)
+2. **LLM Post-Processing**: Multiple options are available — no single tool is required:
+   - **HTTP APIs** (OpenAI, Claude, Gemini API, or custom OpenAI-compatible endpoints) — just provide an API key in Settings
+   - **Apple Foundation Models** — on-device processing, no API key or external tools needed
+   - **CLI tools** — `gemini-cli` (default: `gemini-3-flash-preview`) or `copilot-cli` (default: `gpt-5-mini`) for local CLI-based processing
 
-   You can override the default model in Settings > LLM Processor > Model Override, or by setting `llm_model` in `config.toml`.
-
-   Alternatively, Apple Foundation Models can be used for on-device LLM processing with no external tools. If no LLM provider is configured, the app will output raw transcriptions without post-processing.
+   You can override the default model in Settings > LLM Processor > Model Override, or by setting `llm_model` in `config.toml`. If no LLM provider is configured, the app will output raw transcriptions without post-processing.
 
 3. **API Keys Required**: You must provide your own API keys for cloud STT providers (ElevenLabs, OpenAI, or Groq). Apple STT is a free on-device alternative that requires no API key.
 
