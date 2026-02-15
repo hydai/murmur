@@ -5,6 +5,7 @@
   "windows": ["main", "settings", "history"],
   "permissions": [
     "core:default",
+    "core:window:allow-close",
     "global-shortcut:default",
     "clipboard-manager:default",
     "clipboard-manager:allow-write-text",
