@@ -1,4 +1,10 @@
 # Changelog
+## 0.2.5 (2026-02-15)
+
+### Fixes
+
+- grant core:window:allow-close permission for settings X button
+
 ## 0.2.4 (2026-02-15)
 
 ### Features
