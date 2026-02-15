@@ -22,6 +22,7 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::Mutex;
 
 /// Application state using unified pipeline
@@ -1354,6 +1355,7 @@ fn rebuild_tray_menu(
 
     let settings_item = MenuItemBuilder::with_id("open_settings", "Open Settings").build(app)?;
     let history_item = MenuItemBuilder::with_id("open_history", "History").build(app)?;
+    let update_item = MenuItemBuilder::with_id("check_updates", "Check for Updates").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
     let menu = MenuBuilder::new(app)
@@ -1361,6 +1363,7 @@ fn rebuild_tray_menu(
         .item(&settings_item)
         .item(&history_item)
         .separator()
+        .item(&update_item)
         .item(&quit_item)
         .build()?;
 
@@ -1478,6 +1481,8 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             get_status,
@@ -1534,6 +1539,8 @@ fn main() {
             let settings_item =
                 MenuItemBuilder::with_id("open_settings", "Open Settings").build(app)?;
             let history_item = MenuItemBuilder::with_id("open_history", "History").build(app)?;
+            let update_item =
+                MenuItemBuilder::with_id("check_updates", "Check for Updates").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
             let menu = MenuBuilder::new(app)
@@ -1541,6 +1548,7 @@ fn main() {
                 .item(&settings_item)
                 .item(&history_item)
                 .separator()
+                .item(&update_item)
                 .item(&quit_item)
                 .build()?;
 
@@ -1587,6 +1595,9 @@ fn main() {
                                     tracing::warn!("Failed to open history window: {}", e);
                                 }
                             });
+                        }
+                        "check_updates" => {
+                            let _ = app_handle.emit("update-check-requested", ());
                         }
                         "quit" => {
                             app_handle.exit(0);
@@ -1640,6 +1651,41 @@ fn main() {
                     }
                     Err(e) => {
                         tracing::error!("✗ Failed to check Copilot CLI: {}", e);
+                    }
+                }
+            });
+
+            // Background update check (delayed to avoid slowing startup)
+            let update_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                let updater = match update_handle.updater() {
+                    Ok(u) => u,
+                    Err(e) => {
+                        tracing::debug!("Updater not configured: {e}");
+                        return;
+                    }
+                };
+                match updater.check().await {
+                    Ok(Some(update)) => {
+                        tracing::info!(
+                            "Update available: v{} → v{}",
+                            update.current_version,
+                            update.version
+                        );
+                        let _ = update_handle.emit(
+                            "update-available",
+                            serde_json::json!({
+                                "version": update.version,
+                                "body": update.body
+                            }),
+                        );
+                    }
+                    Ok(None) => {
+                        tracing::info!("App is up to date");
+                    }
+                    Err(e) => {
+                        tracing::debug!("Update check failed (expected if no releases yet): {e}");
                     }
                 }
             });

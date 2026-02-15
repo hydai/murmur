@@ -8,6 +8,8 @@
     "global-shortcut:default",
     "clipboard-manager:default",
     "clipboard-manager:allow-write-text",
+    "updater:default",
+    "process:default",
     "default"
   ]
 }

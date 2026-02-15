@@ -25,6 +25,8 @@ lt-stt = { path = "../lt-stt" }
 lt-llm = { path = "../lt-llm" }
 lt-output = { path = "../lt-output" }
 lt-pipeline = { path = "../lt-pipeline" }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-global-shortcut = "2.3.1"

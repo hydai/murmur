@@ -21,7 +21,8 @@
     "macOS": {
       "minimumSystemVersion": "10.15",
       "infoPlist": "Info.plist"
-    }
+    },
+    "createUpdaterArtifacts": "v1Compatible"
   },
   "app": {
     "windows": [
@@ -45,5 +46,12 @@
     },
     "macOSPrivateApi": true
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/hydai/murmur/releases/latest/download/latest.json"
+      ],
+      "pubkey": "REPLACE_WITH_PUBLIC_KEY"
+    }
+  }
 }

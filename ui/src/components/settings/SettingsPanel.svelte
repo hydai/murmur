@@ -4,6 +4,7 @@
   import LlmConfig from './LlmConfig.svelte';
   import HotkeyConfig from './HotkeyConfig.svelte';
   import OutputConfig from './OutputConfig.svelte';
+  import AboutSection from './AboutSection.svelte';
 
   let { visible, onClose }: { visible: boolean; onClose: () => void } = $props();
 
@@ -33,6 +34,7 @@
         <button class="tab-button {activeTab === 'hotkey' ? 'active' : ''}" onclick={() => switchTab('hotkey')}>Hotkey</button>
         <button class="tab-button {activeTab === 'output' ? 'active' : ''}" onclick={() => switchTab('output')}>Output</button>
         <button class="tab-button {activeTab === 'dictionary' ? 'active' : ''}" onclick={() => switchTab('dictionary')}>Dictionary</button>
+        <button class="tab-button {activeTab === 'about' ? 'active' : ''}" onclick={() => switchTab('about')}>About</button>
       </div>
 
       <div class="settings-content">
@@ -46,6 +48,8 @@
           <OutputConfig />
         {:else if activeTab === 'dictionary'}
           <DictionaryEditor />
+        {:else if activeTab === 'about'}
+          <AboutSection />
         {/if}
       </div>
     </div>
@@ -64,6 +68,7 @@
           <button class="tab-button {activeTab === 'hotkey' ? 'active' : ''}" onclick={() => switchTab('hotkey')}>Hotkey</button>
           <button class="tab-button {activeTab === 'output' ? 'active' : ''}" onclick={() => switchTab('output')}>Output</button>
           <button class="tab-button {activeTab === 'dictionary' ? 'active' : ''}" onclick={() => switchTab('dictionary')}>Dictionary</button>
+        <button class="tab-button {activeTab === 'about' ? 'active' : ''}" onclick={() => switchTab('about')}>About</button>
         </div>
 
         <div class="settings-content">
