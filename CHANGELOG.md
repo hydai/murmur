@@ -1,4 +1,12 @@
 # Changelog
+## 0.2.3 (2026-02-15)
+
+### Features
+
+- add llm_model config field and processor model support
+- add set_llm_model IPC command and wire factory
+- add model selection input to LLM settings UI
+
 ## 0.2.2 (2026-02-14)
 
 ### Features
