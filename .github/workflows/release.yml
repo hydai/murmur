@@ -28,12 +28,24 @@ jobs:
 
       - name: Build arm64 binary
         run: cargo tauri build --target aarch64-apple-darwin
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v6
         with:
           name: murmur-arm64-dmg
           path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+      - name: Upload updater artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: murmur-arm64-updater
+          path: |
+            target/aarch64-apple-darwin/release/bundle/macos/*.tar.gz
+            target/aarch64-apple-darwin/release/bundle/macos/*.sig
           if-no-files-found: error
 
   publish:
@@ -60,9 +72,35 @@ jobs:
           name: murmur-arm64-dmg
           path: artifacts/
 
-      - name: Upload DMG to GitHub Release
+      - uses: actions/download-artifact@v5
+        with:
+          name: murmur-arm64-updater
+          path: updater-artifacts/
+
+      - name: Generate latest.json and upload all artifacts
         run: |
           VERSION=$(grep '^version' crates/lt-tauri/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          SIG=$(cat updater-artifacts/*.sig)
+          TAR_GZ_NAME=$(basename updater-artifacts/*.tar.gz)
+          TAR_GZ_URL="https://github.com/hydai/murmur/releases/download/v${VERSION}/${TAR_GZ_NAME}"
+
+          cat > latest.json << EOJSON
+          {
+            "version": "v${VERSION}",
+            "notes": "See https://github.com/hydai/murmur/releases/tag/v${VERSION}",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "darwin-aarch64": {
+                "signature": "${SIG}",
+                "url": "${TAR_GZ_URL}"
+              }
+            }
+          }
+          EOJSON
+
           gh release upload "v${VERSION}" artifacts/*.dmg
+          gh release upload "v${VERSION}" updater-artifacts/*.tar.gz
+          gh release upload "v${VERSION}" updater-artifacts/*.sig
+          gh release upload "v${VERSION}" latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
