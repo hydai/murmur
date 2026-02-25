@@ -6,7 +6,9 @@ use lt_core::stt::{AudioChunk, SttProvider, TranscriptionEvent};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    connect_async, tungstenite::client::ClientRequestBuilder, tungstenite::Message,
+};
 use tracing::{debug, error, info, warn};
 use url::Url;
 
@@ -128,11 +130,11 @@ impl ElevenLabsProvider {
         let mut retry_count = 0;
 
         loop {
-            let request = http::Request::builder()
-                .uri(ws_url.as_str())
-                .header("xi-api-key", &self.api_key)
-                .body(())
-                .map_err(|e| MurmurError::Stt(format!("Failed to build request: {}", e)))?;
+            let uri: http::Uri = ws_url
+                .as_str()
+                .parse()
+                .map_err(|e| MurmurError::Stt(format!("Invalid URI: {}", e)))?;
+            let request = ClientRequestBuilder::new(uri).with_header("xi-api-key", &self.api_key);
 
             match connect_async(request).await {
                 Ok((ws_stream, _)) => {
