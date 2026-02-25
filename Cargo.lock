@@ -2447,7 +2447,6 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "hound",
- "http",
  "lt-core",
  "reqwest 0.13.2",
  "serde",

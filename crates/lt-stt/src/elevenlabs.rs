@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::{
-    connect_async, tungstenite::client::ClientRequestBuilder, tungstenite::Message,
+    connect_async, tungstenite::client::IntoClientRequest, tungstenite::Message,
 };
 use tracing::{debug, error, info, warn};
 use url::Url;
@@ -130,11 +130,16 @@ impl ElevenLabsProvider {
         let mut retry_count = 0;
 
         loop {
-            let uri: http::Uri = ws_url
+            let mut request = ws_url
                 .as_str()
-                .parse()
-                .map_err(|e| MurmurError::Stt(format!("Invalid URI: {}", e)))?;
-            let request = ClientRequestBuilder::new(uri).with_header("xi-api-key", &self.api_key);
+                .into_client_request()
+                .map_err(|e| MurmurError::Stt(format!("Failed to build request: {}", e)))?;
+            request.headers_mut().insert(
+                "xi-api-key",
+                self.api_key
+                    .parse()
+                    .map_err(|_| MurmurError::Stt("Invalid API key header value".to_string()))?,
+            );
 
             match connect_async(request).await {
                 Ok((ws_stream, _)) => {
