@@ -307,13 +307,40 @@ impl SttProvider for ElevenLabsProvider {
                 }
             }
 
-            debug!("Audio sender finished, closing WebSocket");
+            debug!("Audio sender finished, sending commit signal");
 
-            // Close WebSocket
+            // Send a final commit message to flush the server's transcription buffer.
+            // With vad_commit_strategy disabled, the server won't auto-commit;
+            // we must explicitly request it.
+            let commit_msg = ElevenLabsMessage {
+                message_type: "input_audio_chunk".to_string(),
+                audio_base_64: String::new(),
+                sample_rate: Some(16000),
+                commit: Some(true),
+            };
+            let json = serde_json::to_string(&commit_msg).unwrap();
+            if let Err(e) = ws_write.send(Message::Text(json.into())).await {
+                warn!("Failed to send commit message: {}", e);
+            }
+
+            // Give the server time to process the commit and send back
+            // a committed_transcript before we tear down the connection.
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+            debug!("Closing WebSocket");
             let _ = ws_write.close().await;
 
-            // Wait for receiver to finish
-            let _ = receiver_task.await;
+            // Wait for receiver with timeout to avoid hanging
+            match tokio::time::timeout(tokio::time::Duration::from_secs(2), receiver_task).await {
+                Ok(result) => {
+                    if let Err(e) = result {
+                        warn!("Receiver task error: {}", e);
+                    }
+                }
+                Err(_) => {
+                    warn!("Receiver task timed out during shutdown");
+                }
+            }
 
             info!("WebSocket task finished");
         });
