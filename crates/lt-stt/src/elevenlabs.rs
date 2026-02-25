@@ -47,6 +47,12 @@ enum ElevenLabsResponse {
         #[serde(default)]
         error: String,
     },
+
+    #[serde(rename = "invalid_request")]
+    InvalidRequest {
+        #[serde(default)]
+        error: String,
+    },
 }
 
 /// Reconnection configuration
@@ -85,7 +91,7 @@ impl ElevenLabsProvider {
     pub fn new(api_key: String) -> Self {
         Self {
             api_key,
-            model_id: "scribe_v2".to_string(),
+            model_id: "scribe_v2_realtime".to_string(),
             language_code: "en".to_string(),
             ws_tx: Arc::new(Mutex::new(None)),
             event_tx: Arc::new(Mutex::new(None)),
@@ -244,7 +250,8 @@ impl SttProvider for ElevenLabsProvider {
                                             }
                                         }
                                     }
-                                    ElevenLabsResponse::Error { error } => {
+                                    ElevenLabsResponse::Error { error }
+                                    | ElevenLabsResponse::InvalidRequest { error } => {
                                         error!("ElevenLabs error: {}", error);
                                         let event = TranscriptionEvent::Error { message: error };
                                         if let Err(e) = event_tx_clone.send(event).await {
