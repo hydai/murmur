@@ -1,4 +1,10 @@
 # Changelog
+## 0.2.6 (2026-02-25)
+
+### Fixes
+
+- preserve multilingual text in LLM post-processing prompt
+
 ## 0.2.5 (2026-02-15)
 
 ### Fixes
