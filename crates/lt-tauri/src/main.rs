@@ -849,7 +849,7 @@ async fn start_pipeline(
                 .clone();
             Box::new(ElevenLabsProvider::with_config(
                 api_key,
-                "scribe_v2".to_string(),
+                "scribe_v2_realtime".to_string(),
                 config.elevenlabs_language.clone(),
             ))
         }
