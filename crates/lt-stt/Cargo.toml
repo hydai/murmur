@@ -20,7 +20,7 @@ url = "2.5"
 # HTTP client (for REST providers)
 reqwest = { version = "0.13.2", features = ["json", "multipart"] }
 
-# WAV encoding
+# WAV encoding (used by chunker for REST providers)
 hound = "3.5.1"
 
 # Serialization

@@ -13,31 +13,40 @@ use tracing::{debug, error, info, warn};
 use url::Url;
 
 /// ElevenLabs WebSocket message types
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-enum ElevenLabsMessage {
-    #[serde(rename = "audio")]
-    Audio { audio_base64: String },
+#[derive(Debug, Serialize)]
+struct ElevenLabsMessage {
+    message_type: String,
+    audio_base_64: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sample_rate: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit: Option<bool>,
 }
 
 /// ElevenLabs WebSocket response types
 #[derive(Debug, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "message_type")]
 enum ElevenLabsResponse {
+    #[serde(rename = "session_started")]
+    SessionStarted {},
+
     #[serde(rename = "partial_transcript")]
     PartialTranscript {
-        text: String,
         #[serde(default)]
-        timestamp: Option<u64>,
-    },
-    #[serde(rename = "final_transcript")]
-    FinalTranscript {
         text: String,
-        #[serde(default)]
-        timestamp: Option<u64>,
     },
+
+    #[serde(rename = "committed_transcript")]
+    CommittedTranscript {
+        #[serde(default)]
+        text: String,
+    },
+
     #[serde(rename = "error")]
-    Error { message: String },
+    Error {
+        #[serde(default)]
+        error: String,
+    },
 }
 
 /// Reconnection configuration
@@ -106,12 +115,12 @@ impl ElevenLabsProvider {
     fn build_ws_url(&self) -> Result<Url> {
         let url = if self.language_code == "auto" {
             format!(
-                "wss://api.elevenlabs.io/v1/speech-to-text/ws?model_id={}",
+                "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id={}&audio_format=pcm_16000",
                 self.model_id
             )
         } else {
             format!(
-                "wss://api.elevenlabs.io/v1/speech-to-text/ws?model_id={}&language_code={}",
+                "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id={}&language_code={}&audio_format=pcm_16000",
                 self.model_id, self.language_code
             )
         };
@@ -210,31 +219,34 @@ impl SttProvider for ElevenLabsProvider {
 
                             match serde_json::from_str::<ElevenLabsResponse>(&text) {
                                 Ok(response) => match response {
-                                    ElevenLabsResponse::PartialTranscript { text, timestamp } => {
+                                    ElevenLabsResponse::SessionStarted {} => {
+                                        info!("ElevenLabs session started");
+                                    }
+                                    ElevenLabsResponse::PartialTranscript { text } => {
                                         if !text.is_empty() {
                                             let event = TranscriptionEvent::Partial {
                                                 text,
-                                                timestamp_ms: timestamp.unwrap_or(0),
+                                                timestamp_ms: 0,
                                             };
                                             if let Err(e) = event_tx_clone.send(event).await {
                                                 error!("Failed to send partial event: {}", e);
                                             }
                                         }
                                     }
-                                    ElevenLabsResponse::FinalTranscript { text, timestamp } => {
+                                    ElevenLabsResponse::CommittedTranscript { text } => {
                                         if !text.is_empty() {
                                             let event = TranscriptionEvent::Committed {
                                                 text,
-                                                timestamp_ms: timestamp.unwrap_or(0),
+                                                timestamp_ms: 0,
                                             };
                                             if let Err(e) = event_tx_clone.send(event).await {
                                                 error!("Failed to send committed event: {}", e);
                                             }
                                         }
                                     }
-                                    ElevenLabsResponse::Error { message } => {
-                                        error!("ElevenLabs error: {}", message);
-                                        let event = TranscriptionEvent::Error { message };
+                                    ElevenLabsResponse::Error { error } => {
+                                        error!("ElevenLabs error: {}", error);
+                                        let event = TranscriptionEvent::Error { message: error };
                                         if let Err(e) = event_tx_clone.send(event).await {
                                             error!("Failed to send error event: {}", e);
                                         }
@@ -267,44 +279,18 @@ impl SttProvider for ElevenLabsProvider {
 
             // Send audio chunks
             while let Some(chunk) = audio_rx.recv().await {
-                // Convert i16 PCM to WAV
-                let wav_bytes = {
-                    let sample_rate = 16000u32;
-                    let num_channels = 1u16;
-                    let bits_per_sample = 16u16;
-                    let byte_rate = sample_rate * num_channels as u32 * bits_per_sample as u32 / 8;
-                    let block_align = num_channels * bits_per_sample / 8;
-                    let data_size = (chunk.data.len() * 2) as u32;
-                    let file_size = 36 + data_size;
+                // Convert i16 PCM to raw bytes
+                let pcm_bytes: Vec<u8> = chunk.data.iter().flat_map(|s| s.to_le_bytes()).collect();
 
-                    let mut wav = Vec::with_capacity((44 + data_size) as usize);
-
-                    wav.extend_from_slice(b"RIFF");
-                    wav.extend_from_slice(&file_size.to_le_bytes());
-                    wav.extend_from_slice(b"WAVE");
-                    wav.extend_from_slice(b"fmt ");
-                    wav.extend_from_slice(&16u32.to_le_bytes());
-                    wav.extend_from_slice(&1u16.to_le_bytes());
-                    wav.extend_from_slice(&num_channels.to_le_bytes());
-                    wav.extend_from_slice(&sample_rate.to_le_bytes());
-                    wav.extend_from_slice(&byte_rate.to_le_bytes());
-                    wav.extend_from_slice(&block_align.to_le_bytes());
-                    wav.extend_from_slice(&bits_per_sample.to_le_bytes());
-                    wav.extend_from_slice(b"data");
-                    wav.extend_from_slice(&data_size.to_le_bytes());
-
-                    for sample in &chunk.data {
-                        wav.extend_from_slice(&sample.to_le_bytes());
-                    }
-
-                    wav
-                };
-
-                // Encode as base64
-                let audio_base64 = BASE64.encode(&wav_bytes);
+                let audio_base_64 = BASE64.encode(&pcm_bytes);
 
                 // Create JSON message
-                let msg = ElevenLabsMessage::Audio { audio_base64 };
+                let msg = ElevenLabsMessage {
+                    message_type: "input_audio_chunk".to_string(),
+                    audio_base_64,
+                    sample_rate: Some(16000),
+                    commit: None,
+                };
                 let json = serde_json::to_string(&msg).unwrap();
 
                 // Send to WebSocket
