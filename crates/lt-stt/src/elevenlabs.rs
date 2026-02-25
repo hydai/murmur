@@ -102,10 +102,17 @@ impl ElevenLabsProvider {
 
     /// Build WebSocket URL
     fn build_ws_url(&self) -> Result<Url> {
-        let url = format!(
-            "wss://api.elevenlabs.io/v1/speech-to-text/ws?model_id={}&language_code={}",
-            self.model_id, self.language_code
-        );
+        let url = if self.language_code == "auto" {
+            format!(
+                "wss://api.elevenlabs.io/v1/speech-to-text/ws?model_id={}",
+                self.model_id
+            )
+        } else {
+            format!(
+                "wss://api.elevenlabs.io/v1/speech-to-text/ws?model_id={}&language_code={}",
+                self.model_id, self.language_code
+            )
+        };
         Url::parse(&url).map_err(|e| MurmurError::Stt(format!("Invalid URL: {}", e)))
     }
 

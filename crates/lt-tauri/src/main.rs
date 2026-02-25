@@ -294,6 +294,132 @@ async fn set_apple_stt_locale(locale: String) -> Result<(), String> {
         .map_err(|e| format!("Failed to save config: {}", e))
 }
 
+#[tauri::command]
+async fn get_elevenlabs_languages() -> Result<Vec<(String, String)>, String> {
+    // Full list of ElevenLabs Scribe v2 supported languages (ISO 639-3 codes)
+    Ok(vec![
+        ("auto".to_string(), "Auto-detect".to_string()),
+        ("afr".to_string(), "Afrikaans".to_string()),
+        ("amh".to_string(), "Amharic".to_string()),
+        ("ara".to_string(), "Arabic".to_string()),
+        ("hye".to_string(), "Armenian".to_string()),
+        ("asm".to_string(), "Assamese".to_string()),
+        ("ast".to_string(), "Asturian".to_string()),
+        ("aze".to_string(), "Azerbaijani".to_string()),
+        ("bel".to_string(), "Belarusian".to_string()),
+        ("ben".to_string(), "Bengali".to_string()),
+        ("bos".to_string(), "Bosnian".to_string()),
+        ("bul".to_string(), "Bulgarian".to_string()),
+        ("mya".to_string(), "Burmese".to_string()),
+        ("yue".to_string(), "Cantonese".to_string()),
+        ("cat".to_string(), "Catalan".to_string()),
+        ("ceb".to_string(), "Cebuano".to_string()),
+        ("nya".to_string(), "Chichewa".to_string()),
+        ("hrv".to_string(), "Croatian".to_string()),
+        ("ces".to_string(), "Czech".to_string()),
+        ("dan".to_string(), "Danish".to_string()),
+        ("nld".to_string(), "Dutch".to_string()),
+        ("eng".to_string(), "English".to_string()),
+        ("est".to_string(), "Estonian".to_string()),
+        ("fil".to_string(), "Filipino".to_string()),
+        ("fin".to_string(), "Finnish".to_string()),
+        ("fra".to_string(), "French".to_string()),
+        ("ful".to_string(), "Fulah".to_string()),
+        ("glg".to_string(), "Galician".to_string()),
+        ("lug".to_string(), "Ganda".to_string()),
+        ("kat".to_string(), "Georgian".to_string()),
+        ("deu".to_string(), "German".to_string()),
+        ("ell".to_string(), "Greek".to_string()),
+        ("guj".to_string(), "Gujarati".to_string()),
+        ("hau".to_string(), "Hausa".to_string()),
+        ("heb".to_string(), "Hebrew".to_string()),
+        ("hin".to_string(), "Hindi".to_string()),
+        ("hun".to_string(), "Hungarian".to_string()),
+        ("isl".to_string(), "Icelandic".to_string()),
+        ("ibo".to_string(), "Igbo".to_string()),
+        ("ind".to_string(), "Indonesian".to_string()),
+        ("gle".to_string(), "Irish".to_string()),
+        ("ita".to_string(), "Italian".to_string()),
+        ("jpn".to_string(), "Japanese".to_string()),
+        ("jav".to_string(), "Javanese".to_string()),
+        ("kea".to_string(), "Kabuverdianu".to_string()),
+        ("kan".to_string(), "Kannada".to_string()),
+        ("kaz".to_string(), "Kazakh".to_string()),
+        ("khm".to_string(), "Khmer".to_string()),
+        ("kor".to_string(), "Korean".to_string()),
+        ("kur".to_string(), "Kurdish".to_string()),
+        ("kir".to_string(), "Kyrgyz".to_string()),
+        ("lao".to_string(), "Lao".to_string()),
+        ("lav".to_string(), "Latvian".to_string()),
+        ("lin".to_string(), "Lingala".to_string()),
+        ("lit".to_string(), "Lithuanian".to_string()),
+        ("luo".to_string(), "Luo".to_string()),
+        ("ltz".to_string(), "Luxembourgish".to_string()),
+        ("mkd".to_string(), "Macedonian".to_string()),
+        ("msa".to_string(), "Malay".to_string()),
+        ("mal".to_string(), "Malayalam".to_string()),
+        ("mlt".to_string(), "Maltese".to_string()),
+        ("zho".to_string(), "Mandarin Chinese".to_string()),
+        ("mri".to_string(), "Māori".to_string()),
+        ("mar".to_string(), "Marathi".to_string()),
+        ("mon".to_string(), "Mongolian".to_string()),
+        ("nep".to_string(), "Nepali".to_string()),
+        ("nso".to_string(), "Northern Sotho".to_string()),
+        ("nor".to_string(), "Norwegian".to_string()),
+        ("oci".to_string(), "Occitan".to_string()),
+        ("ori".to_string(), "Odia".to_string()),
+        ("pus".to_string(), "Pashto".to_string()),
+        ("fas".to_string(), "Persian".to_string()),
+        ("pol".to_string(), "Polish".to_string()),
+        ("por".to_string(), "Portuguese".to_string()),
+        ("pan".to_string(), "Punjabi".to_string()),
+        ("ron".to_string(), "Romanian".to_string()),
+        ("rus".to_string(), "Russian".to_string()),
+        ("srp".to_string(), "Serbian".to_string()),
+        ("sna".to_string(), "Shona".to_string()),
+        ("snd".to_string(), "Sindhi".to_string()),
+        ("slk".to_string(), "Slovak".to_string()),
+        ("slv".to_string(), "Slovenian".to_string()),
+        ("som".to_string(), "Somali".to_string()),
+        ("spa".to_string(), "Spanish".to_string()),
+        ("swa".to_string(), "Swahili".to_string()),
+        ("swe".to_string(), "Swedish".to_string()),
+        ("tgk".to_string(), "Tajik".to_string()),
+        ("tam".to_string(), "Tamil".to_string()),
+        ("tel".to_string(), "Telugu".to_string()),
+        ("tha".to_string(), "Thai".to_string()),
+        ("tur".to_string(), "Turkish".to_string()),
+        ("ukr".to_string(), "Ukrainian".to_string()),
+        ("umb".to_string(), "Umbundu".to_string()),
+        ("urd".to_string(), "Urdu".to_string()),
+        ("uzb".to_string(), "Uzbek".to_string()),
+        ("vie".to_string(), "Vietnamese".to_string()),
+        ("cym".to_string(), "Welsh".to_string()),
+        ("wol".to_string(), "Wolof".to_string()),
+        ("xho".to_string(), "Xhosa".to_string()),
+        ("zul".to_string(), "Zulu".to_string()),
+    ])
+}
+
+#[tauri::command]
+async fn set_elevenlabs_language(language: String) -> Result<(), String> {
+    let config_path = AppConfig::default_config_file()
+        .map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    let mut config = if config_path.exists() {
+        AppConfig::load_from_file(&config_path)
+            .map_err(|e| format!("Failed to load config: {}", e))?
+    } else {
+        AppConfig::default()
+    };
+
+    config.elevenlabs_language = language;
+
+    config
+        .save_to_file(&config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))
+}
+
 #[derive(Clone, serde::Serialize)]
 struct LlmProcessorInfo {
     name: String,
@@ -721,7 +847,11 @@ async fn start_pipeline(
                         .to_string()
                 })?
                 .clone();
-            Box::new(ElevenLabsProvider::new(api_key))
+            Box::new(ElevenLabsProvider::with_config(
+                api_key,
+                "scribe_v2".to_string(),
+                config.elevenlabs_language.clone(),
+            ))
         }
         SttProviderType::OpenAI => {
             let api_key = config
@@ -1517,7 +1647,9 @@ fn main() {
             open_system_preferences,
             get_apple_stt_locales,
             download_apple_stt_model,
-            set_apple_stt_locale
+            set_apple_stt_locale,
+            get_elevenlabs_languages,
+            set_elevenlabs_language
         ])
         .setup(move |app| {
             // Set up system tray - embed icon at compile time to avoid runtime path issues

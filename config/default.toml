@@ -40,6 +40,10 @@ hotkey = "Ctrl+`"
 # "auto" = detect system language, or set a specific locale (e.g. "en_US", "ja_JP", "zh_TW")
 apple_stt_locale = "auto"
 
+# ElevenLabs STT Language
+# "auto" = automatic language detection, or set an ISO 639-3 code (e.g. "eng", "jpn", "zho")
+elevenlabs_language = "auto"
+
 # HTTP LLM Provider Configuration (for custom_api)
 # [http_llm_config]
 # custom_base_url = "http://localhost:11434/v1"  # e.g., Ollama, LM Studio

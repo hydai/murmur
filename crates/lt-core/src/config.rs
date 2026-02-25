@@ -97,12 +97,20 @@ pub struct AppConfig {
     #[serde(default = "default_apple_stt_locale")]
     pub apple_stt_locale: String,
 
+    /// ElevenLabs STT language ("auto" = automatic detection, or ISO 639-3 code)
+    #[serde(default = "default_elevenlabs_language")]
+    pub elevenlabs_language: String,
+
     /// HTTP LLM provider configuration
     #[serde(default)]
     pub http_llm_config: HttpLlmConfig,
 }
 
 fn default_apple_stt_locale() -> String {
+    "auto".to_string()
+}
+
+fn default_elevenlabs_language() -> String {
     "auto".to_string()
 }
 
@@ -117,6 +125,7 @@ impl Default for AppConfig {
             output_mode: OutputMode::default(),
             ui_preferences: UiPreferences::default(),
             apple_stt_locale: default_apple_stt_locale(),
+            elevenlabs_language: default_elevenlabs_language(),
             http_llm_config: HttpLlmConfig::default(),
         }
     }

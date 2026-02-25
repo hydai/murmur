@@ -26,6 +26,10 @@
   // Apple STT locale state
   let appleSttLocales = $state<string[]>([]);
   let appleSttLocale = $state('auto');
+
+  // ElevenLabs language state
+  let elevenlabsLanguages = $state<[string, string][]>([]);
+  let elevenlabsLanguage = $state('auto');
   let modelDownloadProgress = $state(0);
   let modelDownloading = $state(false);
   let downloadStatus = $state<'' | 'checking' | 'downloading' | 'success' | 'already_installed' | 'error'>('');
@@ -37,6 +41,14 @@
   onMount(async () => {
     await loadProviders();
     await loadConfig();
+
+    // Load language lists for active provider
+    if (currentProvider === 'apple_stt') {
+      await loadAppleSttLocales();
+    }
+    if (currentProvider === 'elevenlabs') {
+      await loadElevenLabsLanguages();
+    }
 
     // Listen for model download progress events
     unlistenProgress = await listen<{ locale: string; progress: number; finished: boolean; error: string | null }>(
@@ -95,9 +107,10 @@
 
   async function loadConfig() {
     try {
-      const config = await invoke<{ stt_provider: string; apple_stt_locale: string }>('get_config');
+      const config = await invoke<{ stt_provider: string; apple_stt_locale: string; elevenlabs_language: string }>('get_config');
       currentProvider = config.stt_provider.toLowerCase();
       appleSttLocale = config.apple_stt_locale || 'auto';
+      elevenlabsLanguage = config.elevenlabs_language || 'auto';
     } catch (err) {
       error = `Failed to load config: ${err}`;
       console.error(error);
@@ -132,6 +145,10 @@
         if (providerId === 'apple_stt') {
           await loadAppleSttLocales();
         }
+        // Load available languages for ElevenLabs
+        if (providerId === 'elevenlabs') {
+          await loadElevenLabsLanguages();
+        }
 
         success = `Switched to ${provider.name}`;
         setTimeout(() => { success = ''; }, 3000);
@@ -160,6 +177,12 @@
 
       await invoke('set_stt_provider', { provider: providerId });
       currentProvider = providerId;
+
+      // Load available languages for ElevenLabs
+      if (providerId === 'elevenlabs') {
+        await loadElevenLabsLanguages();
+      }
+
       success = `Switched to ${provider.name}`;
       setTimeout(() => { success = ''; }, 3000);
     } catch (err) {
@@ -270,6 +293,30 @@
       downloadError = `${err}`;
       modelDownloading = false;
       error = `Failed to start model download: ${err}`;
+      console.error(error);
+    }
+  }
+
+  async function loadElevenLabsLanguages() {
+    try {
+      elevenlabsLanguages = await invoke<[string, string][]>('get_elevenlabs_languages');
+    } catch (err) {
+      console.error('Failed to load ElevenLabs languages:', err);
+    }
+  }
+
+  async function changeElevenLabsLanguage(event: Event) {
+    const target = event.target as HTMLSelectElement;
+    const language = target.value;
+    elevenlabsLanguage = language;
+
+    try {
+      await invoke('set_elevenlabs_language', { language });
+      const displayName = elevenlabsLanguages.find(([code]) => code === language)?.[1] ?? language;
+      success = `Language set to ${displayName}`;
+      setTimeout(() => { success = ''; }, 3000);
+    } catch (err) {
+      error = `Failed to set language: ${err}`;
       console.error(error);
     }
   }
@@ -392,6 +439,21 @@
               <option value="auto">Auto-detect</option>
               {#each appleSttLocales as locale}
                 <option value={locale}>{locale}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+
+        {#if currentProvider === provider.id && provider.id === 'elevenlabs' && elevenlabsLanguages.length > 0}
+          <div class="locale-selector" onclick={(e) => e.stopPropagation()}>
+            <label for="elevenlabs-language">Language:</label>
+            <select
+              id="elevenlabs-language"
+              value={elevenlabsLanguage}
+              onchange={changeElevenLabsLanguage}
+            >
+              {#each elevenlabsLanguages as [code, name]}
+                <option value={code}>{name}</option>
               {/each}
             </select>
           </div>

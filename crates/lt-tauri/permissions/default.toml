@@ -38,6 +38,8 @@ commands.allow = [
     "get_apple_stt_locales",
     "download_apple_stt_model",
     "set_apple_stt_locale",
+    "get_elevenlabs_languages",
+    "set_elevenlabs_language",
 ]
 
 [default]
