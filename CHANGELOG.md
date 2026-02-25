@@ -1,4 +1,19 @@
 # Changelog
+## 0.2.8 (2026-02-25)
+
+### Features
+
+- enforce Traditional Chinese (Taiwan) in all LLM prompts
+
+### Fixes
+
+- use ClientRequestBuilder for ElevenLabs WebSocket handshake
+- use IntoClientRequest for ElevenLabs WebSocket handshake
+- correct ElevenLabs WebSocket endpoint URL and message protocol
+- use scribe_v2_realtime model and handle invalid_request response
+- use scribe_v2_realtime model in Tauri STT factory
+- send explicit commit signal before closing ElevenLabs WebSocket
+
 ## 0.2.7 (2026-02-25)
 
 ### Features
