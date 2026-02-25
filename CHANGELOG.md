@@ -1,4 +1,10 @@
 # Changelog
+## 0.2.7 (2026-02-25)
+
+### Features
+
+- add ElevenLabs multilingual STT support with language selector
+
 ## 0.2.6 (2026-02-25)
 
 ### Fixes
