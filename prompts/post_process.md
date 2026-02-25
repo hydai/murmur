@@ -17,6 +17,7 @@ Speech-to-text engines frequently mishear words. Identify and correct phonetical
 - Similar-sounding words (e.g., "mining" for "meaning", "remote" for "remove", "their" for "there")
 - Homophones and near-homophones used incorrectly
 - Technical terms or proper nouns that were phonetically approximated
+- **Important:** When the input contains non-English words or phrases, do not "correct" them into English — they are likely intentional foreign language content, not misrecognitions
 
 ### 3. Remove Duplications and Repetitions
 
@@ -39,12 +40,20 @@ Spoken language often includes incomplete thoughts and mid-sentence corrections.
 
 - The cleaned text must faithfully represent the speaker's intent, even when the raw transcription is garbled
 - Maintain the speaker's original tone (casual, formal, technical, etc.)
+- Preserve the original language(s) of the speaker — do not translate or replace non-English content with English
 - Do not add, invent, or editorialize content beyond what the speaker expressed
 - When uncertain about intent, prefer the most natural interpretation in context
 
 ### 7. Apply Personal Dictionary
 
 When the transcription contains words that are phonetically close to terms in the personal dictionary below, prefer the dictionary term. These are domain-specific words the speaker uses regularly.
+
+### 8. Preserve Original Language
+
+- If the input contains non-English text (e.g., Chinese, Japanese, Korean, Spanish), preserve it in its original language and script
+- Do not translate, transliterate, or anglicize non-English content
+- For multilingual input (code-switching between languages), preserve each language segment as-is
+- Apply the same cleanup rules (filler removal, grammar fix, punctuation) within each language
 
 ## Personal Dictionary Terms
 
