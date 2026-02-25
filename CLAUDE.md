@@ -76,6 +76,14 @@ cargo tauri build
 - Custom endpoint uses OpenAI-compatible format (works with Ollama, LM Studio, Azure OpenAI)
 - `set_custom_llm_endpoint` IPC command saves custom endpoint config
 
+### STT Language Configuration
+- Apple STT: `AppConfig.apple_stt_locale` — locale codes like `"en_US"`, `"ja_JP"`; `"auto"` detects system locale
+- ElevenLabs: `AppConfig.elevenlabs_language` — ISO 639-3 codes like `"eng"`, `"jpn"`, `"zho"`; `"auto"` omits `language_code` from the WebSocket URL so Scribe v2 auto-detects
+- Both use `serde(default)` for backward-compatible deserialization of existing config files
+- `get_elevenlabs_languages` IPC returns the full static list of 98 supported languages; `set_elevenlabs_language` persists to config
+- No hot-swap needed — STT provider is recreated on every `start_pipeline` call, so language changes take effect on the next recording
+- UI: language dropdown in `ProviderConfig.svelte` appears when the provider is active, reusing `.locale-selector` CSS
+
 ### Tauri Events
 - Rust emits events like `audio-level`, `recording-state`, `pipeline-state`, `open-settings`
 - Additional events: `apple-stt-model-progress`, `transcription-partial`, `transcription-committed`, `pipeline-result`, `pipeline-error`, `command-detected`
