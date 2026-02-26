@@ -1,0 +1,63 @@
+version: 2
+
+updates:
+  # Cargo (Rust workspace)
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      tauri:
+        patterns:
+          - "tauri*"
+      serialization:
+        patterns:
+          - "serde*"
+          - "toml"
+      async-runtime:
+        patterns:
+          - "tokio*"
+          - "async-trait"
+          - "futures-util"
+      networking:
+        patterns:
+          - "reqwest"
+          - "tokio-tungstenite"
+          - "url"
+          - "base64"
+      observability:
+        patterns:
+          - "tracing*"
+
+  # npm (Svelte 5 frontend)
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      tauri-plugins:
+        patterns:
+          - "@tauri-apps/*"
+      svelte:
+        patterns:
+          - "svelte*"
+          - "@sveltejs/*"
+      build-tools:
+        patterns:
+          - "vite*"
+          - "typescript"
+          - "tslib"
+          - "@tsconfig/*"
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      github-actions:
+        patterns:
+          - "*"
