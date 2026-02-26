@@ -72,14 +72,31 @@ murmur/
 
 ## Installation
 
+### Homebrew (recommended)
+
+```bash
+brew tap hydai/murmur
+brew install --cask murmur
+```
+
+After installation, clear the quarantine attribute (unsigned app):
+```bash
+xattr -cr /Applications/Murmur.app
+```
+
+### Manual
+
 1. Download the `.dmg` from [Releases](https://github.com/hydai/murmur/releases)
 2. Drag Murmur.app to Applications
 3. Clear the quarantine attribute (unsigned app):
    ```bash
    xattr -cr /Applications/Murmur.app
    ```
-4. On first launch, grant microphone and accessibility permissions
-5. Configure your providers in Settings (system tray → Settings)
+
+### First launch
+
+1. Grant microphone and accessibility permissions when prompted
+2. Configure your providers in Settings (system tray → Settings)
 
 ## Development
 
