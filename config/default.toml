@@ -1,8 +1,9 @@
 # Murmur Default Configuration
 
 # STT Provider Selection
-# Options: "elevenlabs", "openai", "groq", "apple_stt"
+# Options: "elevenlabs", "openai", "groq", "apple_stt", "custom_stt"
 # "apple_stt" uses on-device Apple SpeechTranscriber (macOS 26+, no API key needed)
+# "custom_stt" connects to any OpenAI-compatible Whisper endpoint (see [http_stt_config])
 stt_provider = "elevenlabs"
 
 # LLM Processor Selection
@@ -48,6 +49,14 @@ elevenlabs_language = "auto"
 # [http_llm_config]
 # custom_base_url = "http://localhost:11434/v1"  # e.g., Ollama, LM Studio
 # custom_display_name = "Local Ollama"
+
+# HTTP STT Provider Configuration (for custom_stt)
+# Connect to any OpenAI-compatible Whisper endpoint (whisper.cpp, faster-whisper, LocalAI, etc.)
+# [http_stt_config]
+# custom_base_url = "http://localhost:8080/v1"   # POST {base_url}/audio/transcriptions
+# custom_display_name = "Local Whisper"
+# custom_model = "whisper-1"                     # model name sent in multipart form
+# language = "en"                                # ISO-639-1 language hint (optional)
 
 # UI Preferences
 [ui_preferences]

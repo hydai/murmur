@@ -19,6 +19,7 @@ commands.allow = [
     "set_llm_processor",
     "set_llm_model",
     "set_custom_llm_endpoint",
+    "set_custom_stt_endpoint",
     "set_output_mode",
     "set_hotkey",
     "get_dictionary",

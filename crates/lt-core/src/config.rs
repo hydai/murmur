@@ -15,6 +15,8 @@ pub enum SttProviderType {
     Groq,
     #[serde(rename = "apple_stt")]
     AppleStt,
+    #[serde(rename = "custom_stt")]
+    CustomStt,
 }
 
 /// LLM processor type
@@ -45,6 +47,23 @@ pub struct HttpLlmConfig {
     /// Display name for custom endpoint in UI
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_display_name: Option<String>,
+}
+
+/// HTTP STT provider configuration (for custom_stt)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HttpSttConfig {
+    /// Custom base URL for OpenAI-compatible STT endpoint
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_base_url: Option<String>,
+    /// Display name for custom endpoint in UI
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_display_name: Option<String>,
+    /// Model name (defaults to "whisper-1")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_model: Option<String>,
+    /// Language hint (ISO-639-1 code, e.g. "en", "zh", "ja")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 /// UI preferences
@@ -104,6 +123,10 @@ pub struct AppConfig {
     /// HTTP LLM provider configuration
     #[serde(default)]
     pub http_llm_config: HttpLlmConfig,
+
+    /// HTTP STT provider configuration (for custom_stt)
+    #[serde(default)]
+    pub http_stt_config: HttpSttConfig,
 }
 
 fn default_apple_stt_locale() -> String {
@@ -127,6 +150,7 @@ impl Default for AppConfig {
             apple_stt_locale: default_apple_stt_locale(),
             elevenlabs_language: default_elevenlabs_language(),
             http_llm_config: HttpLlmConfig::default(),
+            http_stt_config: HttpSttConfig::default(),
         }
     }
 }

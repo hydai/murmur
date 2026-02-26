@@ -84,6 +84,15 @@ cargo tauri build
 - No hot-swap needed — STT provider is recreated on every `start_pipeline` call, so language changes take effect on the next recording
 - UI: language dropdown in `ProviderConfig.svelte` appears when the provider is active, reusing `.locale-selector` CSS
 
+### Custom STT Endpoint
+- `CustomSttProvider` in `crates/lt-stt/src/custom.rs` — OpenAI-compatible Whisper API client with configurable base URL
+- API format: `POST {base_url}/audio/transcriptions` with multipart form (`file`, `model`, `response_format`, optional `language`)
+- `HttpSttConfig` in `AppConfig` stores `custom_base_url`, `custom_display_name`, `custom_model`, `language`
+- API key stored in `AppConfig.api_keys` HashMap with key `"custom_stt"` (optional — local servers don't need auth)
+- `set_custom_stt_endpoint` IPC saves config; `configured` = has `custom_base_url` (not API key)
+- Default model: `"whisper-1"`; works with whisper.cpp, faster-whisper, LocalAI, etc.
+- No hot-swap needed — STT provider is recreated on every `start_pipeline` call
+
 ### Tauri Events
 - Rust emits events like `audio-level`, `recording-state`, `pipeline-state`, `open-settings`
 - Additional events: `apple-stt-model-progress`, `transcription-partial`, `transcription-committed`, `pipeline-result`, `pipeline-error`, `command-detected`

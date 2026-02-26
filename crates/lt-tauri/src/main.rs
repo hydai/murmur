@@ -16,7 +16,7 @@ use lt_output::CombinedOutput;
 use lt_pipeline::{PipelineEvent, PipelineOrchestrator, PipelineState};
 #[cfg(target_os = "macos")]
 use lt_stt::AppleSttProvider;
-use lt_stt::{ElevenLabsProvider, GroqProvider, OpenAIProvider};
+use lt_stt::{CustomSttProvider, ElevenLabsProvider, GroqProvider, OpenAIProvider};
 use std::sync::Arc;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -108,6 +108,7 @@ async fn set_stt_provider(provider: String) -> Result<(), String> {
         "openai" => SttProviderType::OpenAI,
         "groq" => SttProviderType::Groq,
         "apple_stt" => SttProviderType::AppleStt,
+        "custom_stt" => SttProviderType::CustomStt,
         _ => return Err(format!("Unknown STT provider: {}", provider)),
     };
 
@@ -203,6 +204,20 @@ async fn get_stt_providers() -> Result<Vec<SttProviderInfo>, String> {
             model_status: Some(model_status),
         });
     }
+
+    // Add custom STT endpoint
+    providers.push(SttProviderInfo {
+        name: config
+            .http_stt_config
+            .custom_display_name
+            .clone()
+            .unwrap_or_else(|| "Custom Endpoint".to_string()),
+        id: "custom_stt".to_string(),
+        provider_type: "batch".to_string(),
+        configured: config.http_stt_config.custom_base_url.is_some(),
+        requires_api_key: false,
+        model_status: None,
+    });
 
     Ok(providers)
 }
@@ -712,6 +727,37 @@ async fn set_custom_llm_endpoint(
 }
 
 #[tauri::command]
+async fn set_custom_stt_endpoint(
+    base_url: String,
+    display_name: Option<String>,
+    model: Option<String>,
+    language: Option<String>,
+) -> Result<(), String> {
+    let config_path = AppConfig::default_config_file()
+        .map_err(|e| format!("Failed to get config path: {}", e))?;
+
+    let mut config = if config_path.exists() {
+        AppConfig::load_from_file(&config_path)
+            .map_err(|e| format!("Failed to load config: {}", e))?
+    } else {
+        AppConfig::default()
+    };
+
+    config.http_stt_config.custom_base_url = if base_url.is_empty() {
+        None
+    } else {
+        Some(base_url)
+    };
+    config.http_stt_config.custom_display_name = display_name;
+    config.http_stt_config.custom_model = model;
+    config.http_stt_config.language = language;
+
+    config
+        .save_to_file(&config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))
+}
+
+#[tauri::command]
 async fn set_output_mode(mode: String) -> Result<(), String> {
     let config_path = AppConfig::default_config_file()
         .map_err(|e| format!("Failed to get config path: {}", e))?;
@@ -882,6 +928,23 @@ async fn start_pipeline(
             {
                 return Err("Apple STT is only available on macOS 26+".to_string());
             }
+        }
+        SttProviderType::CustomStt => {
+            let base_url = config
+                .http_stt_config
+                .custom_base_url
+                .clone()
+                .ok_or_else(|| {
+                    "Custom STT endpoint not configured. Please set a base URL in Settings"
+                        .to_string()
+                })?;
+            let api_key = config.api_keys.get("custom_stt").cloned();
+            Box::new(CustomSttProvider::new(
+                base_url,
+                api_key,
+                config.http_stt_config.custom_model.clone(),
+                config.http_stt_config.language.clone(),
+            ))
         }
     };
 
@@ -1629,6 +1692,7 @@ fn main() {
             set_llm_processor,
             set_llm_model,
             set_custom_llm_endpoint,
+            set_custom_stt_endpoint,
             set_output_mode,
             set_hotkey,
             get_dictionary,

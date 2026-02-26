@@ -30,6 +30,14 @@
   // ElevenLabs language state
   let elevenlabsLanguages = $state<[string, string][]>([]);
   let elevenlabsLanguage = $state('auto');
+
+  // Custom STT endpoint state
+  let showCustomSttSection = $state(false);
+  let customSttBaseUrl = $state('');
+  let customSttDisplayName = $state('');
+  let customSttApiKey = $state('');
+  let customSttModel = $state('');
+  let customSttLanguage = $state('');
   let modelDownloadProgress = $state(0);
   let modelDownloading = $state(false);
   let downloadStatus = $state<'' | 'checking' | 'downloading' | 'success' | 'already_installed' | 'error'>('');
@@ -107,10 +115,27 @@
 
   async function loadConfig() {
     try {
-      const config = await invoke<{ stt_provider: string; apple_stt_locale: string; elevenlabs_language: string }>('get_config');
+      const config = await invoke<{
+        stt_provider: string;
+        apple_stt_locale: string;
+        elevenlabs_language: string;
+        http_stt_config: {
+          custom_base_url: string | null;
+          custom_display_name: string | null;
+          custom_model: string | null;
+          language: string | null;
+        };
+      }>('get_config');
       currentProvider = config.stt_provider.toLowerCase();
       appleSttLocale = config.apple_stt_locale || 'auto';
       elevenlabsLanguage = config.elevenlabs_language || 'auto';
+      customSttBaseUrl = config.http_stt_config?.custom_base_url || '';
+      customSttDisplayName = config.http_stt_config?.custom_display_name || '';
+      customSttModel = config.http_stt_config?.custom_model || '';
+      customSttLanguage = config.http_stt_config?.language || '';
+      if (currentProvider === 'custom_stt') {
+        showCustomSttSection = true;
+      }
     } catch (err) {
       error = `Failed to load config: ${err}`;
       console.error(error);
@@ -120,6 +145,12 @@
   async function selectProvider(providerId: string) {
     const provider = providers.find(p => p.id === providerId);
     if (!provider) return;
+
+    // Custom STT: expand config section instead of immediate activation
+    if (providerId === 'custom_stt') {
+      showCustomSttSection = !showCustomSttSection;
+      return;
+    }
 
     // If provider doesn't require API key (local provider), activate directly
     if (!provider.requires_api_key) {
@@ -321,6 +352,46 @@
     }
   }
 
+  async function saveCustomSttEndpoint() {
+    if (!customSttBaseUrl.trim()) {
+      error = 'Base URL is required for custom STT endpoint';
+      return;
+    }
+
+    try {
+      loading = true;
+      error = '';
+      success = '';
+
+      await invoke('set_custom_stt_endpoint', {
+        baseUrl: customSttBaseUrl,
+        displayName: customSttDisplayName || null,
+        model: customSttModel || null,
+        language: customSttLanguage || null,
+      });
+
+      if (customSttApiKey.trim()) {
+        await invoke('save_api_key', {
+          provider: 'custom_stt',
+          apiKey: customSttApiKey
+        });
+      }
+
+      await invoke('set_stt_provider', { provider: 'custom_stt' });
+      currentProvider = 'custom_stt';
+
+      await loadProviders();
+      success = `Custom STT endpoint activated: ${customSttDisplayName || customSttBaseUrl}`;
+      customSttApiKey = '';
+      setTimeout(() => { success = ''; }, 3000);
+    } catch (err) {
+      error = `Failed to save custom STT endpoint: ${err}`;
+      console.error(error);
+    } finally {
+      loading = false;
+    }
+  }
+
   async function loadAppleSttLocales() {
     try {
       appleSttLocales = await invoke<string[]>('get_apple_stt_locales');
@@ -461,6 +532,71 @@
       </div>
     {/each}
   </div>
+
+  {#if showCustomSttSection}
+    <div class="custom-endpoint-form">
+      <p class="form-description">
+        Connect to any OpenAI-compatible Whisper endpoint (whisper.cpp, faster-whisper, LocalAI, etc.)
+      </p>
+      <div class="form-group">
+        <label for="custom-stt-base-url">Base URL</label>
+        <input
+          id="custom-stt-base-url"
+          type="text"
+          class="form-input"
+          bind:value={customSttBaseUrl}
+          placeholder="http://localhost:8080/v1"
+        />
+      </div>
+      <div class="form-group">
+        <label for="custom-stt-api-key">API Key <span class="optional">(optional for local)</span></label>
+        <input
+          id="custom-stt-api-key"
+          type="password"
+          class="form-input"
+          bind:value={customSttApiKey}
+          placeholder="API key (if required)"
+        />
+      </div>
+      <div class="form-group">
+        <label for="custom-stt-model">Model <span class="optional">(default: whisper-1)</span></label>
+        <input
+          id="custom-stt-model"
+          type="text"
+          class="form-input"
+          bind:value={customSttModel}
+          placeholder="whisper-1"
+        />
+      </div>
+      <div class="form-group">
+        <label for="custom-stt-language">Language <span class="optional">(optional, ISO-639-1 e.g. en, zh, ja)</span></label>
+        <input
+          id="custom-stt-language"
+          type="text"
+          class="form-input"
+          bind:value={customSttLanguage}
+          placeholder="auto-detect"
+        />
+      </div>
+      <div class="form-group">
+        <label for="custom-stt-display-name">Display Name <span class="optional">(optional)</span></label>
+        <input
+          id="custom-stt-display-name"
+          type="text"
+          class="form-input"
+          bind:value={customSttDisplayName}
+          placeholder="e.g., Local Whisper"
+        />
+      </div>
+      <button
+        class="save-custom-btn"
+        onclick={saveCustomSttEndpoint}
+        disabled={loading || !customSttBaseUrl.trim()}
+      >
+        {loading ? 'Saving...' : 'Save & Activate'}
+      </button>
+    </div>
+  {/if}
 
   {#if loading}
     <div class="loading">Processing...</div>
@@ -735,6 +871,80 @@
   .locale-selector select:focus {
     outline: none;
     border-color: rgba(59, 130, 246, 0.6);
+  }
+
+  .custom-endpoint-form {
+    margin-top: 16px;
+    padding: 16px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .form-description {
+    margin: 0 0 16px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 13px;
+  }
+
+  .form-group {
+    margin-bottom: 12px;
+  }
+
+  .form-group label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .optional {
+    color: rgba(255, 255, 255, 0.35);
+    font-size: 12px;
+  }
+
+  .form-input {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.05);
+    color: #fff;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s ease;
+    box-sizing: border-box;
+  }
+
+  .form-input:focus {
+    border-color: rgba(59, 130, 246, 0.6);
+  }
+
+  .form-input::placeholder {
+    color: rgba(255, 255, 255, 0.3);
+  }
+
+  .save-custom-btn {
+    width: 100%;
+    padding: 10px;
+    border-radius: 8px;
+    border: none;
+    background: rgba(59, 130, 246, 0.3);
+    color: #93c5fd;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-top: 4px;
+  }
+
+  .save-custom-btn:hover:not(:disabled) {
+    background: rgba(59, 130, 246, 0.5);
+  }
+
+  .save-custom-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .loading {
