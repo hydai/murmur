@@ -74,8 +74,12 @@ murmur/
 
 1. Download the `.dmg` from [Releases](https://github.com/hydai/murmur/releases)
 2. Drag Murmur.app to Applications
-3. On first launch, grant microphone and accessibility permissions
-4. Configure your providers in Settings (system tray → Settings)
+3. Clear the quarantine attribute (unsigned app):
+   ```bash
+   xattr -cr /Applications/Murmur.app
+   ```
+4. On first launch, grant microphone and accessibility permissions
+5. Configure your providers in Settings (system tray → Settings)
 
 ## Development
 
