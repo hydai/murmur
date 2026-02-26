@@ -1,18 +1,29 @@
-<script>
+<script lang="ts">
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { writeText } from '@tauri-apps/plugin-clipboard-manager';
   import { onMount } from 'svelte';
 
-  let entries = [];
-  let searchQuery = '';
-  let loading = false;
-  let error = '';
-  let success = '';
-  let showClearModal = false;
-  let expandedId = null;
-  let offset = 0;
-  let hasMore = true;
+  interface HistoryEntry {
+    id: string;
+    timestamp_ms: number;
+    raw_text?: string;
+    final_text: string;
+    command_name?: string;
+    processing_time_ms: number;
+  }
+
+  let entries: HistoryEntry[] = $state([]);
+  let searchQuery = $state('');
+  let loading = $state(false);
+  let error = $state('');
+  let success = $state('');
+  let showClearModal = $state(false);
+  let expandedId: string | null = $state(null);
+  let offset = $state(0);
+  let hasMore = $state(true);
   const PAGE_SIZE = 50;
+
+  let searchTimer: ReturnType<typeof setTimeout>;
 
   onMount(async () => {
     await loadHistory();
@@ -24,7 +35,7 @@
       error = '';
       offset = 0;
       const result = await invoke('get_history', { offset: 0, limit: PAGE_SIZE });
-      entries = result || [];
+      entries = (result as HistoryEntry[]) || [];
       hasMore = entries.length === PAGE_SIZE;
     } catch (err) {
       error = `Failed to load history: ${err}`;
@@ -39,7 +50,7 @@
       loading = true;
       offset += PAGE_SIZE;
       const result = await invoke('get_history', { offset, limit: PAGE_SIZE });
-      const newEntries = result || [];
+      const newEntries = (result as HistoryEntry[]) || [];
       entries = [...entries, ...newEntries];
       hasMore = newEntries.length === PAGE_SIZE;
     } catch (err) {
@@ -59,7 +70,7 @@
       loading = true;
       error = '';
       const result = await invoke('search_history', { query: searchQuery });
-      entries = result || [];
+      entries = (result as HistoryEntry[]) || [];
       hasMore = false; // search returns all matches
     } catch (err) {
       error = `Search failed: ${err}`;
@@ -69,13 +80,12 @@
     }
   }
 
-  let searchTimer;
   function onSearchInput() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(handleSearch, 300);
   }
 
-  async function copyText(text) {
+  async function copyText(text: string) {
     try {
       await writeText(text);
       success = 'Copied to clipboard';
@@ -85,7 +95,7 @@
     }
   }
 
-  async function deleteEntry(id) {
+  async function deleteEntry(id: string) {
     try {
       await invoke('delete_history_entry', { id });
       entries = entries.filter(e => e.id !== id);
@@ -113,14 +123,14 @@
     }
   }
 
-  function toggleExpand(id) {
+  function toggleExpand(id: string) {
     expandedId = expandedId === id ? null : id;
   }
 
-  function formatTime(timestamp_ms) {
+  function formatTime(timestamp_ms: number): string {
     const date = new Date(timestamp_ms);
     const now = new Date();
-    const diffMs = now - date;
+    const diffMs = now.getTime() - date.getTime();
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
     const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
@@ -136,7 +146,7 @@
   <div class="header">
     <h2>History</h2>
     {#if entries.length > 0}
-      <button class="btn btn-danger-outline" on:click={() => { showClearModal = true; }}>
+      <button class="btn btn-danger-outline" onclick={() => { showClearModal = true; }}>
         Clear All
       </button>
     {/if}
@@ -154,13 +164,15 @@
     <input
       type="text"
       bind:value={searchQuery}
-      on:input={onSearchInput}
+      oninput={onSearchInput}
       placeholder="Search transcriptions..."
       class="search-input"
     />
   </div>
 
-  {#if entries.length === 0 && !loading}
+  {#if loading && entries.length === 0}
+    <div class="loading-state">Loading history...</div>
+  {:else if entries.length === 0}
     <div class="empty-state">
       {#if searchQuery.trim()}
         <p>No transcriptions match your search.</p>
@@ -186,7 +198,7 @@
           <div class="entry-text">{entry.final_text}</div>
 
           {#if entry.raw_text}
-            <button class="btn-link" on:click={() => toggleExpand(entry.id)}>
+            <button class="btn-link" onclick={() => toggleExpand(entry.id)}>
               {expandedId === entry.id ? 'Hide raw' : 'Show raw transcription'}
             </button>
             {#if expandedId === entry.id}
@@ -195,10 +207,10 @@
           {/if}
 
           <div class="entry-actions">
-            <button class="btn-icon" on:click={() => copyText(entry.final_text)} title="Copy">
+            <button class="btn-icon" onclick={() => copyText(entry.final_text)} title="Copy">
               📋
             </button>
-            <button class="btn-icon btn-danger" on:click={() => deleteEntry(entry.id)} title="Delete">
+            <button class="btn-icon btn-danger" onclick={() => deleteEntry(entry.id)} title="Delete">
               ✕
             </button>
           </div>
@@ -206,7 +218,7 @@
       {/each}
 
       {#if hasMore && !searchQuery.trim()}
-        <button class="btn btn-secondary load-more" on:click={loadMore} disabled={loading}>
+        <button class="btn btn-secondary load-more" onclick={loadMore} disabled={loading}>
           {loading ? 'Loading...' : 'Load more'}
         </button>
       {/if}
@@ -216,14 +228,16 @@
 
 <!-- Clear All Confirmation Modal -->
 {#if showClearModal}
-  <div class="modal-overlay" on:click={() => { showClearModal = false; }} on:keypress={(e) => e.key === 'Escape' && (showClearModal = false)} role="presentation">
-    <div class="modal modal-small" on:click|stopPropagation role="dialog">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="modal-overlay" onclick={() => { showClearModal = false; }} onkeypress={(e: KeyboardEvent) => e.key === 'Escape' && (showClearModal = false)} role="presentation">
+    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events a11y_interactive_supports_focus -->
+    <div class="modal modal-small" onclick={(e: MouseEvent) => e.stopPropagation()} role="dialog">
       <h3>Clear All History</h3>
       <p>Are you sure you want to delete all transcription history? This cannot be undone.</p>
 
       <div class="modal-actions">
-        <button class="btn btn-secondary" on:click={() => { showClearModal = false; }}>Cancel</button>
-        <button class="btn btn-danger" on:click={clearAll} disabled={loading}>
+        <button class="btn btn-secondary" onclick={() => { showClearModal = false; }}>Cancel</button>
+        <button class="btn btn-danger" onclick={clearAll} disabled={loading}>
           {loading ? 'Clearing...' : 'Clear All'}
         </button>
       </div>
@@ -291,6 +305,13 @@
   .search-input:focus {
     outline: none;
     border-color: rgba(59, 130, 246, 0.6);
+  }
+
+  .loading-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 14px;
   }
 
   .empty-state {
