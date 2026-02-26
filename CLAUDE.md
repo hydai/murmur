@@ -35,7 +35,7 @@ cargo tauri build
 - `crates/lt-llm-apple/` - Swift FFI bridge for Apple Foundation Models (on-device LLM)
 - `crates/lt-output/` - Output routing (clipboard, keyboard simulation, combined mode)
 - `crates/lt-pipeline/` - Pipeline orchestration, state machine, voice command detection
-- `crates/lt-stt/` - STT providers (ElevenLabs, OpenAI, Groq, Apple wrapper)
+- `crates/lt-stt/` - STT providers (ElevenLabs, OpenAI, Groq, Custom, Apple wrapper)
 - `crates/lt-stt-apple/` - Swift FFI bridge for Apple SpeechTranscriber (on-device STT)
 - `crates/lt-tauri/` - Tauri app, system tray, IPC commands
 - `crates/lt-tauri/permissions/default.toml` - ACL command allowlist (update when adding IPC commands)

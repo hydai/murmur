@@ -8,8 +8,9 @@ Privacy-first BYOK (Bring Your Own Key) voice typing application built with Taur
 
 ## Features
 
-- Real-time speech-to-text with multiple providers (Apple, ElevenLabs, OpenAI, Groq)
+- Real-time speech-to-text with multiple providers (Apple, ElevenLabs, OpenAI, Groq, custom OpenAI-compatible endpoints)
 - Apple STT: on-device speech recognition via macOS — no API key needed
+- Custom STT endpoint: connect any OpenAI-compatible Whisper API (whisper.cpp, faster-whisper, LocalAI, etc.)
 - LLM post-processing via HTTP APIs (OpenAI, Claude, Gemini API, custom OpenAI-compatible endpoints), local CLI tools (gemini-cli, copilot-cli), or Apple Foundation Models (on-device)
 - Configurable LLM model selection per provider (override defaults from Settings)
 - Output modes: clipboard (default), keyboard simulation, or both
@@ -41,7 +42,7 @@ murmur/
 │   │       ├── output.rs         # OutputSink trait, OutputMode
 │   │       └── error.rs          # MurmurError
 │   ├── lt-audio/                 # Audio capture (cpal + resampling + VAD)
-│   ├── lt-stt/                   # STT providers (ElevenLabs, OpenAI, Groq)
+│   ├── lt-stt/                   # STT providers (ElevenLabs, OpenAI, Groq, Custom)
 │   ├── lt-stt-apple/             # Swift FFI bridge for Apple SpeechTranscriber
 │   ├── lt-llm/                   # LLM post-processing (HTTP APIs + CLI)
 │   ├── lt-llm-apple/             # Apple Foundation Models (on-device LLM via Swift FFI)
@@ -72,7 +73,7 @@ murmur/
 # Run the full app in development mode
 cargo tauri dev
 
-# Run all tests (93 tests)
+# Run all tests (~120 tests)
 cargo test --workspace
 
 # Build release binary
@@ -136,7 +137,7 @@ Default configuration template: `config/default.toml`
 
    You can override the default model in Settings > LLM Processor > Model Override, or by setting `llm_model` in `config.toml`. If no LLM provider is configured, the app will output raw transcriptions without post-processing.
 
-3. **API Keys Required**: You must provide your own API keys for cloud STT providers (ElevenLabs, OpenAI, or Groq). Apple STT is a free on-device alternative that requires no API key.
+3. **API Keys Required**: You must provide your own API keys for cloud STT providers (ElevenLabs, OpenAI, or Groq). Apple STT is a free on-device alternative that requires no API key. Custom STT endpoints (whisper.cpp, faster-whisper, LocalAI) can also run locally without an API key.
 
 4. **Apple STT**: Requires macOS 26+ for downloading speech recognition models on-device.
 
