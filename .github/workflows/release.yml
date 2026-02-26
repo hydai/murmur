@@ -104,3 +104,44 @@ jobs:
           gh release upload "v${VERSION}" latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Homebrew cask
+        run: |
+          VERSION=$(grep '^version' crates/lt-tauri/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          DMG_NAME="Murmur_${VERSION}_aarch64.dmg"
+          SHA256=$(shasum -a 256 "artifacts/${DMG_NAME}" | awk '{print $1}')
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/hydai/homebrew-murmur.git" tap
+          cd tap
+
+          cat > Casks/murmur.rb <<CASKEOF
+          cask "murmur" do
+            version "${VERSION}"
+            sha256 "${SHA256}"
+
+            url "https://github.com/hydai/murmur/releases/download/v#{version}/Murmur_#{version}_aarch64.dmg"
+            name "Murmur"
+            desc "Privacy-first BYOK voice typing app"
+            homepage "https://github.com/hydai/murmur"
+
+            depends_on macos: ">= :catalina"
+            depends_on arch: :arm64
+
+            app "Murmur.app"
+            auto_updates true
+
+            zap trash: [
+              "~/Library/Application Support/com.hydai.murmur",
+              "~/Library/Caches/com.hydai.murmur",
+              "~/Library/Preferences/com.hydai.murmur.plist",
+            ]
+          end
+          CASKEOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/murmur.rb
+          git commit -m "chore: update murmur to ${VERSION}"
+          git push
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
