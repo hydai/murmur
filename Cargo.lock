@@ -2462,7 +2462,7 @@ dependencies = [
 
 [[package]]
 name = "lt-tauri"
-version = "0.2.8"
+version = "0.2.9"
 dependencies = [
  "image",
  "lt-audio",

@@ -1,4 +1,14 @@
 # Changelog
+## 0.2.9 (2026-02-26)
+
+### Features
+
+- add custom OpenAI-compatible STT endpoint support
+
+### Fixes
+
+- HistoryPanel always shows "Loading..." due to missing $state() runes
+
 ## 0.2.8 (2026-02-25)
 
 ### Features
