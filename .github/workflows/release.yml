@@ -33,14 +33,14 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Upload DMG artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: murmur-arm64-dmg
           path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
       - name: Upload updater artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: murmur-arm64-updater
           path: |
@@ -67,12 +67,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: murmur-arm64-dmg
           path: artifacts/
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: murmur-arm64-updater
           path: updater-artifacts/
