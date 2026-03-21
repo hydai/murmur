@@ -1,4 +1,10 @@
 # Changelog
+## 0.2.10 (2026-03-21)
+
+### Fixes
+
+- migrate Vite 7→8 minifier from esbuild to oxc (#30)
+
 ## 0.2.9 (2026-02-26)
 
 ### Features
