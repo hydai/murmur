@@ -1,4 +1,10 @@
 # Changelog
+## 0.2.11 (2026-04-09)
+
+### Features
+
+- redesign settings UI with sidebar navigation and design tokens
+
 ## 0.2.10 (2026-03-21)
 
 ### Fixes
