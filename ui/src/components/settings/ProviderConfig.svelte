@@ -2,6 +2,10 @@
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount, onDestroy } from 'svelte';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import PageHeader from './ui/PageHeader.svelte';
+  import SectionHeader from './ui/SectionHeader.svelte';
+  import StatusRow from './ui/StatusRow.svelte';
+  import ActionRow from './ui/ActionRow.svelte';
 
   interface Provider {
     id: string;
@@ -46,11 +50,15 @@
 
   let unlistenProgress: UnlistenFn | null = null;
 
+  // Derived: group providers by type
+  let localProviders = $derived(providers.filter(p => p.provider_type === 'local'));
+  let cloudProviders = $derived(providers.filter(p => p.provider_type !== 'local' && p.id !== 'custom_stt'));
+  let customProvider = $derived(providers.find(p => p.id === 'custom_stt'));
+
   onMount(async () => {
     await loadProviders();
     await loadConfig();
 
-    // Load language lists for active provider
     if (currentProvider === 'apple_stt') {
       await loadAppleSttLocales();
     }
@@ -58,7 +66,6 @@
       await loadElevenLabsLanguages();
     }
 
-    // Listen for model download progress events
     unlistenProgress = await listen<{ locale: string; progress: number; finished: boolean; error: string | null }>(
       'apple-stt-model-progress',
       (event) => {
@@ -77,20 +84,17 @@
             downloadStatus = 'error';
             downloadError = errorMsg;
           } else if (elapsed < 500 && progress >= 1.0) {
-            // Completed almost instantly — model was already installed
             downloadStatus = 'already_installed';
           } else {
             downloadStatus = 'success';
           }
 
-          // Auto-clear status after 4s
           setTimeout(() => {
             downloadStatus = '';
             downloadError = '';
             modelDownloadProgress = 0;
           }, 4000);
 
-          // Reload providers to update model status
           loadProviders();
         }
       }
@@ -146,15 +150,12 @@
     const provider = providers.find(p => p.id === providerId);
     if (!provider) return;
 
-    // Custom STT: expand config section instead of immediate activation
     if (providerId === 'custom_stt') {
       showCustomSttSection = !showCustomSttSection;
       return;
     }
 
-    // If provider doesn't require API key (local provider), activate directly
     if (!provider.requires_api_key) {
-      // Check if model needs downloading first
       if (provider.model_status === 'not_installed') {
         error = 'Speech model not installed. Click "Download Model" first.';
         return;
@@ -172,11 +173,9 @@
         await invoke('set_stt_provider', { provider: providerId });
         currentProvider = providerId;
 
-        // Load available locales for Apple STT
         if (providerId === 'apple_stt') {
           await loadAppleSttLocales();
         }
-        // Load available languages for ElevenLabs
         if (providerId === 'elevenlabs') {
           await loadElevenLabsLanguages();
         }
@@ -200,7 +199,6 @@
       return;
     }
 
-    // Provider is already configured, just switch to it
     try {
       loading = true;
       error = '';
@@ -209,7 +207,6 @@
       await invoke('set_stt_provider', { provider: providerId });
       currentProvider = providerId;
 
-      // Load available languages for ElevenLabs
       if (providerId === 'elevenlabs') {
         await loadElevenLabsLanguages();
       }
@@ -244,13 +241,11 @@
       error = '';
       success = '';
 
-      // Save the API key
       await invoke('save_api_key', {
         provider: selectedProvider.id,
         apiKey: apiKeyInput
       });
 
-      // Set as current provider
       await invoke('set_stt_provider', {
         provider: selectedProvider.id
       });
@@ -260,7 +255,6 @@
         ? `Updated API key for ${selectedProvider.name}`
         : `Configured and activated ${selectedProvider.name}`;
 
-      // Close modal and reload providers
       showApiKeyModal = false;
       await loadProviders();
 
@@ -285,25 +279,30 @@
     showApiKey = !showApiKey;
   }
 
-  function getProviderStatusClass(provider: Provider): string {
-    if (provider.model_status === 'unavailable') {
-      return 'unavailable';
-    }
-    if (currentProvider === provider.id) {
-      return 'active';
-    }
-    if (provider.configured) {
-      return 'configured';
-    }
-    return 'not-configured';
+  function getProviderStatus(provider: Provider): 'green' | 'yellow' | 'red' | 'none' {
+    if (provider.model_status === 'unavailable') return 'red';
+    if (currentProvider === provider.id) return 'green';
+    if (provider.configured || (!provider.requires_api_key && provider.model_status === 'installed')) return 'yellow';
+    if (provider.requires_api_key && !provider.configured) return 'red';
+    return 'none';
   }
 
-  function getProviderTypeLabel(providerType: string): string {
-    switch (providerType) {
-      case 'streaming': return 'Streaming';
-      case 'batch': return 'Batch';
-      case 'local': return 'Local (On-Device)';
-      default: return providerType;
+  function getProviderStatusText(provider: Provider): string {
+    if (provider.model_status === 'unavailable') return 'macOS 26+';
+    if (currentProvider === provider.id) return 'Active';
+    if (provider.configured) return 'Configured';
+    if (!provider.requires_api_key && provider.model_status === 'installed') return 'Ready';
+    if (!provider.requires_api_key && provider.model_status === 'not_installed') return 'Not Installed';
+    if (provider.requires_api_key && !provider.configured) return 'Not Configured';
+    return 'Available';
+  }
+
+  function getProviderValue(provider: Provider): string {
+    switch (provider.provider_type) {
+      case 'local': return 'on-device';
+      case 'streaming': return 'streaming';
+      case 'batch': return 'batch';
+      default: return provider.provider_type;
     }
   }
 
@@ -407,7 +406,6 @@
 
     try {
       await invoke('set_apple_stt_locale', { locale });
-      // Reload providers to get updated model status for new locale
       await loadProviders();
       success = `Language set to ${locale === 'auto' ? 'Auto-detect' : locale}`;
       setTimeout(() => { success = ''; }, 3000);
@@ -418,198 +416,174 @@
   }
 </script>
 
-<div class="provider-config">
-  <h2>STT Provider</h2>
+<div class="provider-page">
+  <PageHeader title="STT Providers" description="Configure speech-to-text engines for voice input" />
 
   {#if error}
     <div class="alert alert-error">{error}</div>
   {/if}
-
   {#if success}
     <div class="alert alert-success">{success}</div>
   {/if}
 
-  <div class="providers-list">
-    {#each providers as provider}
-      <div
-        class="provider-card {getProviderStatusClass(provider)}"
-        onclick={() => selectProvider(provider.id)}
-        onkeydown={(e) => e.key === 'Enter' && selectProvider(provider.id)}
-        role="button"
-        tabindex="0"
-      >
-        <div class="provider-header">
-          <h3>{provider.name}</h3>
-          <div class="provider-actions">
-            {#if provider.requires_api_key && provider.configured}
-              <button
-                class="edit-key-btn"
-                onclick={(e) => { e.stopPropagation(); editApiKey(provider); }}
-                title="Edit API Key"
-              >
-                Edit Key
-              </button>
-            {/if}
-            {#if provider.model_status === 'not_installed'}
-              <button
-                class="download-btn"
-                onclick={(e) => { e.stopPropagation(); downloadModel(provider); }}
-                disabled={modelDownloading}
-              >
-                {modelDownloading ? 'Downloading...' : 'Download Model'}
-              </button>
-            {/if}
-            {#if provider.model_status === 'unavailable'}
-              <span class="badge badge-unavailable">macOS 26+</span>
-            {:else if currentProvider === provider.id}
-              <span class="badge badge-active">Active</span>
-            {:else if provider.configured}
-              <span class="badge badge-configured">Configured</span>
-            {:else if !provider.requires_api_key && provider.model_status === 'installed'}
-              <span class="badge badge-configured">Ready</span>
-            {:else if provider.requires_api_key}
-              <span class="badge badge-not-configured">Not Configured</span>
-            {/if}
-          </div>
-        </div>
-        <div class="provider-details">
-          <span class="provider-type">{getProviderTypeLabel(provider.provider_type)}</span>
-          {#if !provider.requires_api_key}
-            <span class="provider-note">No API key required</span>
-          {/if}
-        </div>
+  <!-- LOCAL ON-DEVICE -->
+  {#if localProviders.length > 0}
+    <div class="section">
+      <SectionHeader label="LOCAL ON-DEVICE" />
+      <div class="section-rows">
+        {#each localProviders as provider}
+          <StatusRow
+            label={provider.name}
+            value={getProviderValue(provider)}
+            status={getProviderStatus(provider)}
+            statusText={getProviderStatusText(provider)}
+            onclick={() => selectProvider(provider.id)}
+          >
+            {#snippet children()}
+              {#if provider.model_status === 'not_installed'}
+                <button class="inline-btn" onclick={(e) => { e.stopPropagation(); downloadModel(provider); }} disabled={modelDownloading}>
+                  {modelDownloading ? 'Downloading...' : 'Download'}
+                </button>
+              {/if}
+              {#if provider.requires_api_key && provider.configured}
+                <button class="inline-btn" onclick={(e) => { e.stopPropagation(); editApiKey(provider); }}>
+                  Edit Key
+                </button>
+              {/if}
+            {/snippet}
+          </StatusRow>
 
-        {#if provider.id === 'apple_stt' && (modelDownloading || downloadStatus)}
-          {#if downloadStatus === 'checking'}
-            <div class="download-status">Checking model availability...</div>
-          {:else if downloadStatus === 'downloading'}
-            <div class="download-status">Downloading speech model — {Math.round(modelDownloadProgress * 100)}%</div>
-          {/if}
-          {#if modelDownloading}
-            <div class="progress-bar-container">
-              <div class="progress-bar" style="width: {modelDownloadProgress * 100}%"></div>
+          <!-- Download progress inline -->
+          {#if provider.id === 'apple_stt' && (modelDownloading || downloadStatus)}
+            <div class="download-inline">
+              {#if downloadStatus === 'checking'}
+                <span class="download-msg">Checking model availability...</span>
+              {:else if downloadStatus === 'downloading'}
+                <span class="download-msg">Downloading — {Math.round(modelDownloadProgress * 100)}%</span>
+              {/if}
+              {#if modelDownloading}
+                <div class="progress-bar-bg">
+                  <div class="progress-bar-fill" style="width: {modelDownloadProgress * 100}%"></div>
+                </div>
+              {/if}
+              {#if downloadStatus === 'success'}
+                <span class="download-ok">Model downloaded successfully</span>
+              {:else if downloadStatus === 'already_installed'}
+                <span class="download-ok">Model already installed</span>
+              {:else if downloadStatus === 'error'}
+                <span class="download-err">{downloadError || 'Download failed'}</span>
+              {/if}
             </div>
           {/if}
-          {#if downloadStatus === 'success'}
-            <div class="download-success">Model downloaded successfully</div>
-          {:else if downloadStatus === 'already_installed'}
-            <div class="download-success">Model already installed</div>
-          {:else if downloadStatus === 'error'}
-            <div class="download-error">{downloadError || 'Download failed'}</div>
+
+          <!-- Locale selector for active Apple STT -->
+          {#if currentProvider === provider.id && provider.id === 'apple_stt' && appleSttLocales.length > 0}
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="locale-row" onclick={(e) => e.stopPropagation()}>
+              <label for="apple-stt-locale">Language</label>
+              <select id="apple-stt-locale" value={appleSttLocale} onchange={changeAppleSttLocale}>
+                <option value="auto">Auto-detect</option>
+                {#each appleSttLocales as locale}
+                  <option value={locale}>{locale}</option>
+                {/each}
+              </select>
+            </div>
           {/if}
-        {/if}
-
-        {#if currentProvider === provider.id && provider.id === 'apple_stt' && appleSttLocales.length > 0}
-          <div class="locale-selector" onclick={(e) => e.stopPropagation()}>
-            <label for="apple-stt-locale">Language:</label>
-            <select
-              id="apple-stt-locale"
-              value={appleSttLocale}
-              onchange={changeAppleSttLocale}
-            >
-              <option value="auto">Auto-detect</option>
-              {#each appleSttLocales as locale}
-                <option value={locale}>{locale}</option>
-              {/each}
-            </select>
-          </div>
-        {/if}
-
-        {#if currentProvider === provider.id && provider.id === 'elevenlabs' && elevenlabsLanguages.length > 0}
-          <div class="locale-selector" onclick={(e) => e.stopPropagation()}>
-            <label for="elevenlabs-language">Language:</label>
-            <select
-              id="elevenlabs-language"
-              value={elevenlabsLanguage}
-              onchange={changeElevenLabsLanguage}
-            >
-              {#each elevenlabsLanguages as [code, name]}
-                <option value={code}>{name}</option>
-              {/each}
-            </select>
-          </div>
-        {/if}
+        {/each}
       </div>
-    {/each}
-  </div>
-
-  {#if showCustomSttSection}
-    <div class="custom-endpoint-form">
-      <p class="form-description">
-        Connect to any OpenAI-compatible Whisper endpoint (whisper.cpp, faster-whisper, LocalAI, etc.)
-      </p>
-      <div class="form-group">
-        <label for="custom-stt-base-url">Base URL</label>
-        <input
-          id="custom-stt-base-url"
-          type="text"
-          class="form-input"
-          bind:value={customSttBaseUrl}
-          placeholder="http://localhost:8080/v1"
-        />
-      </div>
-      <div class="form-group">
-        <label for="custom-stt-api-key">API Key <span class="optional">(optional for local)</span></label>
-        <input
-          id="custom-stt-api-key"
-          type="password"
-          class="form-input"
-          bind:value={customSttApiKey}
-          placeholder="API key (if required)"
-        />
-      </div>
-      <div class="form-group">
-        <label for="custom-stt-model">Model <span class="optional">(default: whisper-1)</span></label>
-        <input
-          id="custom-stt-model"
-          type="text"
-          class="form-input"
-          bind:value={customSttModel}
-          placeholder="whisper-1"
-        />
-      </div>
-      <div class="form-group">
-        <label for="custom-stt-language">Language <span class="optional">(optional, ISO-639-1 e.g. en, zh, ja)</span></label>
-        <input
-          id="custom-stt-language"
-          type="text"
-          class="form-input"
-          bind:value={customSttLanguage}
-          placeholder="auto-detect"
-        />
-      </div>
-      <div class="form-group">
-        <label for="custom-stt-display-name">Display Name <span class="optional">(optional)</span></label>
-        <input
-          id="custom-stt-display-name"
-          type="text"
-          class="form-input"
-          bind:value={customSttDisplayName}
-          placeholder="e.g., Local Whisper"
-        />
-      </div>
-      <button
-        class="save-custom-btn"
-        onclick={saveCustomSttEndpoint}
-        disabled={loading || !customSttBaseUrl.trim()}
-      >
-        {loading ? 'Saving...' : 'Save & Activate'}
-      </button>
     </div>
   {/if}
 
-  {#if loading}
-    <div class="loading">Processing...</div>
+  <!-- CLOUD API -->
+  {#if cloudProviders.length > 0}
+    <div class="section">
+      <SectionHeader label="CLOUD API" />
+      <div class="section-rows">
+        {#each cloudProviders as provider}
+          <StatusRow
+            label={provider.name}
+            value={getProviderValue(provider)}
+            status={getProviderStatus(provider)}
+            statusText={getProviderStatusText(provider)}
+            onclick={() => selectProvider(provider.id)}
+          >
+            {#snippet children()}
+              {#if provider.requires_api_key && provider.configured}
+                <button class="inline-btn" onclick={(e) => { e.stopPropagation(); editApiKey(provider); }}>
+                  Edit Key
+                </button>
+              {/if}
+            {/snippet}
+          </StatusRow>
+
+          <!-- Language selector for active ElevenLabs -->
+          {#if currentProvider === provider.id && provider.id === 'elevenlabs' && elevenlabsLanguages.length > 0}
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="locale-row" onclick={(e) => e.stopPropagation()}>
+              <label for="elevenlabs-language">Language</label>
+              <select id="elevenlabs-language" value={elevenlabsLanguage} onchange={changeElevenLabsLanguage}>
+                {#each elevenlabsLanguages as [code, name]}
+                  <option value={code}>{name}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
+        {/each}
+      </div>
+    </div>
   {/if}
+
+  <!-- CUSTOM ENDPOINT -->
+  <div class="section">
+    <SectionHeader label="CUSTOM ENDPOINT" />
+    <ActionRow
+      label="Add custom Whisper-compatible endpoint"
+      onclick={() => { showCustomSttSection = !showCustomSttSection; }}
+    />
+
+    {#if showCustomSttSection}
+      <div class="custom-form">
+        <p class="form-desc">Connect to any OpenAI-compatible Whisper endpoint (whisper.cpp, faster-whisper, LocalAI, etc.)</p>
+        <div class="form-group">
+          <label for="custom-stt-base-url">Base URL</label>
+          <input id="custom-stt-base-url" type="text" bind:value={customSttBaseUrl} placeholder="http://localhost:8080/v1" />
+        </div>
+        <div class="form-group">
+          <label for="custom-stt-api-key">API Key <span class="optional">(optional for local)</span></label>
+          <input id="custom-stt-api-key" type="password" bind:value={customSttApiKey} placeholder="API key (if required)" />
+        </div>
+        <div class="form-group">
+          <label for="custom-stt-model">Model <span class="optional">(default: whisper-1)</span></label>
+          <input id="custom-stt-model" type="text" bind:value={customSttModel} placeholder="whisper-1" />
+        </div>
+        <div class="form-group">
+          <label for="custom-stt-language">Language <span class="optional">(optional, ISO-639-1)</span></label>
+          <input id="custom-stt-language" type="text" bind:value={customSttLanguage} placeholder="auto-detect" />
+        </div>
+        <div class="form-group">
+          <label for="custom-stt-display-name">Display Name <span class="optional">(optional)</span></label>
+          <input id="custom-stt-display-name" type="text" bind:value={customSttDisplayName} placeholder="e.g., Local Whisper" />
+        </div>
+        <button class="primary-btn" onclick={saveCustomSttEndpoint} disabled={loading || !customSttBaseUrl.trim()}>
+          {loading ? 'Saving...' : 'Save & Activate'}
+        </button>
+      </div>
+    {/if}
+  </div>
 </div>
 
+<!-- API Key Modal -->
 {#if showApiKeyModal}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal-overlay" onclick={closeModal} onkeydown={(e) => e.key === 'Escape' && closeModal()} role="presentation">
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
       <h3>{editingExistingKey ? 'Update' : 'Configure'} {selectedProvider?.name}</h3>
       <p>{editingExistingKey ? 'Enter a new API key:' : 'Enter your API key to enable this provider:'}</p>
 
-      <div class="api-key-input-wrapper">
+      <div class="api-key-wrapper">
         <input
           type={showApiKey ? 'text' : 'password'}
           bind:value={apiKeyInput}
@@ -617,19 +591,14 @@
           class="api-key-input"
           onkeydown={(e) => e.key === 'Enter' && saveApiKey()}
         />
-        <button
-          class="toggle-visibility-btn"
-          onclick={toggleApiKeyVisibility}
-          type="button"
-          title={showApiKey ? 'Hide API key' : 'Show API key'}
-        >
+        <button class="visibility-toggle" onclick={toggleApiKeyVisibility} type="button">
           {showApiKey ? '👁️' : '👁️‍🗨️'}
         </button>
       </div>
 
       <div class="modal-actions">
-        <button class="btn btn-secondary" onclick={closeModal}>Cancel</button>
-        <button class="btn btn-primary" onclick={saveApiKey} disabled={loading}>
+        <button class="btn-secondary" onclick={closeModal}>Cancel</button>
+        <button class="btn-primary" onclick={saveApiKey} disabled={loading}>
           {loading ? 'Saving...' : editingExistingKey ? 'Update Key' : 'Save & Activate'}
         </button>
       </div>
@@ -638,322 +607,209 @@
 {/if}
 
 <style>
-  .provider-config {
-    padding: 20px;
-    max-width: 600px;
-  }
-
-  h2 {
-    margin-bottom: 20px;
-    font-size: 24px;
-    font-weight: bold;
-    color: #fff;
-  }
-
-  .alert {
-    padding: 12px 16px;
-    margin-bottom: 16px;
-    border-radius: 8px;
-    font-size: 14px;
-  }
-
-  .alert-error {
-    background: rgba(239, 68, 68, 0.2);
-    border: 1px solid rgba(239, 68, 68, 0.5);
-    color: #fca5a5;
-  }
-
-  .alert-success {
-    background: rgba(34, 197, 94, 0.2);
-    border: 1px solid rgba(34, 197, 94, 0.5);
-    color: #86efac;
-  }
-
-  .providers-list {
+  .provider-page {
     display: flex;
     flex-direction: column;
     gap: 12px;
   }
 
-  .provider-card {
-    padding: 16px;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 2px solid rgba(255, 255, 255, 0.1);
-    cursor: pointer;
-    transition: all 0.2s ease;
+  /* Alerts */
+  .alert {
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 12px;
   }
 
-  .provider-card:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.2);
-    transform: translateY(-2px);
+  .alert-error {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
   }
 
-  .provider-card.active {
-    background: rgba(59, 130, 246, 0.2);
-    border-color: rgba(59, 130, 246, 0.6);
+  .alert-success {
+    background: rgba(34, 197, 94, 0.15);
+    border: 1px solid rgba(34, 197, 94, 0.4);
+    color: #86efac;
   }
 
-  .provider-card.configured {
-    border-color: rgba(34, 197, 94, 0.3);
-  }
-
-  .provider-card.not-configured {
-    border-color: rgba(239, 68, 68, 0.3);
-  }
-
-  .provider-card.unavailable {
-    opacity: 0.5;
-    cursor: not-allowed;
-    border-color: rgba(255, 255, 255, 0.05);
-  }
-
-  .provider-card.unavailable:hover {
-    transform: none;
-    background: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.05);
-  }
-
-  .provider-header {
+  /* Sections */
+  .section {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
   }
 
-  .provider-actions {
+  .section-rows {
     display: flex;
-    gap: 8px;
-    align-items: center;
+    flex-direction: column;
+    gap: 3px;
   }
 
-  .edit-key-btn,
-  .download-btn {
-    padding: 4px 10px;
+  /* Inline buttons (inside StatusRow) */
+  .inline-btn {
+    padding: 3px 10px;
     border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    border: 1px solid var(--border);
     background: rgba(255, 255, 255, 0.05);
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 12px;
+    color: var(--text-secondary);
+    font-size: 11px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.15s ease;
+    white-space: nowrap;
   }
 
-  .edit-key-btn:hover,
-  .download-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.15);
-    color: #fff;
-    border-color: rgba(255, 255, 255, 0.4);
+  .inline-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
   }
 
-  .download-btn {
-    background: rgba(59, 130, 246, 0.2);
-    border-color: rgba(59, 130, 246, 0.4);
-    color: #93c5fd;
-  }
-
-  .download-btn:hover:not(:disabled) {
-    background: rgba(59, 130, 246, 0.3);
-    border-color: rgba(59, 130, 246, 0.6);
-  }
-
-  .download-btn:disabled {
+  .inline-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  h3 {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 600;
-    color: #fff;
-  }
-
-  .badge {
-    padding: 4px 12px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: 500;
-  }
-
-  .badge-active {
-    background: rgba(59, 130, 246, 0.3);
-    color: #93c5fd;
-  }
-
-  .badge-configured {
-    background: rgba(34, 197, 94, 0.3);
-    color: #86efac;
-  }
-
-  .badge-not-configured {
-    background: rgba(239, 68, 68, 0.3);
-    color: #fca5a5;
-  }
-
-  .badge-unavailable {
-    background: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.5);
-  }
-
-  .provider-details {
+  /* Download progress */
+  .download-inline {
+    padding: 6px 12px;
     display: flex;
-    gap: 8px;
-    align-items: center;
+    flex-direction: column;
+    gap: 4px;
   }
 
-  .provider-type {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.6);
+  .download-msg {
+    font-size: 11px;
+    color: var(--text-muted);
   }
 
-  .provider-note {
-    font-size: 12px;
-    color: rgba(34, 197, 94, 0.8);
+  .download-ok {
+    font-size: 11px;
+    color: var(--status-green);
   }
 
-  .download-status {
-    margin-top: 10px;
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.6);
+  .download-err {
+    font-size: 11px;
+    color: var(--status-red);
   }
 
-  .download-success {
-    margin-top: 10px;
-    font-size: 12px;
-    color: #86efac;
-  }
-
-  .download-error {
-    margin-top: 10px;
-    font-size: 12px;
-    color: #fca5a5;
-  }
-
-  .progress-bar-container {
-    margin-top: 8px;
-    height: 6px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
+  .progress-bar-bg {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
     overflow: hidden;
   }
 
-  .progress-bar {
+  .progress-bar-fill {
     height: 100%;
-    background: #3b82f6;
-    border-radius: 3px;
+    background: var(--accent);
+    border-radius: 2px;
     transition: width 0.3s ease;
   }
 
-  .locale-selector {
-    margin-top: 12px;
+  /* Locale selector row */
+  .locale-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
+    padding: 6px 12px;
   }
 
-  .locale-selector label {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.7);
+  .locale-row label {
+    font-size: 12px;
+    color: var(--text-muted);
   }
 
-  .locale-selector select {
+  .locale-row select {
     padding: 4px 8px;
     border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(0, 0, 0, 0.3);
-    color: #fff;
-    font-size: 13px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 12px;
     cursor: pointer;
-  }
-
-  .locale-selector select:focus {
     outline: none;
-    border-color: rgba(59, 130, 246, 0.6);
   }
 
-  .custom-endpoint-form {
-    margin-top: 16px;
-    padding: 16px;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+  .locale-row select:focus {
+    border-color: rgba(168, 85, 247, 0.6);
   }
 
-  .form-description {
-    margin: 0 0 16px;
-    color: rgba(255, 255, 255, 0.5);
-    font-size: 13px;
+  /* Custom endpoint form */
+  .custom-form {
+    padding: 14px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
 
-  .form-group {
-    margin-bottom: 12px;
-  }
-
-  .form-group label {
-    display: block;
-    margin-bottom: 4px;
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.7);
-  }
-
-  .optional {
-    color: rgba(255, 255, 255, 0.35);
+  .form-desc {
+    margin: 0;
+    color: var(--text-muted);
     font-size: 12px;
   }
 
-  .form-input {
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .form-group label {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .optional {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .form-group input {
     width: 100%;
-    padding: 10px 12px;
+    padding: 8px 12px;
     border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    background: rgba(255, 255, 255, 0.05);
-    color: #fff;
-    font-size: 14px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 12px;
     outline: none;
-    transition: border-color 0.2s ease;
-    box-sizing: border-box;
+    transition: border-color 0.15s ease;
   }
 
-  .form-input:focus {
-    border-color: rgba(59, 130, 246, 0.6);
+  .form-group input:focus {
+    border-color: rgba(168, 85, 247, 0.6);
   }
 
-  .form-input::placeholder {
-    color: rgba(255, 255, 255, 0.3);
+  .form-group input::placeholder {
+    color: var(--text-placeholder);
   }
 
-  .save-custom-btn {
+  .primary-btn {
     width: 100%;
-    padding: 10px;
+    padding: 8px;
     border-radius: 8px;
     border: none;
-    background: rgba(59, 130, 246, 0.3);
-    color: #93c5fd;
-    font-size: 14px;
+    background: var(--accent);
+    color: var(--text-primary);
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease;
-    margin-top: 4px;
+    transition: background 0.15s ease;
   }
 
-  .save-custom-btn:hover:not(:disabled) {
-    background: rgba(59, 130, 246, 0.5);
+  .primary-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
   }
 
-  .save-custom-btn:disabled {
+  .primary-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  .loading {
-    text-align: center;
-    padding: 12px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 14px;
-  }
-
+  /* Modal */
   .modal-overlay {
     position: fixed;
     top: 0;
@@ -968,47 +824,49 @@
   }
 
   .modal {
-    background: #1f2937;
+    background: var(--bg-card);
     padding: 24px;
     border-radius: 16px;
     max-width: 400px;
     width: 90%;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border);
   }
 
   .modal h3 {
-    margin-bottom: 12px;
-    font-size: 20px;
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
   }
 
   .modal p {
-    margin-bottom: 16px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 14px;
+    margin: 0 0 16px;
+    color: var(--text-muted);
+    font-size: 13px;
   }
 
-  .api-key-input-wrapper {
+  .api-key-wrapper {
     position: relative;
     margin-bottom: 20px;
   }
 
   .api-key-input {
     width: 100%;
-    padding: 12px;
-    padding-right: 48px;
+    padding: 10px 12px;
+    padding-right: 44px;
     border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(0, 0, 0, 0.3);
-    color: #fff;
-    font-size: 14px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 13px;
+    outline: none;
   }
 
   .api-key-input:focus {
-    outline: none;
-    border-color: rgba(59, 130, 246, 0.6);
+    border-color: rgba(168, 85, 247, 0.6);
   }
 
-  .toggle-visibility-btn {
+  .visibility-toggle {
     position: absolute;
     right: 8px;
     top: 50%;
@@ -1016,49 +874,48 @@
     background: none;
     border: none;
     cursor: pointer;
-    padding: 8px;
-    font-size: 16px;
+    padding: 6px;
+    font-size: 14px;
     opacity: 0.6;
-    transition: opacity 0.2s ease;
   }
 
-  .toggle-visibility-btn:hover {
+  .visibility-toggle:hover {
     opacity: 1;
   }
 
   .modal-actions {
     display: flex;
-    gap: 12px;
+    gap: 10px;
     justify-content: flex-end;
   }
 
-  .btn {
-    padding: 10px 20px;
+  .btn-primary, .btn-secondary {
+    padding: 8px 16px;
     border-radius: 8px;
     border: none;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.15s ease;
   }
 
-  .btn:disabled {
+  .btn-primary {
+    background: var(--accent);
+    color: var(--text-primary);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .btn-primary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  .btn-primary {
-    background: #3b82f6;
-    color: #fff;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
   .btn-secondary {
     background: rgba(255, 255, 255, 0.1);
-    color: #fff;
+    color: var(--text-primary);
   }
 
   .btn-secondary:hover {

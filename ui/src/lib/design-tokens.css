@@ -1,0 +1,31 @@
+:root {
+  /* Accent */
+  --accent: #A855F7;
+  --accent-hover: #9333EA;
+  --accent-muted: rgba(168, 85, 247, 0.1);
+
+  /* Backgrounds */
+  --bg-primary: #0F0F1A;
+  --bg-sidebar: #0B0B14;
+  --bg-card: #14141F;
+  --bg-nav-active: #1C1230;
+  --bg-title-bar: #12122A;
+
+  /* Borders */
+  --border: #1E1E2E;
+
+  /* Status */
+  --status-green: #22C55E;
+  --status-red: #EF4444;
+  --status-yellow: #EAB308;
+
+  /* Text */
+  --text-primary: #FFFFFF;
+  --text-secondary: #A1A1AA;
+  --text-muted: #71717A;
+  --text-placeholder: #3F3F50;
+
+  /* Fonts */
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'SF Mono', ui-monospace, 'Cascadia Code', monospace;
+}

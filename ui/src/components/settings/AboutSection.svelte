@@ -4,6 +4,10 @@
   import { check } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { Settings, Shield, Cpu, ExternalLink, RefreshCw } from 'lucide-svelte';
+  import PageHeader from './ui/PageHeader.svelte';
+  import SectionHeader from './ui/SectionHeader.svelte';
+  import StatusRow from './ui/StatusRow.svelte';
 
   type UpdateState =
     | { kind: 'idle' }
@@ -59,7 +63,7 @@
         updateState = {
           kind: 'available',
           version: update.version,
-          body: update.body,
+          body: update.body ?? null,
         };
       } else {
         updateState = { kind: 'up-to-date' };
@@ -105,219 +109,277 @@
   }
 </script>
 
-<div class="about-section">
-  <div class="app-info">
-    <h2>Murmur</h2>
-    <p class="version">Version {appVersion}</p>
-    <p class="description">Privacy-first voice typing with on-device processing</p>
+<div class="page">
+  <PageHeader title="About" description="Application information and updates" />
+
+  <SectionHeader label="APPLICATION" />
+  <div class="app-card">
+    <div class="app-row">
+      <Settings size={14} color="var(--text-muted)" />
+      <span class="app-row-label">Murmur</span>
+      <span class="spacer"></span>
+      <span class="version-tag">v{appVersion}</span>
+    </div>
+    <div class="card-separator"></div>
+    <div class="app-row">
+      <Shield size={14} color="var(--text-muted)" />
+      <span class="app-row-text">Privacy-first voice typing</span>
+    </div>
+    <div class="app-row">
+      <Cpu size={14} color="var(--text-muted)" />
+      <span class="app-row-text">On-device processing</span>
+    </div>
   </div>
 
-  <div class="update-section">
-    <h3>Updates</h3>
+  <SectionHeader label="UPDATES" />
+  {#if updateState.kind === 'idle'}
+    <button class="primary-btn" onclick={checkForUpdates}>Check for Updates</button>
 
-    {#if updateState.kind === 'idle'}
-      <button class="update-btn" onclick={checkForUpdates}>Check for Updates</button>
+  {:else if updateState.kind === 'checking'}
+    <div class="status-card">
+      <RefreshCw size={14} color="var(--text-secondary)" class="spin" />
+      <span class="status-text">Checking for updates...</span>
+    </div>
 
-    {:else if updateState.kind === 'checking'}
-      <div class="status">
-        <span class="spinner"></span>
-        Checking for updates...
-      </div>
+  {:else if updateState.kind === 'up-to-date'}
+    <StatusRow
+      label="Up to date"
+      status="green"
+      statusText="Latest"
+    />
+    <button class="secondary-btn" onclick={checkForUpdates}>Check Again</button>
 
-    {:else if updateState.kind === 'up-to-date'}
-      <div class="status success">You're on the latest version.</div>
-      <button class="update-btn secondary" onclick={checkForUpdates}>Check Again</button>
-
-    {:else if updateState.kind === 'available'}
-      <div class="update-available">
-        <div class="status info">Version {updateState.version} is available</div>
-        {#if updateState.body}
-          <div class="release-notes">{updateState.body}</div>
-        {/if}
-        <button class="update-btn" onclick={downloadAndInstall}>Download & Install</button>
-      </div>
-
-    {:else if updateState.kind === 'downloading'}
-      <div class="download-progress">
-        <div class="status">Downloading update...</div>
-        <div class="progress-bar">
-          <div
-            class="progress-fill"
-            style="width: {updateState.total > 0 ? (updateState.progress / updateState.total) * 100 : 0}%"
-          ></div>
-        </div>
-        {#if updateState.total > 0}
-          <span class="progress-text">
-            {formatBytes(updateState.progress)} / {formatBytes(updateState.total)}
-          </span>
-        {/if}
-      </div>
-
-    {:else if updateState.kind === 'ready'}
-      <div class="status success">Update installed. Restart to apply.</div>
-      <button class="update-btn" onclick={restartApp}>Restart Now</button>
-
-    {:else if updateState.kind === 'error'}
-      <div class="status error">Update check failed: {updateState.message}</div>
-      <button class="update-btn secondary" onclick={checkForUpdates}>Retry</button>
+  {:else if updateState.kind === 'available'}
+    <StatusRow
+      label="Version {updateState.version} available"
+      status="yellow"
+      statusText="New"
+    />
+    {#if updateState.body}
+      <div class="release-notes">{updateState.body}</div>
     {/if}
-  </div>
+    <button class="primary-btn" onclick={downloadAndInstall}>Download & Install</button>
 
-  <div class="links">
-    <a href="https://github.com/hydai/murmur" target="_blank" rel="noopener">GitHub</a>
-    <span class="separator">·</span>
-    <a href="https://github.com/hydai/murmur/releases" target="_blank" rel="noopener">Releases</a>
-    <span class="separator">·</span>
-    <a href="https://github.com/hydai/murmur/issues" target="_blank" rel="noopener">Report Issue</a>
+  {:else if updateState.kind === 'downloading'}
+    <div class="download-section">
+      <span class="download-label">Downloading update...</span>
+      <div class="progress-bar">
+        <div
+          class="progress-fill"
+          style="width: {updateState.total > 0 ? (updateState.progress / updateState.total) * 100 : 0}%"
+        ></div>
+      </div>
+      {#if updateState.total > 0}
+        <span class="progress-text">
+          {formatBytes(updateState.progress)} / {formatBytes(updateState.total)}
+        </span>
+      {/if}
+    </div>
+
+  {:else if updateState.kind === 'ready'}
+    <StatusRow
+      label="Update installed"
+      status="green"
+      statusText="Ready"
+    />
+    <button class="primary-btn" onclick={restartApp}>Restart Now</button>
+
+  {:else if updateState.kind === 'error'}
+    <StatusRow
+      label="Update failed"
+      value={updateState.message}
+      status="red"
+      statusText="Error"
+    />
+    <button class="secondary-btn" onclick={checkForUpdates}>Retry</button>
+  {/if}
+
+  <SectionHeader label="LINKS" />
+  <div class="section-rows">
+    <StatusRow
+      label="GitHub"
+      onclick={() => window.open('https://github.com/hydai/murmur', '_blank')}
+    >
+      {#snippet children()}
+        <ExternalLink size={12} color="var(--text-muted)" />
+      {/snippet}
+    </StatusRow>
+    <StatusRow
+      label="Releases"
+      onclick={() => window.open('https://github.com/hydai/murmur/releases', '_blank')}
+    >
+      {#snippet children()}
+        <ExternalLink size={12} color="var(--text-muted)" />
+      {/snippet}
+    </StatusRow>
+    <StatusRow
+      label="Report Issue"
+      onclick={() => window.open('https://github.com/hydai/murmur/issues', '_blank')}
+    >
+      {#snippet children()}
+        <ExternalLink size={12} color="var(--text-muted)" />
+      {/snippet}
+    </StatusRow>
   </div>
 </div>
 
 <style>
-  .about-section {
+  .page {
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 12px;
   }
 
-  .app-info h2 {
-    margin: 0 0 4px;
-    font-size: 20px;
-    color: #fff;
+  .app-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    background: var(--bg-card);
+    border-radius: 8px;
+    padding: 12px 14px;
   }
 
-  .version {
-    margin: 0 0 8px;
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.5);
-    font-family: monospace;
-  }
-
-  .description {
-    margin: 0;
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.7);
-  }
-
-  .update-section {
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 12px;
-    padding: 16px;
-  }
-
-  .update-section h3 {
-    margin: 0 0 12px;
-    font-size: 14px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.8);
-  }
-
-  .status {
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.7);
+  .app-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 12px;
+    gap: 10px;
+    height: 30px;
   }
 
-  .status.success {
-    color: #22c55e;
-  }
-
-  .status.info {
-    color: #3b82f6;
+  .app-row-label {
+    font-size: 13px;
     font-weight: 500;
+    color: var(--text-primary);
   }
 
-  .status.error {
-    color: #ef4444;
+  .app-row-text {
+    font-size: 12px;
+    color: var(--text-secondary);
   }
 
-  .spinner {
-    width: 14px;
-    height: 14px;
-    border: 2px solid rgba(255, 255, 255, 0.2);
-    border-top-color: #3b82f6;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+  .spacer {
+    flex: 1;
+  }
+
+  .version-tag {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  .card-separator {
+    height: 1px;
+    background: var(--border);
+    width: 100%;
+    margin: 4px 0;
+  }
+
+  .status-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 38px;
+    padding: 0 12px;
+    background: var(--bg-card);
+    border-radius: 8px;
+  }
+
+  .status-text {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  :global(.spin) {
+    animation: spin 1s linear infinite;
   }
 
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
 
-  .update-btn {
-    background: #3b82f6;
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    padding: 8px 16px;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .update-btn:hover {
-    background: #2563eb;
-  }
-
-  .update-btn.secondary {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .update-btn.secondary:hover {
-    background: rgba(255, 255, 255, 0.15);
-  }
-
   .release-notes {
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 12px;
-    margin-bottom: 12px;
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.6);
-    max-height: 120px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    max-height: 100px;
     overflow-y: auto;
     white-space: pre-wrap;
   }
 
+  .download-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 14px;
+    background: var(--bg-card);
+    border-radius: 8px;
+  }
+
+  .download-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
   .progress-bar {
-    height: 6px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
     overflow: hidden;
-    margin-bottom: 8px;
   }
 
   .progress-fill {
     height: 100%;
-    background: #3b82f6;
-    border-radius: 3px;
+    background: var(--accent);
+    border-radius: 2px;
     transition: width 0.3s ease;
   }
 
   .progress-text {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .primary-btn {
+    height: 34px;
+    padding: 0 16px;
+    background: var(--accent);
+    color: var(--text-primary);
+    border: none;
+    border-radius: 8px;
     font-size: 12px;
-    color: rgba(255, 255, 255, 0.5);
-    font-family: monospace;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease;
   }
 
-  .links {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.4);
+  .primary-btn:hover {
+    background: var(--accent-hover);
   }
 
-  .links a {
-    color: #3b82f6;
-    text-decoration: none;
+  .secondary-btn {
+    height: 34px;
+    padding: 0 16px;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border: none;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease;
   }
 
-  .links a:hover {
-    text-decoration: underline;
+  .secondary-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
   }
 
-  .separator {
-    margin: 0 8px;
+  .section-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
   }
 </style>

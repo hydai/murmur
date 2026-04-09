@@ -1,30 +1,46 @@
-<script>
+<script lang="ts">
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount } from 'svelte';
+  import { BookPlus } from 'lucide-svelte';
+  import PageHeader from './ui/PageHeader.svelte';
+  import SectionHeader from './ui/SectionHeader.svelte';
+  import ActionRow from './ui/ActionRow.svelte';
 
-  let entries = [];
-  let filteredEntries = [];
-  let searchQuery = '';
-  let showAddModal = false;
-  let showEditModal = false;
-  let showDeleteModal = false;
-  let currentEntry = null;
-  let formData = {
+  interface DictEntry {
+    term: string;
+    aliases: string[];
+    description: string | null;
+  }
+
+  let entries = $state<DictEntry[]>([]);
+  let filteredEntries = $state<DictEntry[]>([]);
+  let searchQuery = $state('');
+  let showAddModal = $state(false);
+  let showEditModal = $state(false);
+  let showDeleteModal = $state(false);
+  let currentEntry = $state<DictEntry | null>(null);
+  let formData = $state({
     term: '',
     aliases: '',
     description: ''
-  };
-  let loading = false;
-  let error = '';
-  let success = '';
+  });
+  let loading = $state(false);
+  let error = $state('');
+  let success = $state('');
 
   onMount(async () => {
     await loadDictionary();
   });
 
+  $effect(() => {
+    // Re-filter whenever searchQuery changes
+    searchQuery;
+    filterEntries();
+  });
+
   async function loadDictionary() {
     try {
-      const dict = await invoke('get_dictionary');
+      const dict = await invoke<{ entries: DictEntry[] }>('get_dictionary');
       entries = dict.entries || [];
       filterEntries();
     } catch (err) {
@@ -40,16 +56,11 @@
     }
 
     const query = searchQuery.toLowerCase();
-    filteredEntries = entries.filter(entry => {
+    filteredEntries = entries.filter((entry: DictEntry) => {
       return entry.term.toLowerCase().includes(query) ||
-             entry.aliases.some(a => a.toLowerCase().includes(query)) ||
+             entry.aliases.some((a: string) => a.toLowerCase().includes(query)) ||
              (entry.description && entry.description.toLowerCase().includes(query));
     });
-  }
-
-  $: {
-    searchQuery;
-    filterEntries();
   }
 
   function openAddModal() {
@@ -59,7 +70,7 @@
     error = '';
   }
 
-  function openEditModal(entry) {
+  function openEditModal(entry: DictEntry) {
     currentEntry = entry;
     formData = {
       term: entry.term,
@@ -70,7 +81,7 @@
     error = '';
   }
 
-  function openDeleteModal(entry) {
+  function openDeleteModal(entry: DictEntry) {
     currentEntry = entry;
     showDeleteModal = true;
     error = '';
@@ -97,8 +108,8 @@
 
       const aliases = formData.aliases
         .split(',')
-        .map(a => a.trim())
-        .filter(a => a.length > 0);
+        .map((a: string) => a.trim())
+        .filter((a: string) => a.length > 0);
 
       await invoke('add_dictionary_entry', {
         params: {
@@ -126,6 +137,8 @@
       return;
     }
 
+    if (!currentEntry) return;
+
     try {
       loading = true;
       error = '';
@@ -133,8 +146,8 @@
 
       const aliases = formData.aliases
         .split(',')
-        .map(a => a.trim())
-        .filter(a => a.length > 0);
+        .map((a: string) => a.trim())
+        .filter((a: string) => a.length > 0);
 
       await invoke('update_dictionary_entry', {
         params: {
@@ -158,6 +171,8 @@
   }
 
   async function handleDelete() {
+    if (!currentEntry) return;
+
     try {
       loading = true;
       error = '';
@@ -180,23 +195,18 @@
   }
 </script>
 
-<div class="dictionary-editor">
-  <div class="header">
-    <h2>Personal Dictionary</h2>
-    <button class="btn btn-primary" on:click={openAddModal}>
-      + Add Entry
-    </button>
-  </div>
+<div class="page">
+  <PageHeader title="Dictionary" description="Manage custom words and phrase corrections" />
 
-  {#if error}
+  {#if error && !showAddModal && !showEditModal && !showDeleteModal}
     <div class="alert alert-error">{error}</div>
   {/if}
-
   {#if success}
     <div class="alert alert-success">{success}</div>
   {/if}
 
-  <div class="search-box">
+  <!-- SEARCH -->
+  <div class="search-row">
     <input
       type="text"
       bind:value={searchQuery}
@@ -205,81 +215,66 @@
     />
   </div>
 
-  {#if filteredEntries.length === 0}
-    <div class="empty-state">
-      {#if entries.length === 0}
-        <p>No dictionary entries yet.</p>
-        <p class="hint">Add custom terms to improve transcription accuracy.</p>
+  <!-- ENTRIES -->
+  <div class="section">
+    <SectionHeader label="ENTRIES ({filteredEntries.length})" />
+    <div class="entries-list">
+      {#if filteredEntries.length === 0}
+        <div class="empty-state">
+          {#if entries.length === 0}
+            <p>No dictionary entries yet.</p>
+            <p class="hint">Add custom terms to improve transcription accuracy.</p>
+          {:else}
+            <p>No entries match your search.</p>
+          {/if}
+        </div>
       {:else}
-        <p>No entries match your search.</p>
+        {#each filteredEntries as entry}
+          <div class="entry-row">
+            <div class="entry-info">
+              <span class="entry-term">{entry.term}</span>
+              {#if entry.aliases.length > 0}
+                <span class="entry-aliases">{entry.aliases.join(', ')}</span>
+              {/if}
+            </div>
+            <div class="entry-actions">
+              <button class="icon-btn" onclick={() => openEditModal(entry)} title="Edit">✎</button>
+              <button class="icon-btn danger" onclick={() => openDeleteModal(entry)} title="Delete">✕</button>
+            </div>
+          </div>
+        {/each}
       {/if}
     </div>
-  {:else}
-    <div class="entries-list">
-      {#each filteredEntries as entry}
-        <div class="entry-card">
-          <div class="entry-content">
-            <h3 class="entry-term">{entry.term}</h3>
-            {#if entry.aliases.length > 0}
-              <div class="entry-aliases">
-                Aliases: {entry.aliases.join(', ')}
-              </div>
-            {/if}
-            {#if entry.description}
-              <div class="entry-description">{entry.description}</div>
-            {/if}
-          </div>
-          <div class="entry-actions">
-            <button class="btn-icon" on:click={() => openEditModal(entry)} title="Edit">
-              ✎
-            </button>
-            <button class="btn-icon btn-danger" on:click={() => openDeleteModal(entry)} title="Delete">
-              ✕
-            </button>
-          </div>
-        </div>
-      {/each}
-    </div>
-  {/if}
+  </div>
+
+  <!-- ADD ENTRY -->
+  <div class="section">
+    <SectionHeader label="ADD ENTRY" />
+    <ActionRow label="Add new word or correction" icon={BookPlus} onclick={openAddModal} />
+  </div>
 </div>
 
 <!-- Add Modal -->
 {#if showAddModal}
-  <div class="modal-overlay" on:click={closeModals} on:keypress={(e) => e.key === 'Escape' && closeModals()} role="presentation">
-    <div class="modal" on:click|stopPropagation role="dialog">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="modal-overlay" onclick={closeModals} onkeydown={(e) => e.key === 'Escape' && closeModals()} role="presentation">
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
       <h3>Add Dictionary Entry</h3>
 
       <div class="form-group">
         <label for="term">Term *</label>
-        <input
-          id="term"
-          type="text"
-          bind:value={formData.term}
-          placeholder="e.g., Murmur"
-          class="form-input"
-        />
+        <input id="term" type="text" bind:value={formData.term} placeholder="e.g., Murmur" />
       </div>
 
       <div class="form-group">
         <label for="aliases">Aliases (comma-separated)</label>
-        <input
-          id="aliases"
-          type="text"
-          bind:value={formData.aliases}
-          placeholder="e.g., local type, local-type"
-          class="form-input"
-        />
+        <input id="aliases" type="text" bind:value={formData.aliases} placeholder="e.g., local type, local-type" />
       </div>
 
       <div class="form-group">
         <label for="description">Description (optional)</label>
-        <textarea
-          id="description"
-          bind:value={formData.description}
-          placeholder="Optional notes about this term"
-          class="form-textarea"
-          rows="3"
-        ></textarea>
+        <textarea id="description" bind:value={formData.description} placeholder="Optional notes about this term" rows="3"></textarea>
       </div>
 
       {#if error}
@@ -287,8 +282,8 @@
       {/if}
 
       <div class="modal-actions">
-        <button class="btn btn-secondary" on:click={closeModals}>Cancel</button>
-        <button class="btn btn-primary" on:click={handleAdd} disabled={loading}>
+        <button class="btn-secondary" onclick={closeModals}>Cancel</button>
+        <button class="btn-primary" onclick={handleAdd} disabled={loading}>
           {loading ? 'Adding...' : 'Add Entry'}
         </button>
       </div>
@@ -298,41 +293,25 @@
 
 <!-- Edit Modal -->
 {#if showEditModal}
-  <div class="modal-overlay" on:click={closeModals} on:keypress={(e) => e.key === 'Escape' && closeModals()} role="presentation">
-    <div class="modal" on:click|stopPropagation role="dialog">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="modal-overlay" onclick={closeModals} onkeydown={(e) => e.key === 'Escape' && closeModals()} role="presentation">
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
       <h3>Edit Dictionary Entry</h3>
 
       <div class="form-group">
         <label for="edit-term">Term *</label>
-        <input
-          id="edit-term"
-          type="text"
-          bind:value={formData.term}
-          placeholder="e.g., Murmur"
-          class="form-input"
-        />
+        <input id="edit-term" type="text" bind:value={formData.term} placeholder="e.g., Murmur" />
       </div>
 
       <div class="form-group">
         <label for="edit-aliases">Aliases (comma-separated)</label>
-        <input
-          id="edit-aliases"
-          type="text"
-          bind:value={formData.aliases}
-          placeholder="e.g., local type, local-type"
-          class="form-input"
-        />
+        <input id="edit-aliases" type="text" bind:value={formData.aliases} placeholder="e.g., local type, local-type" />
       </div>
 
       <div class="form-group">
         <label for="edit-description">Description (optional)</label>
-        <textarea
-          id="edit-description"
-          bind:value={formData.description}
-          placeholder="Optional notes about this term"
-          class="form-textarea"
-          rows="3"
-        ></textarea>
+        <textarea id="edit-description" bind:value={formData.description} placeholder="Optional notes about this term" rows="3"></textarea>
       </div>
 
       {#if error}
@@ -340,8 +319,8 @@
       {/if}
 
       <div class="modal-actions">
-        <button class="btn btn-secondary" on:click={closeModals}>Cancel</button>
-        <button class="btn btn-primary" on:click={handleEdit} disabled={loading}>
+        <button class="btn-secondary" onclick={closeModals}>Cancel</button>
+        <button class="btn-primary" onclick={handleEdit} disabled={loading}>
           {loading ? 'Updating...' : 'Update Entry'}
         </button>
       </div>
@@ -351,8 +330,10 @@
 
 <!-- Delete Confirmation Modal -->
 {#if showDeleteModal}
-  <div class="modal-overlay" on:click={closeModals} on:keypress={(e) => e.key === 'Escape' && closeModals()} role="presentation">
-    <div class="modal modal-small" on:click|stopPropagation role="dialog">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="modal-overlay" onclick={closeModals} onkeydown={(e) => e.key === 'Escape' && closeModals()} role="presentation">
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div class="modal modal-small" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
       <h3>Delete Entry</h3>
       <p>Are you sure you want to delete "{currentEntry?.term}"?</p>
 
@@ -361,8 +342,8 @@
       {/if}
 
       <div class="modal-actions">
-        <button class="btn btn-secondary" on:click={closeModals}>Cancel</button>
-        <button class="btn btn-danger" on:click={handleDelete} disabled={loading}>
+        <button class="btn-secondary" onclick={closeModals}>Cancel</button>
+        <button class="btn-danger" onclick={handleDelete} disabled={loading}>
           {loading ? 'Deleting...' : 'Delete'}
         </button>
       </div>
@@ -371,183 +352,267 @@
 {/if}
 
 <style>
-  .dictionary-editor {
-    padding: 20px;
-    max-width: 800px;
-  }
-
-  .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-  }
-
-  h2 {
-    margin: 0;
-    font-size: 24px;
-    font-weight: bold;
-    color: #fff;
-  }
-
-  .alert {
-    padding: 12px 16px;
-    margin-bottom: 16px;
-    border-radius: 8px;
-    font-size: 14px;
-  }
-
-  .alert-error {
-    background: rgba(239, 68, 68, 0.2);
-    border: 1px solid rgba(239, 68, 68, 0.5);
-    color: #fca5a5;
-  }
-
-  .alert-success {
-    background: rgba(34, 197, 94, 0.2);
-    border: 1px solid rgba(34, 197, 94, 0.5);
-    color: #86efac;
-  }
-
-  .search-box {
-    margin-bottom: 20px;
-  }
-
-  .search-input {
-    width: 100%;
-    padding: 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(0, 0, 0, 0.3);
-    color: #fff;
-    font-size: 14px;
-  }
-
-  .search-input:focus {
-    outline: none;
-    border-color: rgba(59, 130, 246, 0.6);
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 60px 20px;
-    color: rgba(255, 255, 255, 0.6);
-  }
-
-  .empty-state p {
-    margin: 8px 0;
-  }
-
-  .empty-state .hint {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.4);
-  }
-
-  .entries-list {
+  .page {
     display: flex;
     flex-direction: column;
     gap: 12px;
   }
 
-  .entry-card {
+  .alert {
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+  }
+
+  .alert-error {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+  }
+
+  .alert-success {
+    background: rgba(34, 197, 94, 0.15);
+    border: 1px solid rgba(34, 197, 94, 0.4);
+    color: #86efac;
+  }
+
+  .section {
     display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+  }
+
+  /* Search */
+  .search-row {
+    width: 100%;
+  }
+
+  .search-input {
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+
+  .search-input:focus {
+    border-color: rgba(168, 85, 247, 0.6);
+  }
+
+  .search-input::placeholder {
+    color: var(--text-placeholder);
+  }
+
+  /* Entries */
+  .entries-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .entry-row {
+    display: flex;
+    align-items: center;
     justify-content: space-between;
-    align-items: flex-start;
-    padding: 16px;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    transition: all 0.2s ease;
+    padding: 8px 12px;
+    background: var(--bg-card);
+    border-radius: 8px;
+    min-height: 38px;
+    transition: background 0.15s ease;
   }
 
-  .entry-card:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.2);
+  .entry-row:hover {
+    background: #1a1a2e;
   }
 
-  .entry-content {
+  .entry-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     flex: 1;
+    min-width: 0;
   }
 
   .entry-term {
-    margin: 0 0 8px 0;
-    font-size: 18px;
-    font-weight: 600;
-    color: #fff;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
   }
 
   .entry-aliases {
-    font-size: 13px;
-    color: rgba(59, 130, 246, 0.9);
-    margin-bottom: 6px;
-  }
-
-  .entry-description {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.6);
-    line-height: 1.5;
+    font-size: 11px;
+    color: var(--accent);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .entry-actions {
     display: flex;
-    gap: 8px;
-    margin-left: 16px;
+    gap: 4px;
+    margin-left: 10px;
   }
 
-  .btn-icon {
+  .icon-btn {
     background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.7);
-    width: 32px;
-    height: 32px;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    width: 26px;
+    height: 26px;
     border-radius: 6px;
-    font-size: 16px;
+    font-size: 13px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.15s ease;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 0;
   }
 
-  .btn-icon:hover {
+  .icon-btn:hover {
     background: rgba(255, 255, 255, 0.1);
-    color: #fff;
+    color: var(--text-primary);
   }
 
-  .btn-icon.btn-danger:hover {
+  .icon-btn.danger:hover {
     background: rgba(239, 68, 68, 0.2);
     border-color: rgba(239, 68, 68, 0.5);
     color: #fca5a5;
   }
 
-  .btn {
-    padding: 10px 20px;
-    border-radius: 8px;
-    border: none;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
+  .empty-state {
+    text-align: center;
+    padding: 32px 16px;
+    color: var(--text-muted);
+    font-size: 13px;
   }
 
-  .btn:disabled {
+  .empty-state p {
+    margin: 4px 0;
+  }
+
+  .empty-state .hint {
+    font-size: 12px;
+    color: var(--text-placeholder);
+  }
+
+  /* Modal shared */
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal {
+    background: var(--bg-card);
+    padding: 24px;
+    border-radius: 16px;
+    max-width: 480px;
+    width: 90%;
+    border: 1px solid var(--border);
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+
+  .modal-small {
+    max-width: 380px;
+  }
+
+  .modal h3 {
+    margin: 0 0 16px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .modal p {
+    margin: 0 0 16px;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  .form-group {
+    margin-bottom: 12px;
+  }
+
+  .form-group label {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .form-group input,
+  .form-group textarea {
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+
+  .form-group input:focus,
+  .form-group textarea:focus {
+    border-color: rgba(168, 85, 247, 0.6);
+  }
+
+  .form-group textarea {
+    resize: vertical;
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 16px;
+  }
+
+  .btn-primary, .btn-secondary, .btn-danger {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--text-primary);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .btn-primary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  .btn-primary {
-    background: #3b82f6;
-    color: #fff;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
   .btn-secondary {
     background: rgba(255, 255, 255, 0.1);
-    color: #fff;
+    color: var(--text-primary);
   }
 
   .btn-secondary:hover {
@@ -564,84 +629,8 @@
     background: rgba(239, 68, 68, 0.4);
   }
 
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .modal {
-    background: #1f2937;
-    padding: 24px;
-    border-radius: 16px;
-    max-width: 500px;
-    width: 90%;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    max-height: 90vh;
-    overflow-y: auto;
-  }
-
-  .modal-small {
-    max-width: 400px;
-  }
-
-  .modal h3 {
-    margin: 0 0 20px 0;
-    font-size: 20px;
-    color: #fff;
-  }
-
-  .modal p {
-    margin: 0 0 20px 0;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 14px;
-  }
-
-  .form-group {
-    margin-bottom: 16px;
-  }
-
-  .form-group label {
-    display: block;
-    margin-bottom: 6px;
-    color: rgba(255, 255, 255, 0.9);
-    font-size: 13px;
-    font-weight: 500;
-  }
-
-  .form-input,
-  .form-textarea {
-    width: 100%;
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(0, 0, 0, 0.3);
-    color: #fff;
-    font-size: 14px;
-    font-family: inherit;
-  }
-
-  .form-input:focus,
-  .form-textarea:focus {
-    outline: none;
-    border-color: rgba(59, 130, 246, 0.6);
-  }
-
-  .form-textarea {
-    resize: vertical;
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 12px;
-    justify-content: flex-end;
-    margin-top: 20px;
+  .btn-danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 </style>

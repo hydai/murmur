@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { getVersion } from '@tauri-apps/api/app';
+  import { Mic, Cpu, Keyboard, Type, BookOpen, Info } from 'lucide-svelte';
   import ProviderConfig from './ProviderConfig.svelte';
   import DictionaryEditor from './DictionaryEditor.svelte';
   import LlmConfig from './LlmConfig.svelte';
@@ -8,11 +11,24 @@
 
   let { visible, onClose }: { visible: boolean; onClose: () => void } = $props();
 
-  // Detect standalone mode (rendered in its own window via ?view=settings)
   const standalone = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('view') === 'settings';
 
   let activeTab = $state('providers');
+  let appVersion = $state('');
+
+  const navItems = [
+    { id: 'providers', label: 'STT Providers', icon: Mic },
+    { id: 'llm', label: 'LLM Processor', icon: Cpu },
+    { id: 'hotkey', label: 'Hotkey', icon: Keyboard },
+    { id: 'output', label: 'Output Mode', icon: Type },
+    { id: 'dictionary', label: 'Dictionary', icon: BookOpen },
+    { id: 'about', label: 'About', icon: Info },
+  ];
+
+  onMount(async () => {
+    appVersion = await getVersion();
+  });
 
   function switchTab(tab: string) {
     activeTab = tab;
@@ -21,57 +37,38 @@
 
 {#if visible}
   {#if standalone}
-    <!-- Standalone window: no overlay backdrop, fill the window -->
-    <div class="settings-standalone">
-      <div class="settings-header">
-        <h1>Settings</h1>
-        <button class="close-btn" onclick={onClose}>✕</button>
-      </div>
-
-      <div class="settings-tabs">
-        <button class="tab-button {activeTab === 'providers' ? 'active' : ''}" onclick={() => switchTab('providers')}>STT Providers</button>
-        <button class="tab-button {activeTab === 'llm' ? 'active' : ''}" onclick={() => switchTab('llm')}>LLM Processor</button>
-        <button class="tab-button {activeTab === 'hotkey' ? 'active' : ''}" onclick={() => switchTab('hotkey')}>Hotkey</button>
-        <button class="tab-button {activeTab === 'output' ? 'active' : ''}" onclick={() => switchTab('output')}>Output</button>
-        <button class="tab-button {activeTab === 'dictionary' ? 'active' : ''}" onclick={() => switchTab('dictionary')}>Dictionary</button>
-        <button class="tab-button {activeTab === 'about' ? 'active' : ''}" onclick={() => switchTab('about')}>About</button>
-      </div>
-
-      <div class="settings-content">
-        {#if activeTab === 'providers'}
-          <ProviderConfig />
-        {:else if activeTab === 'llm'}
-          <LlmConfig />
-        {:else if activeTab === 'hotkey'}
-          <HotkeyConfig />
-        {:else if activeTab === 'output'}
-          <OutputConfig />
-        {:else if activeTab === 'dictionary'}
-          <DictionaryEditor />
-        {:else if activeTab === 'about'}
-          <AboutSection />
-        {/if}
-      </div>
-    </div>
-  {:else}
-    <!-- Inline overlay mode (original behavior) -->
-    <div class="settings-overlay" onclick={onClose} onkeydown={(e) => e.key === 'Escape' && onClose()} role="presentation">
-      <div class="settings-panel" onclick={(e) => e.stopPropagation()} role="dialog">
-        <div class="settings-header">
-          <h1>Settings</h1>
-          <button class="close-btn" onclick={onClose}>✕</button>
+    <div class="settings-window">
+      <div class="title-bar">
+        <div class="traffic-lights">
+          <span class="dot red"></span>
+          <span class="dot yellow"></span>
+          <span class="dot green"></span>
         </div>
+        <span class="title-text">Murmur Settings</span>
+      </div>
 
-        <div class="settings-tabs">
-          <button class="tab-button {activeTab === 'providers' ? 'active' : ''}" onclick={() => switchTab('providers')}>STT Providers</button>
-          <button class="tab-button {activeTab === 'llm' ? 'active' : ''}" onclick={() => switchTab('llm')}>LLM Processor</button>
-          <button class="tab-button {activeTab === 'hotkey' ? 'active' : ''}" onclick={() => switchTab('hotkey')}>Hotkey</button>
-          <button class="tab-button {activeTab === 'output' ? 'active' : ''}" onclick={() => switchTab('output')}>Output</button>
-          <button class="tab-button {activeTab === 'dictionary' ? 'active' : ''}" onclick={() => switchTab('dictionary')}>Dictionary</button>
-        <button class="tab-button {activeTab === 'about' ? 'active' : ''}" onclick={() => switchTab('about')}>About</button>
-        </div>
+      <div class="body">
+        <nav class="sidebar">
+          <div class="brand">
+            <span class="brand-name">Murmur</span>
+            <span class="brand-sub">VOICE TYPING</span>
+          </div>
+          <div class="nav-separator"></div>
+          <div class="nav-items">
+            {#each navItems as item}
+              <button
+                class="nav-item"
+                class:active={activeTab === item.id}
+                onclick={() => switchTab(item.id)}
+              >
+                <item.icon size={16} />
+                <span>{item.label}</span>
+              </button>
+            {/each}
+          </div>
+        </nav>
 
-        <div class="settings-content">
+        <main class="content">
           {#if activeTab === 'providers'}
             <ProviderConfig />
           {:else if activeTab === 'llm'}
@@ -82,23 +79,228 @@
             <OutputConfig />
           {:else if activeTab === 'dictionary'}
             <DictionaryEditor />
+          {:else if activeTab === 'about'}
+            <AboutSection />
           {/if}
+        </main>
+      </div>
+
+      <div class="footer">
+        <span class="footer-left">Murmur v{appVersion}</span>
+        <span class="footer-right">Local-only &middot; No cloud required</span>
+      </div>
+    </div>
+  {:else}
+    <!-- Inline overlay mode -->
+    <div class="settings-overlay" onclick={onClose} onkeydown={(e) => e.key === 'Escape' && onClose()} role="presentation">
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <div class="settings-dialog" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
+        <div class="body">
+          <nav class="sidebar">
+            <div class="brand">
+              <span class="brand-name">Murmur</span>
+              <span class="brand-sub">VOICE TYPING</span>
+            </div>
+            <div class="nav-separator"></div>
+            <div class="nav-items">
+              {#each navItems as item}
+                <button
+                  class="nav-item"
+                  class:active={activeTab === item.id}
+                  onclick={() => switchTab(item.id)}
+                >
+                  <item.icon size={16} />
+                  <span>{item.label}</span>
+                </button>
+              {/each}
+            </div>
+          </nav>
+
+          <main class="content">
+            {#if activeTab === 'providers'}
+              <ProviderConfig />
+            {:else if activeTab === 'llm'}
+              <LlmConfig />
+            {:else if activeTab === 'hotkey'}
+              <HotkeyConfig />
+            {:else if activeTab === 'output'}
+              <OutputConfig />
+            {:else if activeTab === 'dictionary'}
+              <DictionaryEditor />
+            {:else if activeTab === 'about'}
+              <AboutSection />
+            {/if}
+          </main>
         </div>
+
+        <div class="footer">
+          <span class="footer-left">Murmur v{appVersion}</span>
+          <span class="footer-right">Local-only &middot; No cloud required</span>
+        </div>
+
+        <button class="close-btn" onclick={onClose}>✕</button>
       </div>
     </div>
   {/if}
 {/if}
 
 <style>
-  .settings-standalone {
-    background: #1a1a1a;
+  /* ── Window shell (standalone) ── */
+  .settings-window {
+    background: var(--bg-primary);
     width: 100%;
     height: 100vh;
-    overflow: hidden;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
+    border-radius: 16px;
   }
 
+  /* ── Title bar ── */
+  .title-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 44px;
+    padding: 0 16px;
+    background: var(--bg-title-bar);
+    flex-shrink: 0;
+    -webkit-app-region: drag;
+  }
+
+  .traffic-lights {
+    display: flex;
+    gap: 8px;
+    -webkit-app-region: no-drag;
+  }
+
+  .traffic-lights .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+  }
+
+  .dot.red { background: #FF5F57; }
+  .dot.yellow { background: #FEBC2E; }
+  .dot.green { background: #28C840; }
+
+  .title-text {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  /* ── Body (sidebar + content) ── */
+  .body {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: 180px;
+    flex-shrink: 0;
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 24px 16px;
+    overflow-y: auto;
+  }
+
+  .brand {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-bottom: 20px;
+  }
+
+  .brand-name {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .brand-sub {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--text-muted);
+  }
+
+  .nav-separator {
+    height: 1px;
+    background: var(--border);
+    width: 100%;
+  }
+
+  .nav-items {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-top: 12px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 36px;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: normal;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    width: 100%;
+    text-align: left;
+    border-left: 2px solid transparent;
+  }
+
+  .nav-item:hover {
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .nav-item.active {
+    color: var(--accent);
+    font-weight: 500;
+    background: var(--bg-nav-active);
+    border-left-color: var(--accent);
+  }
+
+  /* ── Content area ── */
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 36px;
+    padding: 0 20px;
+    background: var(--bg-title-bar);
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .footer-left, .footer-right {
+    color: var(--text-muted);
+  }
+
+  /* ── Overlay mode ── */
   .settings-overlay {
     position: fixed;
     top: 0;
@@ -112,85 +314,39 @@
     z-index: 2000;
   }
 
-  .settings-panel {
-    background: #1a1a1a;
+  .settings-dialog {
+    background: var(--bg-primary);
     border-radius: 16px;
-    width: 90%;
-    max-width: 700px;
-    max-height: 90vh;
+    width: 720px;
+    height: 560px;
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  .settings-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 24px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  h1 {
-    margin: 0;
-    font-size: 24px;
-    font-weight: bold;
-    color: #fff;
+    border: 1px solid var(--border);
+    position: relative;
   }
 
   .close-btn {
+    position: absolute;
+    top: 12px;
+    right: 12px;
     background: none;
     border: none;
-    font-size: 24px;
-    color: rgba(255, 255, 255, 0.6);
+    font-size: 18px;
+    color: var(--text-muted);
     cursor: pointer;
-    padding: 0;
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 8px;
-    transition: all 0.2s ease;
+    border-radius: 6px;
+    transition: all 0.15s ease;
+    z-index: 1;
   }
 
   .close-btn:hover {
     background: rgba(255, 255, 255, 0.1);
-    color: #fff;
-  }
-
-  .settings-tabs {
-    display: flex;
-    gap: 4px;
-    padding: 0 24px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  .tab-button {
-    background: none;
-    border: none;
-    padding: 12px 20px;
-    font-size: 14px;
-    font-weight: 500;
-    color: rgba(255, 255, 255, 0.6);
-    cursor: pointer;
-    border-bottom: 2px solid transparent;
-    transition: all 0.2s ease;
-  }
-
-  .tab-button:hover {
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  .tab-button.active {
-    color: #3b82f6;
-    border-bottom-color: #3b82f6;
-  }
-
-  .settings-content {
-    padding: 24px;
-    overflow-y: auto;
-    flex: 1;
+    color: var(--text-primary);
   }
 </style>

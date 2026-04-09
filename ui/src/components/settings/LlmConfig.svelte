@@ -1,6 +1,10 @@
 <script lang="ts">
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount } from 'svelte';
+  import PageHeader from './ui/PageHeader.svelte';
+  import SectionHeader from './ui/SectionHeader.svelte';
+  import StatusRow from './ui/StatusRow.svelte';
+  import ActionRow from './ui/ActionRow.svelte';
 
   interface LlmProcessorInfo {
     name: string;
@@ -22,18 +26,21 @@
   let error = $state('');
   let success = $state('');
 
-  // API key modal state
   let showApiKeyModal = $state(false);
   let selectedProvider = $state<LlmProcessorInfo | null>(null);
   let apiKeyInput = $state('');
   let showApiKey = $state(false);
   let editingExistingKey = $state(false);
 
-  // Custom endpoint state
   let showCustomSection = $state(false);
   let customBaseUrl = $state('');
   let customDisplayName = $state('');
   let customApiKey = $state('');
+
+  // Derived groups
+  let cliProcessors = $derived(processors.filter(p => p.provider_type === 'cli'));
+  let localProcessors = $derived(processors.filter(p => p.provider_type === 'local'));
+  let apiProcessors = $derived(processors.filter(p => p.provider_type === 'http'));
 
   onMount(async () => {
     await loadProcessors();
@@ -63,7 +70,6 @@
       currentModel = config.llm_model || '';
       customBaseUrl = config.http_llm_config?.custom_base_url || '';
       customDisplayName = config.http_llm_config?.custom_display_name || '';
-      // Auto-expand custom section if custom_api is selected
       if (currentProcessor === 'custom_api') {
         showCustomSection = true;
       }
@@ -79,31 +85,16 @@
     defaultModel = active?.default_model || '';
   }
 
-  // Split processors by type
-  function getCliProcessors(): LlmProcessorInfo[] {
-    return processors.filter(p => p.provider_type === 'cli' || p.provider_type === 'local');
-  }
-
-  function getApiProcessors(): LlmProcessorInfo[] {
-    return processors.filter(p => p.provider_type === 'http');
-  }
-
-  function getCustomProcessor(): LlmProcessorInfo | undefined {
-    return processors.find(p => p.provider_type === 'custom');
-  }
-
   async function selectProcessor(processorId: string) {
     const processor = processors.find(p => p.id === processorId);
     if (!processor) return;
 
-    // CLI processors: check availability
     if (processor.provider_type === 'cli' && !processor.available) {
       error = `${processor.name} is not installed. Please install it first.`;
       setTimeout(() => { error = ''; }, 5000);
       return;
     }
 
-    // HTTP processors: check if API key is configured
     if (processor.requires_api_key && !processor.configured) {
       selectedProvider = processor;
       showApiKeyModal = true;
@@ -112,7 +103,6 @@
       return;
     }
 
-    // Local (Apple) processors
     if (processor.provider_type === 'local' && !processor.available) {
       error = `${processor.name} is not available on this system.`;
       setTimeout(() => { error = ''; }, 5000);
@@ -157,13 +147,11 @@
       error = '';
       success = '';
 
-      // Save the API key
       await invoke('save_api_key', {
         provider: selectedProvider.api_key_name,
         apiKey: apiKeyInput
       });
 
-      // Activate the provider
       await invoke('set_llm_processor', {
         processor: selectedProvider.id
       });
@@ -224,13 +212,11 @@
       error = '';
       success = '';
 
-      // Save endpoint config
       await invoke('set_custom_llm_endpoint', {
         baseUrl: customBaseUrl,
         displayName: customDisplayName || null,
       });
 
-      // Save API key if provided
       if (customApiKey.trim()) {
         await invoke('save_api_key', {
           provider: 'custom_llm',
@@ -238,7 +224,6 @@
         });
       }
 
-      // Activate custom provider
       await invoke('set_llm_processor', { processor: 'custom_api' });
       currentProcessor = 'custom_api';
 
@@ -255,14 +240,26 @@
     }
   }
 
-  function getProcessorStatusClass(processor: LlmProcessorInfo): string {
-    if (currentProcessor === processor.id) return 'active';
-    if (processor.provider_type === 'cli' && processor.available) return 'available';
-    if (processor.provider_type === 'cli' && !processor.available) return 'not-available';
-    if (processor.provider_type === 'local' && processor.available) return 'available';
-    if (processor.provider_type === 'local' && !processor.available) return 'not-available';
-    if (processor.configured) return 'configured';
-    return 'not-configured';
+  function getStatus(processor: LlmProcessorInfo): 'green' | 'yellow' | 'red' | 'none' {
+    if (currentProcessor === processor.id) return 'green';
+    if (processor.provider_type === 'cli' && processor.available) return 'yellow';
+    if (processor.provider_type === 'cli' && !processor.available) return 'red';
+    if (processor.provider_type === 'local' && processor.available) return 'yellow';
+    if (processor.provider_type === 'local' && !processor.available) return 'red';
+    if (processor.configured) return 'yellow';
+    if (processor.requires_api_key && !processor.configured) return 'red';
+    return 'none';
+  }
+
+  function getStatusText(processor: LlmProcessorInfo): string {
+    if (currentProcessor === processor.id) return 'Active';
+    if (processor.provider_type === 'cli' && processor.available) return 'Available';
+    if (processor.provider_type === 'cli' && !processor.available) return 'Not Installed';
+    if (processor.provider_type === 'local' && processor.available) return 'Ready';
+    if (processor.provider_type === 'local' && !processor.available) return 'Unavailable';
+    if (processor.configured) return 'Configured';
+    if (processor.requires_api_key && !processor.configured) return 'API Key Required';
+    return 'Available';
   }
 
   function getInstallCommand(processorId: string): string {
@@ -275,198 +272,141 @@
   }
 </script>
 
-<div class="llm-config">
-  <h2>LLM Processor</h2>
-  <p class="description">
-    Select which LLM to use for text post-processing.
-    Choose from local CLI tools, cloud API providers, or a custom endpoint.
-  </p>
+<div class="page">
+  <PageHeader title="LLM Processor" description="Configure language model for text processing" />
 
   {#if error}
     <div class="alert alert-error">{error}</div>
   {/if}
-
   {#if success}
     <div class="alert alert-success">{success}</div>
   {/if}
 
-  <!-- Section 1: Local CLI Processors -->
-  <div class="section">
-    <h3 class="section-title">Local CLI Processors</h3>
-    <div class="processors-list">
-      {#each getCliProcessors() as processor}
-        <div
-          class="processor-card {getProcessorStatusClass(processor)}"
-          onclick={() => selectProcessor(processor.id)}
-          onkeydown={(e) => e.key === 'Enter' && selectProcessor(processor.id)}
-          role="button"
-          tabindex="0"
-        >
-          <div class="processor-header">
-            <h4>{processor.name}</h4>
-            <div class="processor-actions">
-              {#if currentProcessor === processor.id}
-                <span class="badge badge-active">Active</span>
-              {:else if processor.available}
-                <span class="badge badge-available">Available</span>
-              {:else}
-                <span class="badge badge-not-available">Not Installed</span>
-              {/if}
-            </div>
-          </div>
-          <div class="processor-details">
-            <span class="provider-type">{processor.provider_type === 'local' ? 'On-Device' : 'CLI Tool'}</span>
-          </div>
+  <!-- LOCAL CLI -->
+  {#if cliProcessors.length > 0}
+    <div class="section">
+      <SectionHeader label="LOCAL CLI" />
+      <div class="section-rows">
+        {#each cliProcessors as processor}
+          <StatusRow
+            label={processor.name}
+            value={processor.provider_type === 'cli' ? 'CLI' : 'on-device'}
+            status={getStatus(processor)}
+            statusText={getStatusText(processor)}
+            onclick={() => selectProcessor(processor.id)}
+          />
           {#if !processor.available && processor.provider_type === 'cli'}
-            <div class="install-hint">
-              <span class="hint-icon">i</span>
-              {getInstallCommand(processor.id)}
-            </div>
+            <div class="install-hint">{getInstallCommand(processor.id)}</div>
           {/if}
-        </div>
-      {/each}
+        {/each}
+      </div>
     </div>
-  </div>
+  {/if}
 
-  <!-- Section 2: API Providers -->
-  <div class="section">
-    <h3 class="section-title">API Providers</h3>
-    <div class="processors-list">
-      {#each getApiProcessors() as processor}
-        <div
-          class="processor-card {getProcessorStatusClass(processor)}"
-          onclick={() => selectProcessor(processor.id)}
-          onkeydown={(e) => e.key === 'Enter' && selectProcessor(processor.id)}
-          role="button"
-          tabindex="0"
-        >
-          <div class="processor-header">
-            <h4>{processor.name}</h4>
-            <div class="processor-actions">
+  <!-- API PROVIDERS -->
+  {#if apiProcessors.length > 0}
+    <div class="section">
+      <SectionHeader label="API PROVIDERS" />
+      <div class="section-rows">
+        {#each apiProcessors as processor}
+          <StatusRow
+            label={processor.name}
+            value={processor.default_model}
+            status={getStatus(processor)}
+            statusText={getStatusText(processor)}
+            onclick={() => selectProcessor(processor.id)}
+          >
+            {#snippet children()}
               {#if processor.requires_api_key && processor.configured}
-                <button
-                  class="edit-key-btn"
-                  onclick={(e) => { e.stopPropagation(); editApiKey(processor); }}
-                  title="Edit API Key"
-                >
+                <button class="inline-btn" onclick={(e) => { e.stopPropagation(); editApiKey(processor); }}>
                   Edit Key
                 </button>
               {/if}
-              {#if currentProcessor === processor.id}
-                <span class="badge badge-active">Active</span>
-              {:else if processor.configured}
-                <span class="badge badge-configured">Configured</span>
-              {:else}
-                <span class="badge badge-api-key-required">API Key Required</span>
-              {/if}
-            </div>
-          </div>
-          <div class="processor-details">
-            <span class="provider-type">HTTP API</span>
-            <span class="default-model">Default: {processor.default_model}</span>
-          </div>
-        </div>
-      {/each}
+            {/snippet}
+          </StatusRow>
+        {/each}
+      </div>
     </div>
-  </div>
+  {/if}
 
-  <!-- Section 3: Custom Endpoint -->
+  <!-- LOCAL ON-DEVICE -->
+  {#if localProcessors.length > 0}
+    <div class="section">
+      <SectionHeader label="LOCAL ON-DEVICE" />
+      <div class="section-rows">
+        {#each localProcessors as processor}
+          <StatusRow
+            label={processor.name}
+            value="on-device"
+            status={getStatus(processor)}
+            statusText={getStatusText(processor)}
+            onclick={() => selectProcessor(processor.id)}
+          />
+        {/each}
+      </div>
+    </div>
+  {/if}
+
+  <!-- CUSTOM ENDPOINT -->
   <div class="section">
-    <button
-      class="section-toggle"
-      onclick={() => showCustomSection = !showCustomSection}
-    >
-      <h3 class="section-title">
-        Custom Endpoint
-        {#if currentProcessor === 'custom_api'}
-          <span class="badge badge-active" style="margin-left: 8px; font-size: 11px;">Active</span>
-        {/if}
-      </h3>
-      <span class="toggle-arrow">{showCustomSection ? '▼' : '▶'}</span>
-    </button>
+    <SectionHeader label="CUSTOM ENDPOINT" />
+    <ActionRow
+      label="Add custom OpenAI-compatible endpoint"
+      onclick={() => { showCustomSection = !showCustomSection; }}
+    />
+
     {#if showCustomSection}
-      <div class="custom-endpoint-form">
-        <p class="form-description">
-          Connect to any OpenAI-compatible endpoint (Ollama, LM Studio, Azure OpenAI, etc.)
-        </p>
+      <div class="custom-form">
+        <p class="form-desc">Connect to any OpenAI-compatible endpoint (Ollama, LM Studio, Azure OpenAI, etc.)</p>
         <div class="form-group">
           <label for="custom-base-url">Base URL</label>
-          <input
-            id="custom-base-url"
-            type="text"
-            class="form-input"
-            bind:value={customBaseUrl}
-            placeholder="http://localhost:11434/v1"
-          />
+          <input id="custom-base-url" type="text" bind:value={customBaseUrl} placeholder="http://localhost:11434/v1" />
         </div>
         <div class="form-group">
           <label for="custom-api-key">API Key <span class="optional">(optional for local)</span></label>
-          <input
-            id="custom-api-key"
-            type="password"
-            class="form-input"
-            bind:value={customApiKey}
-            placeholder="API key (if required)"
-          />
+          <input id="custom-api-key" type="password" bind:value={customApiKey} placeholder="API key (if required)" />
         </div>
         <div class="form-group">
           <label for="custom-display-name">Display Name <span class="optional">(optional)</span></label>
-          <input
-            id="custom-display-name"
-            type="text"
-            class="form-input"
-            bind:value={customDisplayName}
-            placeholder="e.g., Local Ollama"
-          />
+          <input id="custom-display-name" type="text" bind:value={customDisplayName} placeholder="e.g., Local Ollama" />
         </div>
-        <button
-          class="save-custom-btn"
-          onclick={saveCustomEndpoint}
-          disabled={loading || !customBaseUrl.trim()}
-        >
+        <button class="primary-btn" onclick={saveCustomEndpoint} disabled={loading || !customBaseUrl.trim()}>
           {loading ? 'Saving...' : 'Save & Activate'}
         </button>
       </div>
     {/if}
   </div>
 
-  <!-- Model Override (works for all providers) -->
-  <div class="model-section">
-    <h3 class="model-title">Model Override</h3>
-    <p class="model-description">
-      Override the default model for the active processor. Leave empty to use the default.
-    </p>
-    <div class="model-input-row">
+  <div class="separator"></div>
+
+  <!-- MODEL OVERRIDE -->
+  <div class="section">
+    <SectionHeader label="MODEL OVERRIDE" />
+    <div class="model-row">
       <input
         type="text"
         class="model-input"
         bind:value={currentModel}
-        placeholder={defaultModel || 'default'}
+        placeholder={defaultModel ? `e.g. ${defaultModel}` : 'default'}
         onkeydown={(e) => e.key === 'Enter' && saveModel()}
       />
-      <button
-        class="model-apply-btn"
-        onclick={saveModel}
-        disabled={modelLoading}
-      >
-        {modelLoading ? 'Applying...' : 'Apply'}
+      <button class="apply-btn" onclick={saveModel} disabled={modelLoading}>
+        {modelLoading ? '...' : 'Apply'}
       </button>
     </div>
   </div>
-
-  {#if loading}
-    <div class="loading">Processing...</div>
-  {/if}
 </div>
 
 <!-- API Key Modal -->
 {#if showApiKeyModal}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal-overlay" onclick={closeModal} onkeydown={(e) => e.key === 'Escape' && closeModal()} role="presentation">
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
       <h3>{editingExistingKey ? 'Update' : 'Configure'} {selectedProvider?.name}</h3>
       <p>{editingExistingKey ? 'Enter a new API key:' : 'Enter your API key to enable this provider:'}</p>
 
-      <div class="api-key-input-wrapper">
+      <div class="api-key-wrapper">
         <input
           type={showApiKey ? 'text' : 'password'}
           bind:value={apiKeyInput}
@@ -474,19 +414,14 @@
           class="api-key-input"
           onkeydown={(e) => e.key === 'Enter' && saveApiKey()}
         />
-        <button
-          class="toggle-visibility-btn"
-          onclick={() => showApiKey = !showApiKey}
-          type="button"
-          title={showApiKey ? 'Hide API key' : 'Show API key'}
-        >
+        <button class="visibility-toggle" onclick={() => showApiKey = !showApiKey} type="button">
           {showApiKey ? '🙈' : '👁️'}
         </button>
       </div>
 
       <div class="modal-actions">
-        <button class="btn btn-secondary" onclick={closeModal}>Cancel</button>
-        <button class="btn btn-primary" onclick={saveApiKey} disabled={loading}>
+        <button class="btn-secondary" onclick={closeModal}>Cancel</button>
+        <button class="btn-primary" onclick={saveApiKey} disabled={loading}>
           {loading ? 'Saving...' : editingExistingKey ? 'Update Key' : 'Save & Activate'}
         </button>
       </div>
@@ -495,366 +430,193 @@
 {/if}
 
 <style>
-  .llm-config {
-    padding: 20px;
-    max-width: 600px;
-  }
-
-  h2 {
-    margin-bottom: 8px;
-    font-size: 24px;
-    font-weight: bold;
-    color: #fff;
-  }
-
-  .description {
-    margin-bottom: 20px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 14px;
-    line-height: 1.5;
+  .page {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
 
   .alert {
-    padding: 12px 16px;
-    margin-bottom: 16px;
+    padding: 10px 14px;
     border-radius: 8px;
-    font-size: 14px;
+    font-size: 12px;
   }
 
   .alert-error {
-    background: rgba(239, 68, 68, 0.2);
-    border: 1px solid rgba(239, 68, 68, 0.5);
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
     color: #fca5a5;
   }
 
   .alert-success {
-    background: rgba(34, 197, 94, 0.2);
-    border: 1px solid rgba(34, 197, 94, 0.5);
+    background: rgba(34, 197, 94, 0.15);
+    border: 1px solid rgba(34, 197, 94, 0.4);
     color: #86efac;
   }
 
-  /* Sections */
   .section {
-    margin-bottom: 24px;
-  }
-
-  .section-title {
-    margin: 0 0 12px;
-    font-size: 16px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.9);
     display: flex;
-    align-items: center;
-  }
-
-  .section-toggle {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;
+    gap: 6px;
     width: 100%;
-    background: none;
-    border: none;
-    padding: 0;
-    margin-bottom: 12px;
+  }
+
+  .section-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .separator {
+    height: 1px;
+    background: var(--border);
+    width: 100%;
+  }
+
+  .inline-btn {
+    padding: 3px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+    font-size: 11px;
     cursor: pointer;
-    color: inherit;
+    transition: all 0.15s ease;
+    white-space: nowrap;
   }
 
-  .toggle-arrow {
-    color: rgba(255, 255, 255, 0.5);
-    font-size: 12px;
+  .inline-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
   }
 
-  .processors-list {
+  .install-hint {
+    padding: 4px 12px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  /* Custom form */
+  .custom-form {
+    padding: 14px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     gap: 10px;
   }
 
-  .processor-card {
-    padding: 14px 16px;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 2px solid rgba(255, 255, 255, 0.1);
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .processor-card:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.2);
-    transform: translateY(-1px);
-  }
-
-  .processor-card.active {
-    background: rgba(59, 130, 246, 0.2);
-    border-color: rgba(59, 130, 246, 0.6);
-  }
-
-  .processor-card.available,
-  .processor-card.configured {
-    border-color: rgba(34, 197, 94, 0.3);
-  }
-
-  .processor-card.not-available,
-  .processor-card.not-configured {
-    border-color: rgba(255, 255, 255, 0.08);
-    opacity: 0.8;
-  }
-
-  .processor-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .processor-actions {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
-  h4 {
+  .form-desc {
     margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: #fff;
-  }
-
-  .processor-details {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    margin-top: 4px;
-  }
-
-  .provider-type {
+    color: var(--text-muted);
     font-size: 12px;
-    color: rgba(255, 255, 255, 0.5);
-  }
-
-  .default-model {
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.4);
-  }
-
-  .badge {
-    padding: 3px 10px;
-    border-radius: 12px;
-    font-size: 11px;
-    font-weight: 500;
-    white-space: nowrap;
-  }
-
-  .badge-active {
-    background: rgba(59, 130, 246, 0.3);
-    color: #93c5fd;
-  }
-
-  .badge-available,
-  .badge-configured {
-    background: rgba(34, 197, 94, 0.3);
-    color: #86efac;
-  }
-
-  .badge-not-available {
-    background: rgba(239, 68, 68, 0.3);
-    color: #fca5a5;
-  }
-
-  .badge-api-key-required {
-    background: rgba(251, 191, 36, 0.3);
-    color: #fde68a;
-  }
-
-  .edit-key-btn {
-    padding: 3px 8px;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(255, 255, 255, 0.05);
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 11px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .edit-key-btn:hover {
-    background: rgba(255, 255, 255, 0.15);
-    color: #fff;
-    border-color: rgba(255, 255, 255, 0.4);
-  }
-
-  .install-hint {
-    margin-top: 10px;
-    padding: 6px 10px;
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 6px;
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.5);
-    display: flex;
-    align-items: flex-start;
-    gap: 6px;
-  }
-
-  .hint-icon {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.1);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 10px;
-    font-style: italic;
-    flex-shrink: 0;
-  }
-
-  /* Custom endpoint form */
-  .custom-endpoint-form {
-    padding: 16px;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-  }
-
-  .form-description {
-    margin: 0 0 16px;
-    color: rgba(255, 255, 255, 0.5);
-    font-size: 13px;
   }
 
   .form-group {
-    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
 
   .form-group label {
-    display: block;
-    margin-bottom: 4px;
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.7);
+    font-size: 12px;
+    color: var(--text-secondary);
   }
 
   .optional {
-    color: rgba(255, 255, 255, 0.35);
-    font-size: 12px;
+    color: var(--text-muted);
+    font-size: 11px;
   }
 
-  .form-input {
+  .form-group input {
     width: 100%;
-    padding: 10px 12px;
+    padding: 8px 12px;
     border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    background: rgba(255, 255, 255, 0.05);
-    color: #fff;
-    font-size: 14px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 12px;
     outline: none;
-    transition: border-color 0.2s ease;
-    box-sizing: border-box;
+    transition: border-color 0.15s ease;
   }
 
-  .form-input:focus {
-    border-color: rgba(59, 130, 246, 0.6);
+  .form-group input:focus {
+    border-color: rgba(168, 85, 247, 0.6);
   }
 
-  .form-input::placeholder {
-    color: rgba(255, 255, 255, 0.3);
+  .form-group input::placeholder {
+    color: var(--text-placeholder);
   }
 
-  .save-custom-btn {
+  .primary-btn {
     width: 100%;
-    padding: 10px;
+    padding: 8px;
     border-radius: 8px;
     border: none;
-    background: rgba(59, 130, 246, 0.3);
-    color: #93c5fd;
-    font-size: 14px;
+    background: var(--accent);
+    color: var(--text-primary);
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease;
-    margin-top: 4px;
+    transition: background 0.15s ease;
   }
 
-  .save-custom-btn:hover:not(:disabled) {
-    background: rgba(59, 130, 246, 0.5);
+  .primary-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
   }
 
-  .save-custom-btn:disabled {
+  .primary-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  /* Model section */
-  .model-section {
-    margin-top: 24px;
-    padding-top: 20px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  .model-title {
-    margin: 0 0 6px;
-    font-size: 16px;
-    font-weight: 600;
-    color: #fff;
-  }
-
-  .model-description {
-    margin-bottom: 12px;
-    color: rgba(255, 255, 255, 0.5);
-    font-size: 13px;
-  }
-
-  .model-input-row {
+  /* Model override */
+  .model-row {
     display: flex;
     gap: 8px;
   }
 
   .model-input {
     flex: 1;
-    padding: 10px 14px;
+    padding: 8px 12px;
     border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    background: rgba(255, 255, 255, 0.05);
-    color: #fff;
-    font-size: 14px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 12px;
     outline: none;
-    transition: border-color 0.2s ease;
+    transition: border-color 0.15s ease;
   }
 
   .model-input:focus {
-    border-color: rgba(59, 130, 246, 0.6);
+    border-color: rgba(168, 85, 247, 0.6);
   }
 
   .model-input::placeholder {
-    color: rgba(255, 255, 255, 0.3);
+    color: var(--text-placeholder);
   }
 
-  .model-apply-btn {
-    padding: 10px 20px;
+  .apply-btn {
+    padding: 8px 16px;
     border-radius: 8px;
     border: none;
-    background: rgba(59, 130, 246, 0.3);
-    color: #93c5fd;
-    font-size: 14px;
+    background: var(--accent);
+    color: var(--text-primary);
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: background 0.15s ease;
     white-space: nowrap;
   }
 
-  .model-apply-btn:hover:not(:disabled) {
-    background: rgba(59, 130, 246, 0.5);
+  .apply-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
   }
 
-  .model-apply-btn:disabled {
+  .apply-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-  }
-
-  .loading {
-    text-align: center;
-    padding: 12px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 14px;
   }
 
   /* Modal */
@@ -872,50 +634,49 @@
   }
 
   .modal {
-    background: #1f2937;
+    background: var(--bg-card);
     padding: 24px;
     border-radius: 16px;
     max-width: 400px;
     width: 90%;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border);
   }
 
   .modal h3 {
-    margin: 0 0 12px;
-    font-size: 20px;
+    margin: 0 0 8px;
+    font-size: 16px;
     font-weight: 600;
-    color: #fff;
+    color: var(--text-primary);
   }
 
   .modal p {
-    margin-bottom: 16px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 14px;
+    margin: 0 0 16px;
+    color: var(--text-muted);
+    font-size: 13px;
   }
 
-  .api-key-input-wrapper {
+  .api-key-wrapper {
     position: relative;
     margin-bottom: 20px;
   }
 
   .api-key-input {
     width: 100%;
-    padding: 12px;
-    padding-right: 48px;
+    padding: 10px 12px;
+    padding-right: 44px;
     border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(0, 0, 0, 0.3);
-    color: #fff;
-    font-size: 14px;
-    box-sizing: border-box;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 13px;
+    outline: none;
   }
 
   .api-key-input:focus {
-    outline: none;
-    border-color: rgba(59, 130, 246, 0.6);
+    border-color: rgba(168, 85, 247, 0.6);
   }
 
-  .toggle-visibility-btn {
+  .visibility-toggle {
     position: absolute;
     right: 8px;
     top: 50%;
@@ -923,49 +684,48 @@
     background: none;
     border: none;
     cursor: pointer;
-    padding: 8px;
-    font-size: 16px;
+    padding: 6px;
+    font-size: 14px;
     opacity: 0.6;
-    transition: opacity 0.2s ease;
   }
 
-  .toggle-visibility-btn:hover {
+  .visibility-toggle:hover {
     opacity: 1;
   }
 
   .modal-actions {
     display: flex;
-    gap: 12px;
+    gap: 10px;
     justify-content: flex-end;
   }
 
-  .btn {
-    padding: 10px 20px;
+  .btn-primary, .btn-secondary {
+    padding: 8px 16px;
     border-radius: 8px;
     border: none;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.15s ease;
   }
 
-  .btn:disabled {
+  .btn-primary {
+    background: var(--accent);
+    color: var(--text-primary);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .btn-primary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  .btn-primary {
-    background: #3b82f6;
-    color: #fff;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
   .btn-secondary {
     background: rgba(255, 255, 255, 0.1);
-    color: #fff;
+    color: var(--text-primary);
   }
 
   .btn-secondary:hover {

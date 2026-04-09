@@ -1,47 +1,49 @@
-<script>
+<script lang="ts">
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount } from 'svelte';
+  import PageHeader from './ui/PageHeader.svelte';
+  import SectionHeader from './ui/SectionHeader.svelte';
 
-  let currentHotkey = 'Ctrl+`';
-  let isRecording = false;
-  let recordedKeys = [];
-  let loading = false;
-  let error = '';
-  let success = '';
+  let currentHotkey = $state('Ctrl+`');
+  let isRecording = $state(false);
+  let recordedKeys = $state<string[]>([]);
+  let loading = $state(false);
+  let error = $state('');
+  let success = $state('');
 
   onMount(async () => {
     await loadConfig();
   });
 
-  async function loadConfig() {
+  async function loadConfig(): Promise<void> {
     try {
-      const config = await invoke('get_config');
+      const config = await invoke<{ hotkey: string }>('get_config');
       currentHotkey = config.hotkey;
-    } catch (err) {
+    } catch (err: unknown) {
       error = `Failed to load config: ${err}`;
       console.error(error);
     }
   }
 
-  function startRecording() {
+  function startRecording(): void {
     isRecording = true;
     recordedKeys = [];
     error = '';
     success = '';
   }
 
-  function cancelRecording() {
+  function cancelRecording(): void {
     isRecording = false;
     recordedKeys = [];
   }
 
-  function handleKeyDown(event) {
+  function handleKeyDown(event: KeyboardEvent): void {
     if (!isRecording) return;
 
     event.preventDefault();
     event.stopPropagation();
 
-    const modifiers = [];
+    const modifiers: string[] = [];
     if (event.metaKey) modifiers.push('Cmd');
     if (event.ctrlKey) modifiers.push('Ctrl');
     if (event.altKey) modifiers.push('Alt');
@@ -70,7 +72,7 @@
     saveHotkey(hotkey);
   }
 
-  async function saveHotkey(hotkey) {
+  async function saveHotkey(hotkey: string): Promise<void> {
     // Validate: must have at least one modifier
     const hasModifier = hotkey.includes('Cmd') || hotkey.includes('Ctrl') ||
                        hotkey.includes('Alt') || hotkey.includes('Shift');
@@ -93,7 +95,7 @@
       recordedKeys = [];
       success = `Hotkey updated to: ${hotkey}`;
       setTimeout(() => { success = ''; }, 3000);
-    } catch (err) {
+    } catch (err: unknown) {
       error = `Failed to set hotkey: ${err}`;
       console.error(error);
       isRecording = false;
@@ -103,7 +105,7 @@
     }
   }
 
-  function getDisplayKeys() {
+  function getDisplayKeys(): string {
     if (recordedKeys.length > 0) {
       return recordedKeys.join(' + ');
     }
@@ -111,14 +113,10 @@
   }
 </script>
 
-<svelte:window on:keydown={handleKeyDown} />
+<svelte:window onkeydown={handleKeyDown} />
 
-<div class="hotkey-config">
-  <h2>Global Hotkey</h2>
-  <p class="description">
-    Set a global keyboard shortcut to start/stop voice transcription from anywhere.
-    The hotkey must include at least one modifier key (Cmd, Ctrl, Alt, or Shift).
-  </p>
+<div class="page">
+  <PageHeader title="Hotkey" description="Configure keyboard shortcuts for recording" />
 
   {#if error}
     <div class="alert alert-error">{error}</div>
@@ -128,39 +126,34 @@
     <div class="alert alert-success">{success}</div>
   {/if}
 
-  <div class="hotkey-section">
-    <div class="current-hotkey">
-      <label>Current Hotkey:</label>
-      <div class="hotkey-display">{currentHotkey}</div>
-    </div>
+  <SectionHeader label="CURRENT SHORTCUT" />
+  <div class="hotkey-display">{currentHotkey}</div>
 
-    <div class="hotkey-recorder">
-      <label>Record New Hotkey:</label>
-
-      {#if isRecording}
-        <div class="recording-box active">
-          <span class="recording-indicator">🔴</span>
-          <span class="recording-text">{getDisplayKeys()}</span>
-        </div>
-        <button class="btn btn-secondary" on:click={cancelRecording}>
-          Cancel
-        </button>
-      {:else}
-        <button class="btn btn-primary" on:click={startRecording}>
-          Record New Hotkey
-        </button>
-      {/if}
+  <SectionHeader label="RECORD NEW" />
+  {#if isRecording}
+    <div class="recording-box">
+      <span class="recording-dot"></span>
+      <span class="recording-text">{getDisplayKeys()}</span>
     </div>
+    <button class="secondary-btn" onclick={cancelRecording}>
+      Cancel
+    </button>
+  {:else}
+    <button class="primary-btn" onclick={startRecording}>
+      Record New Hotkey
+    </button>
+  {/if}
 
-    <div class="hotkey-hints">
-      <h4>Tips:</h4>
-      <ul>
-        <li>Click "Record New Hotkey" then press your desired key combination</li>
-        <li>Must include at least one modifier (Cmd, Ctrl, Alt, Shift)</li>
-        <li>Common examples: Cmd+Shift+Space, Ctrl+Alt+V, Cmd+Ctrl+M</li>
-        <li>Changes take effect immediately after recording</li>
-      </ul>
-    </div>
+  <div class="separator"></div>
+
+  <SectionHeader label="TIPS" />
+  <div class="hint-card">
+    <ul>
+      <li>Click "Record New Hotkey" then press your desired key combination</li>
+      <li>Must include at least one modifier (Cmd, Ctrl, Alt, Shift)</li>
+      <li>Common examples: Cmd+Shift+Space, Ctrl+Alt+V, Cmd+Ctrl+M</li>
+      <li>Changes take effect immediately after recording</li>
+    </ul>
   </div>
 
   {#if loading}
@@ -169,104 +162,67 @@
 </div>
 
 <style>
-  .hotkey-config {
-    padding: 20px;
-    max-width: 600px;
-  }
-
-  h2 {
-    margin-bottom: 8px;
-    font-size: 24px;
-    font-weight: bold;
-    color: #fff;
-  }
-
-  .description {
-    margin-bottom: 24px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 14px;
-    line-height: 1.5;
+  .page {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
 
   .alert {
-    padding: 12px 16px;
-    margin-bottom: 16px;
+    padding: 10px 14px;
     border-radius: 8px;
-    font-size: 14px;
+    font-size: 12px;
   }
 
   .alert-error {
-    background: rgba(239, 68, 68, 0.2);
-    border: 1px solid rgba(239, 68, 68, 0.5);
+    background: rgba(239, 68, 68, 0.15);
     color: #fca5a5;
   }
 
   .alert-success {
-    background: rgba(34, 197, 94, 0.2);
-    border: 1px solid rgba(34, 197, 94, 0.5);
+    background: rgba(34, 197, 94, 0.15);
     color: #86efac;
   }
 
-  .hotkey-section {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-  }
-
-  .current-hotkey,
-  .hotkey-recorder {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  label {
-    font-size: 14px;
-    font-weight: 500;
-    color: rgba(255, 255, 255, 0.8);
-  }
-
   .hotkey-display {
-    padding: 12px 16px;
-    background: rgba(59, 130, 246, 0.2);
-    border: 2px solid rgba(59, 130, 246, 0.6);
+    padding: 12px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--accent);
     border-radius: 8px;
-    font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
-    font-size: 16px;
+    font-family: var(--font-mono);
+    font-size: 14px;
     font-weight: 600;
-    color: #93c5fd;
+    color: var(--accent);
     text-align: center;
   }
 
   .recording-box {
-    padding: 12px 16px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 2px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 12px;
-    min-height: 48px;
-  }
-
-  .recording-box.active {
-    background: rgba(239, 68, 68, 0.1);
-    border-color: rgba(239, 68, 68, 0.5);
+    gap: 10px;
+    padding: 12px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--status-red);
+    border-radius: 8px;
+    min-height: 42px;
     animation: pulse 1.5s ease-in-out infinite;
   }
 
   @keyframes pulse {
     0%, 100% {
-      border-color: rgba(239, 68, 68, 0.5);
+      border-color: var(--status-red);
     }
     50% {
-      border-color: rgba(239, 68, 68, 0.8);
+      border-color: rgba(239, 68, 68, 0.4);
     }
   }
 
-  .recording-indicator {
-    font-size: 12px;
+  .recording-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--status-red);
     animation: blink 1s ease-in-out infinite;
   }
 
@@ -280,76 +236,74 @@
   }
 
   .recording-text {
-    font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
-    font-size: 16px;
+    font-family: var(--font-mono);
+    font-size: 14px;
     font-weight: 600;
     color: #fca5a5;
   }
 
-  .btn {
-    padding: 10px 20px;
-    border-radius: 8px;
+  .primary-btn {
+    height: 34px;
+    padding: 0 16px;
+    background: var(--accent);
+    color: var(--text-primary);
     border: none;
-    font-size: 14px;
+    border-radius: 8px;
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: background 0.15s ease;
   }
 
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+  .primary-btn:hover {
+    background: var(--accent-hover);
   }
 
-  .btn-primary {
-    background: #3b82f6;
-    color: #fff;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .btn-secondary {
+  .secondary-btn {
+    height: 34px;
+    padding: 0 16px;
     background: rgba(255, 255, 255, 0.1);
-    color: #fff;
-    margin-top: 8px;
+    color: var(--text-primary);
+    border: none;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease;
   }
 
-  .btn-secondary:hover {
+  .secondary-btn:hover {
     background: rgba(255, 255, 255, 0.15);
   }
 
-  .hotkey-hints {
-    padding: 16px;
-    background: rgba(255, 255, 255, 0.05);
+  .separator {
+    height: 1px;
+    background: var(--border);
+    width: 100%;
+  }
+
+  .hint-card {
+    padding: 12px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
   }
 
-  .hotkey-hints h4 {
-    margin: 0 0 12px 0;
-    font-size: 14px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  .hotkey-hints ul {
+  .hint-card ul {
     margin: 0;
-    padding-left: 20px;
+    padding-left: 18px;
   }
 
-  .hotkey-hints li {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.6);
-    line-height: 1.6;
-    margin-bottom: 4px;
+  .hint-card li {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.7;
   }
 
   .loading {
     text-align: center;
-    padding: 12px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 14px;
+    padding: 8px;
+    color: var(--text-muted);
+    font-size: 12px;
   }
 </style>
