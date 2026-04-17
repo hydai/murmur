@@ -1,4 +1,15 @@
 # Changelog
+## 0.2.12 (2026-04-17)
+
+### Features
+
+- add IPC commands to edit prompt overrides
+- add Prompts tab for editing LLM templates at runtime
+
+### Fixes
+
+- wire tray "Check for Updates" to open settings and run check
+
 ## 0.2.11 (2026-04-09)
 
 ### Features
