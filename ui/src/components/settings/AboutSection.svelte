@@ -18,6 +18,14 @@
     | { kind: 'ready' }
     | { kind: 'error'; message: string };
 
+  let {
+    pendingCheck = false,
+    onCheckConsumed = () => {},
+  }: {
+    pendingCheck?: boolean;
+    onCheckConsumed?: () => void;
+  } = $props();
+
   let appVersion = $state('');
   let updateState: UpdateState = $state({ kind: 'idle' });
 
@@ -39,13 +47,13 @@
         };
       })
     );
+  });
 
-    // Listen for tray menu "Check for Updates" click
-    unlistens.push(
-      await listen('update-check-requested', () => {
-        checkForUpdates();
-      })
-    );
+  $effect(() => {
+    if (pendingCheck) {
+      onCheckConsumed();
+      checkForUpdates();
+    }
   });
 
   onDestroy(() => {

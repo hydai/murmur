@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { getVersion } from '@tauri-apps/api/app';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { Mic, Cpu, Keyboard, Type, BookOpen, FileCode, Info } from 'lucide-svelte';
   import ProviderConfig from './ProviderConfig.svelte';
   import DictionaryEditor from './DictionaryEditor.svelte';
@@ -12,11 +13,16 @@
 
   let { visible, onClose }: { visible: boolean; onClose: () => void } = $props();
 
-  const standalone = typeof window !== 'undefined'
-    && new URLSearchParams(window.location.search).get('view') === 'settings';
+  const searchParams =
+    typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  const standalone = searchParams?.get('view') === 'settings';
+  const initialAction = searchParams?.get('action') ?? null;
 
-  let activeTab = $state('providers');
+  let activeTab = $state(initialAction === 'check-update' ? 'about' : 'providers');
+  let pendingUpdateCheck = $state(initialAction === 'check-update');
   let appVersion = $state('');
+
+  const unlistens: UnlistenFn[] = [];
 
   const navItems = [
     { id: 'providers', label: 'STT Providers', icon: Mic },
@@ -30,6 +36,17 @@
 
   onMount(async () => {
     appVersion = await getVersion();
+
+    unlistens.push(
+      await listen('open-about-and-check', () => {
+        activeTab = 'about';
+        pendingUpdateCheck = true;
+      })
+    );
+  });
+
+  onDestroy(() => {
+    for (const unlisten of unlistens) unlisten();
   });
 
   function switchTab(tab: string) {
@@ -84,7 +101,10 @@
           {:else if activeTab === 'prompts'}
             <PromptsEditor />
           {:else if activeTab === 'about'}
-            <AboutSection />
+            <AboutSection
+              pendingCheck={pendingUpdateCheck}
+              onCheckConsumed={() => (pendingUpdateCheck = false)}
+            />
           {/if}
         </main>
       </div>
@@ -132,7 +152,10 @@
             {:else if activeTab === 'dictionary'}
               <DictionaryEditor />
             {:else if activeTab === 'about'}
-              <AboutSection />
+              <AboutSection
+                pendingCheck={pendingUpdateCheck}
+                onCheckConsumed={() => (pendingUpdateCheck = false)}
+              />
             {/if}
           </main>
         </div>

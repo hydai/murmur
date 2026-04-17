@@ -1481,19 +1481,16 @@ async fn reset_prompt(
     Ok(())
 }
 
-#[tauri::command]
-async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
-    // If settings window already exists, just focus it
+fn ensure_settings_window_open(app: &tauri::AppHandle, query: &str) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("settings") {
         window.set_focus().map_err(|e| e.to_string())?;
         return Ok(());
     }
 
-    // Create new settings window
-    let _window = tauri::WebviewWindowBuilder::new(
-        &app,
+    tauri::WebviewWindowBuilder::new(
+        app,
         "settings",
-        tauri::WebviewUrl::App("index.html?view=settings".into()),
+        tauri::WebviewUrl::App(format!("index.html?{}", query).into()),
     )
     .title("Murmur Settings")
     .inner_size(720.0, 560.0)
@@ -1503,6 +1500,11 @@ async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[tauri::command]
+async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
+    ensure_settings_window_open(&app, "view=settings")
 }
 
 // ============================================================================
@@ -1950,7 +1952,22 @@ fn main() {
                             });
                         }
                         "check_updates" => {
-                            let _ = app_handle.emit("update-check-requested", ());
+                            let handle = app_handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let was_open = handle.get_webview_window("settings").is_some();
+                                if let Err(e) = ensure_settings_window_open(
+                                    &handle,
+                                    "view=settings&action=check-update",
+                                ) {
+                                    tracing::warn!("Failed to open settings window: {}", e);
+                                    return;
+                                }
+                                if was_open {
+                                    // URL query is ignored when the window already exists;
+                                    // signal the frontend to switch to About and check.
+                                    let _ = handle.emit("open-about-and-check", ());
+                                }
+                            });
                         }
                         "quit" => {
                             app_handle.exit(0);
