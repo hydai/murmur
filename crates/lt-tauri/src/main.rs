@@ -11,7 +11,10 @@ use lt_core::stt::SttProvider;
 use lt_core::{AppConfig, PersonalDictionary, TranscriptionHistory};
 #[cfg(target_os = "macos")]
 use lt_llm::AppleLlmProcessor;
-use lt_llm::{CopilotProcessor, GeminiProcessor, HttpLlmProcessor};
+use lt_llm::{
+    CopilotProcessor, GeminiProcessor, HttpLlmProcessor, PromptManager, PromptName, PromptSet,
+    PromptStore,
+};
 use lt_output::CombinedOutput;
 use lt_pipeline::{PipelineEvent, PipelineOrchestrator, PipelineState};
 #[cfg(target_os = "macos")]
@@ -30,6 +33,7 @@ use tokio::sync::Mutex;
 struct AppState {
     pipeline: Arc<Mutex<PipelineOrchestrator>>,
     event_task: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
+    prompts: PromptManager,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -553,38 +557,57 @@ async fn get_llm_processors() -> Result<Vec<LlmProcessorInfo>, String> {
 
 /// Create an LLM processor from its config type and optional model override.
 /// Shared between startup and hot-swap to avoid duplicating the factory logic.
+/// The same `PromptManager` handle is threaded into every processor so prompt
+/// edits propagate live without recreating the processor.
 fn create_llm_processor(
     processor_type: &LlmProcessorType,
     model: Option<String>,
     config: &AppConfig,
+    prompts: &PromptManager,
 ) -> Arc<dyn LlmProcessor> {
     match processor_type {
         LlmProcessorType::Gemini => {
             tracing::info!("Using Gemini CLI as LLM processor");
-            Arc::new(GeminiProcessor::with_model(model))
+            Arc::new(GeminiProcessor::with_model_and_prompts(
+                model,
+                prompts.clone(),
+            ))
         }
         LlmProcessorType::Copilot => {
             tracing::info!("Using Copilot CLI as LLM processor");
-            Arc::new(CopilotProcessor::with_model(model))
+            Arc::new(CopilotProcessor::with_model_and_prompts(
+                model,
+                prompts.clone(),
+            ))
         }
         LlmProcessorType::AppleLlm => {
             #[cfg(target_os = "macos")]
             {
                 tracing::info!("Using Apple Intelligence as LLM processor");
-                Arc::new(AppleLlmProcessor::with_model(model))
+                Arc::new(AppleLlmProcessor::with_model_and_prompts(
+                    model,
+                    prompts.clone(),
+                ))
             }
             #[cfg(not(target_os = "macos"))]
             {
                 tracing::warn!(
                     "Apple Intelligence is only available on macOS, falling back to Gemini"
                 );
-                Arc::new(GeminiProcessor::with_model(model))
+                Arc::new(GeminiProcessor::with_model_and_prompts(
+                    model,
+                    prompts.clone(),
+                ))
             }
         }
         LlmProcessorType::OpenAiApi => {
             let api_key = config.api_keys.get("openai").cloned().unwrap_or_default();
             tracing::info!("Using OpenAI API as LLM processor");
-            Arc::new(HttpLlmProcessor::openai(api_key, model))
+            Arc::new(HttpLlmProcessor::openai_with_prompts(
+                api_key,
+                model,
+                prompts.clone(),
+            ))
         }
         LlmProcessorType::ClaudeApi => {
             let api_key = config
@@ -593,7 +616,11 @@ fn create_llm_processor(
                 .cloned()
                 .unwrap_or_default();
             tracing::info!("Using Claude API as LLM processor");
-            Arc::new(HttpLlmProcessor::claude(api_key, model))
+            Arc::new(HttpLlmProcessor::claude_with_prompts(
+                api_key,
+                model,
+                prompts.clone(),
+            ))
         }
         LlmProcessorType::GeminiApi => {
             let api_key = config
@@ -602,7 +629,11 @@ fn create_llm_processor(
                 .cloned()
                 .unwrap_or_default();
             tracing::info!("Using Gemini API as LLM processor");
-            Arc::new(HttpLlmProcessor::gemini_api(api_key, model))
+            Arc::new(HttpLlmProcessor::gemini_api_with_prompts(
+                api_key,
+                model,
+                prompts.clone(),
+            ))
         }
         LlmProcessorType::CustomApi => {
             let api_key = config
@@ -616,7 +647,12 @@ fn create_llm_processor(
                 .clone()
                 .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
             tracing::info!("Using custom endpoint ({}) as LLM processor", base_url);
-            Arc::new(HttpLlmProcessor::custom(base_url, api_key, model))
+            Arc::new(HttpLlmProcessor::custom_with_prompts(
+                base_url,
+                api_key,
+                model,
+                prompts.clone(),
+            ))
         }
     }
 }
@@ -655,7 +691,12 @@ async fn set_llm_processor(
         .map_err(|e| format!("Failed to save config: {}", e))?;
 
     // Hot-swap the live pipeline's LLM processor
-    let new_processor = create_llm_processor(&processor_type, config.llm_model.clone(), &config);
+    let new_processor = create_llm_processor(
+        &processor_type,
+        config.llm_model.clone(),
+        &config,
+        &state.prompts,
+    );
     let pipeline = state.pipeline.lock().await;
     pipeline.set_llm_processor(new_processor).await;
 
@@ -686,8 +727,12 @@ async fn set_llm_model(model: String, state: tauri::State<'_, AppState>) -> Resu
         .map_err(|e| format!("Failed to save config: {}", e))?;
 
     // Hot-swap the live pipeline's LLM processor with new model
-    let new_processor =
-        create_llm_processor(&config.llm_processor, config.llm_model.clone(), &config);
+    let new_processor = create_llm_processor(
+        &config.llm_processor,
+        config.llm_model.clone(),
+        &config,
+        &state.prompts,
+    );
     let pipeline = state.pipeline.lock().await;
     pipeline.set_llm_processor(new_processor).await;
 
@@ -1348,6 +1393,94 @@ async fn search_dictionary(
     Ok(dict.search_entries(&query))
 }
 
+// Prompt template management commands
+
+#[derive(serde::Serialize)]
+struct PromptInfo {
+    name: PromptName,
+    title: &'static str,
+    description: &'static str,
+    required_placeholders: &'static [&'static str],
+    task_variant: &'static str,
+    content: String,
+    is_override: bool,
+    default_content: String,
+}
+
+#[tauri::command]
+async fn get_prompts(state: tauri::State<'_, AppState>) -> Result<Vec<PromptInfo>, String> {
+    let set = state.prompts.shared();
+    let guard = set.read().await;
+    Ok(PromptName::ALL
+        .iter()
+        .map(|&name| PromptInfo {
+            name,
+            title: name.display_title(),
+            description: name.description(),
+            required_placeholders: name.required_placeholders(),
+            task_variant: name.task_variant_label(),
+            content: guard.get(name).to_string(),
+            is_override: guard.has_override(name),
+            default_content: name.default_template().to_string(),
+        })
+        .collect())
+}
+
+#[derive(serde::Deserialize)]
+struct SetPromptParams {
+    name: PromptName,
+    content: String,
+}
+
+#[tauri::command]
+async fn set_prompt(
+    params: SetPromptParams,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if params.content.trim().is_empty() {
+        return Err("Prompt content cannot be empty".to_string());
+    }
+
+    let config_dir =
+        AppConfig::default_config_dir().map_err(|e| format!("Failed to get config dir: {}", e))?;
+    PromptStore::save(&config_dir, params.name, &params.content)
+        .map_err(|e| format!("Failed to save prompt: {}", e))?;
+
+    state
+        .prompts
+        .shared()
+        .write()
+        .await
+        .set_override(params.name, params.content);
+    tracing::info!("Prompt '{}' override saved", params.name.as_str());
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct ResetPromptParams {
+    name: PromptName,
+}
+
+#[tauri::command]
+async fn reset_prompt(
+    params: ResetPromptParams,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let config_dir =
+        AppConfig::default_config_dir().map_err(|e| format!("Failed to get config dir: {}", e))?;
+    PromptStore::reset(&config_dir, params.name)
+        .map_err(|e| format!("Failed to reset prompt: {}", e))?;
+
+    state
+        .prompts
+        .shared()
+        .write()
+        .await
+        .clear_override(params.name);
+    tracing::info!("Prompt '{}' reset to default", params.name.as_str());
+    Ok(())
+}
+
 #[tauri::command]
 async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
     // If settings window already exists, just focus it
@@ -1614,9 +1747,29 @@ fn main() {
 
     let startup_hotkey = config.hotkey.clone();
 
+    // Load user prompt overrides from disk (falls back to embedded defaults).
+    let prompts = {
+        let config_dir = AppConfig::default_config_dir().ok();
+        let set = config_dir
+            .as_ref()
+            .map(|dir| match PromptStore::load_all(dir) {
+                Ok(set) => set,
+                Err(e) => {
+                    tracing::warn!("Failed to load prompt overrides: {}, using defaults", e);
+                    PromptSet::default()
+                }
+            })
+            .unwrap_or_default();
+        PromptManager::from_set(set)
+    };
+
     // Initialize LLM processor based on config
-    let llm_processor =
-        create_llm_processor(&config.llm_processor, config.llm_model.clone(), &config);
+    let llm_processor = create_llm_processor(
+        &config.llm_processor,
+        config.llm_model.clone(),
+        &config,
+        &prompts,
+    );
 
     // Load dictionary (or create empty if not exists)
     let dictionary = {
@@ -1669,6 +1822,7 @@ fn main() {
     let app_state = AppState {
         pipeline: Arc::new(Mutex::new(pipeline)),
         event_task: Arc::new(Mutex::new(None)),
+        prompts,
     };
 
     tauri::Builder::default()
@@ -1700,6 +1854,9 @@ fn main() {
             update_dictionary_entry,
             delete_dictionary_entry,
             search_dictionary,
+            get_prompts,
+            set_prompt,
+            reset_prompt,
             open_settings_window,
             get_history,
             search_history,
