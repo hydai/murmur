@@ -18,21 +18,22 @@ pub const DEFAULT_MODEL: &str = "gemini-3-flash-preview";
 impl GeminiProcessor {
     /// Create a new Gemini processor with default settings
     pub fn new() -> Self {
-        Self {
-            executor: CliExecutor::with_timeout(30),
-            prompt_manager: PromptManager::new(),
-            model: DEFAULT_MODEL.to_string(),
-        }
+        Self::with_model_and_prompts(None, PromptManager::new())
     }
 
     /// Create a new Gemini processor with an optional model override
     pub fn with_model(model: Option<String>) -> Self {
+        Self::with_model_and_prompts(model, PromptManager::new())
+    }
+
+    /// Create a new Gemini processor with a model override and a shared PromptManager
+    pub fn with_model_and_prompts(model: Option<String>, prompts: PromptManager) -> Self {
         let model = model
             .filter(|m| !m.is_empty())
             .unwrap_or_else(|| DEFAULT_MODEL.to_string());
         Self {
             executor: CliExecutor::with_timeout(30),
-            prompt_manager: PromptManager::new(),
+            prompt_manager: prompts,
             model,
         }
     }
@@ -83,8 +84,8 @@ impl LlmProcessor for GeminiProcessor {
     async fn process(&self, task: ProcessingTask) -> Result<ProcessingOutput> {
         let start_time = Instant::now();
 
-        // Build prompt from embedded template
-        let prompt = self.prompt_manager.build_prompt(&task);
+        // Build prompt from the shared prompt set (respects user overrides)
+        let prompt = self.prompt_manager.build_prompt(&task).await;
 
         tracing::debug!(
             "Executing gemini CLI with prompt (length: {} chars)",

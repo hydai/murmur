@@ -18,15 +18,16 @@ pub const DEFAULT_MODEL: &str = "gpt-5-mini";
 impl CopilotProcessor {
     /// Create a new Copilot processor with default settings
     pub fn new() -> Self {
-        Self {
-            executor: CliExecutor::with_timeout(30),
-            prompt_manager: PromptManager::new(),
-            model: Some(DEFAULT_MODEL.to_string()),
-        }
+        Self::with_model_and_prompts(None, PromptManager::new())
     }
 
     /// Create a new Copilot processor with an optional model override
     pub fn with_model(model: Option<String>) -> Self {
+        Self::with_model_and_prompts(model, PromptManager::new())
+    }
+
+    /// Create a new Copilot processor with a model override and a shared PromptManager
+    pub fn with_model_and_prompts(model: Option<String>, prompts: PromptManager) -> Self {
         let model = Some(
             model
                 .filter(|m| !m.is_empty())
@@ -34,7 +35,7 @@ impl CopilotProcessor {
         );
         Self {
             executor: CliExecutor::with_timeout(30),
-            prompt_manager: PromptManager::new(),
+            prompt_manager: prompts,
             model,
         }
     }
@@ -60,8 +61,8 @@ impl LlmProcessor for CopilotProcessor {
     async fn process(&self, task: ProcessingTask) -> Result<ProcessingOutput> {
         let start_time = Instant::now();
 
-        // Build prompt from embedded template
-        let prompt = self.prompt_manager.build_prompt(&task);
+        // Build prompt from the shared prompt set (respects user overrides)
+        let prompt = self.prompt_manager.build_prompt(&task).await;
 
         tracing::debug!(
             "Executing copilot CLI with prompt (length: {} chars)",

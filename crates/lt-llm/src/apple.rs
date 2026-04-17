@@ -74,6 +74,13 @@ impl AppleLlmProcessor {
         Self::new()
     }
 
+    /// Create processor with a shared PromptManager (model parameter ignored).
+    pub fn with_model_and_prompts(_model: Option<String>, prompts: PromptManager) -> Self {
+        Self {
+            prompt_manager: prompts,
+        }
+    }
+
     /// Check if Apple Foundation Models is available (static, no instance needed).
     pub fn is_available() -> bool {
         unsafe { llm_bridge_is_available() }
@@ -91,7 +98,7 @@ impl LlmProcessor for AppleLlmProcessor {
     async fn process(&self, task: ProcessingTask) -> Result<ProcessingOutput> {
         let start_time = Instant::now();
 
-        let prompt = self.prompt_manager.build_prompt(&task);
+        let prompt = self.prompt_manager.build_prompt(&task).await;
 
         tracing::debug!(
             "Apple LLM processing prompt (length: {} chars)",

@@ -36,6 +36,14 @@ pub struct HttpLlmProcessor {
 impl HttpLlmProcessor {
     /// Create an OpenAI API processor
     pub fn openai(api_key: String, model: Option<String>) -> Self {
+        Self::openai_with_prompts(api_key, model, PromptManager::new())
+    }
+
+    pub fn openai_with_prompts(
+        api_key: String,
+        model: Option<String>,
+        prompts: PromptManager,
+    ) -> Self {
         let model = model
             .filter(|m| !m.is_empty())
             .unwrap_or_else(|| OPENAI_DEFAULT_MODEL.to_string());
@@ -45,13 +53,21 @@ impl HttpLlmProcessor {
             base_url: "https://api.openai.com/v1".to_string(),
             api_key,
             model,
-            prompt_manager: PromptManager::new(),
+            prompt_manager: prompts,
             timeout_secs: 30,
         }
     }
 
     /// Create a Claude API processor
     pub fn claude(api_key: String, model: Option<String>) -> Self {
+        Self::claude_with_prompts(api_key, model, PromptManager::new())
+    }
+
+    pub fn claude_with_prompts(
+        api_key: String,
+        model: Option<String>,
+        prompts: PromptManager,
+    ) -> Self {
         let model = model
             .filter(|m| !m.is_empty())
             .unwrap_or_else(|| CLAUDE_DEFAULT_MODEL.to_string());
@@ -61,13 +77,21 @@ impl HttpLlmProcessor {
             base_url: "https://api.anthropic.com".to_string(),
             api_key,
             model,
-            prompt_manager: PromptManager::new(),
+            prompt_manager: prompts,
             timeout_secs: 30,
         }
     }
 
     /// Create a Gemini REST API processor
     pub fn gemini_api(api_key: String, model: Option<String>) -> Self {
+        Self::gemini_api_with_prompts(api_key, model, PromptManager::new())
+    }
+
+    pub fn gemini_api_with_prompts(
+        api_key: String,
+        model: Option<String>,
+        prompts: PromptManager,
+    ) -> Self {
         let model = model
             .filter(|m| !m.is_empty())
             .unwrap_or_else(|| GEMINI_API_DEFAULT_MODEL.to_string());
@@ -77,13 +101,22 @@ impl HttpLlmProcessor {
             base_url: "https://generativelanguage.googleapis.com".to_string(),
             api_key,
             model,
-            prompt_manager: PromptManager::new(),
+            prompt_manager: prompts,
             timeout_secs: 30,
         }
     }
 
     /// Create a custom OpenAI-compatible endpoint processor
     pub fn custom(base_url: String, api_key: String, model: Option<String>) -> Self {
+        Self::custom_with_prompts(base_url, api_key, model, PromptManager::new())
+    }
+
+    pub fn custom_with_prompts(
+        base_url: String,
+        api_key: String,
+        model: Option<String>,
+        prompts: PromptManager,
+    ) -> Self {
         let model = model
             .filter(|m| !m.is_empty())
             .unwrap_or_else(|| OPENAI_DEFAULT_MODEL.to_string());
@@ -93,7 +126,7 @@ impl HttpLlmProcessor {
             base_url,
             api_key,
             model,
-            prompt_manager: PromptManager::new(),
+            prompt_manager: prompts,
             timeout_secs: 30,
         }
     }
@@ -203,7 +236,7 @@ impl LlmProcessor for HttpLlmProcessor {
     async fn process(&self, task: ProcessingTask) -> Result<ProcessingOutput> {
         let start_time = Instant::now();
 
-        let prompt = self.prompt_manager.build_prompt(&task);
+        let prompt = self.prompt_manager.build_prompt(&task).await;
 
         tracing::debug!(
             "Sending HTTP API request ({:?}, model: {}, prompt length: {} chars)",
