@@ -11,7 +11,7 @@ lt-audio = { path = "../lt-audio" }
 lt-stt = { path = "../lt-stt" }
 lt-llm = { path = "../lt-llm" }
 lt-output = { path = "../lt-output" }
-tokio = { version = "1.51.1", features = ["sync", "time", "macros"] }
+tokio = { version = "1.52.1", features = ["sync", "time", "macros"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -19,4 +19,4 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1.51.1", features = ["rt-multi-thread"] }
+tokio = { version = "1.52.1", features = ["rt-multi-thread"] }
