@@ -12,7 +12,7 @@ lt-core = { path = "../lt-core" }
 cpal = "0.17.3"
 
 # Async runtime
-tokio = { version = "1.52.1", features = ["sync", "rt", "time"] }
+tokio = { version = "1.52.2", features = ["sync", "rt", "time"] }
 
 # Serialization
 serde.workspace = true
