@@ -17,6 +17,9 @@ dist/
 # Tauri
 crates/lt-tauri/target/
 
+# Swift Package Manager
+.build/
+
 # OS
 .DS_Store
 Thumbs.db
