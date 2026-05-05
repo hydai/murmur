@@ -50,6 +50,16 @@ updates:
           - "typescript"
           - "tslib"
           - "@tsconfig/*"
+    ignore:
+      # @tauri-apps/api must match the Rust `tauri` crate's major/minor
+      # version (enforced by tauri-cli at build time). Allow patch bumps
+      # only — major/minor bumps must be coordinated with the cargo
+      # `tauri` group PR by hand (e.g. `npm install @tauri-apps/api@<v>`
+      # in /ui after merging the Rust-side bump).
+      - dependency-name: "@tauri-apps/api"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
 
   # GitHub Actions
   - package-ecosystem: github-actions
