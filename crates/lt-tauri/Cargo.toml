@@ -10,7 +10,7 @@ tauri-build = { version = "2.5.5", features = [] }
 
 [dependencies]
 tauri = { version = "2.11.2", features = ["macos-private-api", "tray-icon", "image-png"] }
-tauri-plugin-global-shortcut = "2.3.1"
+tauri-plugin-global-shortcut = "2.3.2"
 tauri-plugin-clipboard-manager = "2.3.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -29,4 +29,4 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
-tauri-plugin-global-shortcut = "2.3.1"
+tauri-plugin-global-shortcut = "2.3.2"
