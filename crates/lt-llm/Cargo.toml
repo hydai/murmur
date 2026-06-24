@@ -9,7 +9,7 @@ repository.workspace = true
 lt-core = { path = "../lt-core" }
 
 tokio = { version = "1.52.3", features = ["process", "io-util", "time", "sync", "macros", "rt"] }
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { version = "0.13.4", features = ["json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
@@ -17,4 +17,4 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = "3.27.0"

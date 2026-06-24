@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { fade, fly, slide } from 'svelte/transition';
+  import { LogicalPosition } from '@tauri-apps/api/dpi';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -57,10 +58,7 @@
     if (!isDragging) return;
 
     const appWindow = getCurrentWindow();
-    await appWindow.setPosition({
-      x: e.screenX - dragStartX,
-      y: e.screenY - dragStartY,
-    });
+    await appWindow.setPosition(new LogicalPosition(e.screenX - dragStartX, e.screenY - dragStartY));
   }
 
   function handleMouseUp() {
@@ -111,7 +109,12 @@
     try {
       // Listen for audio level events
       unlistenAudioLevel = await listen('audio-level', (event) => {
-        audioLevel = event.payload as { rms: number; voice_active: boolean; timestamp_ms: number };
+        const payload = event.payload as { rms: number; voice_active: boolean; timestamp_ms: number };
+        audioLevel = {
+          rms: payload.rms,
+          voiceActive: payload.voice_active,
+          timestamp_ms: payload.timestamp_ms,
+        };
       });
 
       // Listen for recording state changes
