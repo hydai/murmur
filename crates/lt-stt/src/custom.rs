@@ -5,11 +5,12 @@ use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::chunker::AudioChunker;
 
 pub const DEFAULT_MODEL: &str = "whisper-1";
+const MAX_PENDING_TRANSCRIPTION_CHUNKS: usize = 4;
 
 #[derive(Debug, Deserialize)]
 struct WhisperResponse {
@@ -130,7 +131,8 @@ impl SttProvider for CustomSttProvider {
 
         let task = tokio::spawn(async move {
             let temp_provider = CustomSttProvider::new(base_url, api_key, Some(model), language);
-            let (wav_tx, mut wav_rx) = mpsc::unbounded_channel::<(Vec<u8>, u64)>();
+            let (wav_tx, mut wav_rx) =
+                mpsc::channel::<(Vec<u8>, u64)>(MAX_PENDING_TRANSCRIPTION_CHUNKS);
             let transcription_task = tokio::spawn(async move {
                 let mut last_timestamp_ms = 0u64;
                 let mut accumulated_text = String::new();
@@ -203,9 +205,12 @@ impl SttProvider for CustomSttProvider {
                     Some(Ok(wav_bytes)) if wav_bytes.is_empty() => {
                         debug!("Empty WAV bytes, skipping transcription");
                     }
-                    Some(Ok(wav_bytes)) => match wav_tx.send((wav_bytes, chunk.timestamp_ms)) {
+                    Some(Ok(wav_bytes)) => match wav_tx.try_send((wav_bytes, chunk.timestamp_ms)) {
                         Ok(()) => {}
-                        Err(_) => {
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            warn!("Custom STT transcription backlog full; dropping audio chunk");
+                        }
+                        Err(mpsc::error::TrySendError::Closed(_)) => {
                             error!("Custom STT transcription task stopped unexpectedly");
                             break;
                         }
@@ -227,11 +232,15 @@ impl SttProvider for CustomSttProvider {
                 Ok(wav_bytes) if wav_bytes.is_empty() => {
                     debug!("Empty final WAV bytes, skipping transcription");
                 }
-                Ok(wav_bytes) => {
-                    if wav_tx.send((wav_bytes, last_timestamp_ms)).is_err() {
+                Ok(wav_bytes) => match wav_tx.try_send((wav_bytes, last_timestamp_ms)) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        warn!("Custom STT transcription backlog full; dropping final audio");
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
                         error!("Custom STT transcription task stopped before final audio");
                     }
-                }
+                },
                 Err(e) => {
                     error!("Failed to flush final audio buffer: {}", e);
                 }
@@ -287,9 +296,13 @@ impl SttProvider for CustomSttProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
-    use tokio::sync::oneshot;
+    use tokio::sync::{oneshot, Notify};
     use tokio::time::{timeout, Duration};
 
     #[test]
@@ -341,7 +354,7 @@ mod tests {
 
         let mut blocked_at = None;
         for i in 0..33 {
-            let send = provider.send_audio(test_chunk(4010 + i));
+            let send = provider.send_audio(empty_test_chunk(4010 + i));
             match timeout(Duration::from_millis(100), send).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => panic!("send_audio returned error: {}", e),
@@ -362,10 +375,126 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn transcription_handoff_has_bounded_backlog_while_request_is_in_flight() {
+        let server = CountingTranscriptionServer::start().await;
+        let mut provider = CustomSttProvider::new(server.base_url(), None, None, None);
+
+        provider.start_session().await.unwrap();
+        let _events = provider.subscribe_events().await;
+
+        provider.send_audio(test_chunk(1)).await.unwrap();
+        provider.send_audio(test_chunk(4001)).await.unwrap();
+        server.wait_for_requests(1).await;
+
+        let queued_flushes = MAX_PENDING_TRANSCRIPTION_CHUNKS + 3;
+        let mut timestamp_ms = 8002;
+        for _ in 0..queued_flushes {
+            provider.send_audio(test_chunk(timestamp_ms)).await.unwrap();
+            provider
+                .send_audio(test_chunk(timestamp_ms + 4000))
+                .await
+                .unwrap();
+            timestamp_ms += 4001;
+        }
+
+        server.release_first_response();
+        timeout(
+            Duration::from_secs(2),
+            server.wait_for_requests(1 + MAX_PENDING_TRANSCRIPTION_CHUNKS),
+        )
+        .await
+        .unwrap();
+        provider.stop_session().await.unwrap();
+
+        assert_eq!(
+            server.request_count(),
+            1 + MAX_PENDING_TRANSCRIPTION_CHUNKS,
+            "transcription requests should be capped while the endpoint is backlogged"
+        );
+    }
+
     fn test_chunk(timestamp_ms: u64) -> AudioChunk {
         AudioChunk {
             data: vec![0; 160],
             timestamp_ms,
+        }
+    }
+
+    fn empty_test_chunk(timestamp_ms: u64) -> AudioChunk {
+        AudioChunk {
+            data: Vec::new(),
+            timestamp_ms,
+        }
+    }
+
+    struct CountingTranscriptionServer {
+        base_url: String,
+        first_response_release_tx: Mutex<Option<oneshot::Sender<()>>>,
+        request_count: Arc<AtomicUsize>,
+        request_notify: Arc<Notify>,
+    }
+
+    impl CountingTranscriptionServer {
+        async fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let (first_response_release_tx, first_response_release_rx) = oneshot::channel();
+            let request_count = Arc::new(AtomicUsize::new(0));
+            let request_notify = Arc::new(Notify::new());
+
+            let task_request_count = request_count.clone();
+            let task_request_notify = request_notify.clone();
+            tokio::spawn(async move {
+                let mut first_response_release_rx = Some(first_response_release_rx);
+
+                loop {
+                    let Ok((mut stream, _)) = listener.accept().await else {
+                        break;
+                    };
+
+                    read_http_request(&mut stream).await;
+                    let count = task_request_count.fetch_add(1, Ordering::SeqCst) + 1;
+                    task_request_notify.notify_one();
+
+                    if count == 1 {
+                        if let Some(rx) = first_response_release_rx.take() {
+                            let _ = rx.await;
+                        }
+                    }
+
+                    write_transcription_response(&mut stream).await;
+                }
+            });
+
+            Self {
+                base_url: format!("http://{}/v1", addr),
+                first_response_release_tx: Mutex::new(Some(first_response_release_tx)),
+                request_count,
+                request_notify,
+            }
+        }
+
+        fn base_url(&self) -> String {
+            self.base_url.clone()
+        }
+
+        async fn wait_for_requests(&self, expected: usize) {
+            while self.request_count() < expected {
+                self.request_notify.notified().await;
+            }
+        }
+
+        fn request_count(&self) -> usize {
+            self.request_count.load(Ordering::SeqCst)
+        }
+
+        fn release_first_response(&self) {
+            if let Ok(mut guard) = self.first_response_release_tx.try_lock() {
+                if let Some(tx) = guard.take() {
+                    let _ = tx.send(());
+                }
+            }
         }
     }
 
@@ -388,13 +517,7 @@ mod tests {
                 let _ = request_seen_tx.send(());
                 let _ = release_rx.await;
 
-                let body = r#"{"text":"ok"}"#;
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-                let _ = stream.write_all(response.as_bytes()).await;
+                write_transcription_response(&mut stream).await;
             });
 
             Self {
@@ -420,6 +543,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    async fn write_transcription_response(stream: &mut tokio::net::TcpStream) {
+        let body = r#"{"text":"ok"}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(response.as_bytes()).await;
     }
 
     async fn read_http_request(stream: &mut tokio::net::TcpStream) {
