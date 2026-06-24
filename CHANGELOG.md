@@ -1,4 +1,19 @@
 # Changelog
+## 0.2.13 (2026-06-24)
+
+### Features
+
+- add diagnostics log tab
+- normalize final output with OpenCC
+
+### Fixes
+
+- allow selecting custom STT endpoint
+- harden diagnostics log capture
+- use settings border token in diagnostics
+- avoid repeated OpenCC init errors
+- log character counts correctly
+
 ## 0.2.12 (2026-04-17)
 
 ### Features
