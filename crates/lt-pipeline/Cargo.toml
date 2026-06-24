@@ -11,6 +11,7 @@ lt-audio = { path = "../lt-audio" }
 lt-stt = { path = "../lt-stt" }
 lt-llm = { path = "../lt-llm" }
 lt-output = { path = "../lt-output" }
+ferrous-opencc = { version = "0.4.0", default-features = false, features = ["s2t-conversion"] }
 tokio = { version = "1.52.3", features = ["sync", "time", "macros"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
