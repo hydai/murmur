@@ -124,7 +124,7 @@
   .tool-btn {
     height: 30px;
     padding: 0 12px;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--bg-card);
     color: var(--text-primary);
@@ -150,7 +150,7 @@
     align-items: center;
     min-height: 72px;
     padding: 0 14px;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--bg-card);
     color: var(--text-secondary);
@@ -165,7 +165,7 @@
 
   .log-row {
     padding: 10px 12px;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--bg-card);
   }
