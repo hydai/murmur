@@ -12,6 +12,8 @@ commands.allow = [
     "get_pipeline_state",
     "get_config",
     "save_config",
+    "get_diagnostic_logs",
+    "clear_diagnostic_logs",
     "set_stt_provider",
     "save_api_key",
     "get_stt_providers",

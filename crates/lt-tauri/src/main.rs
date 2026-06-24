@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod diagnostics;
 mod permissions;
 mod sound;
 
@@ -27,6 +28,7 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::Mutex;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Application state using unified pipeline
 #[derive(Clone)]
@@ -92,6 +94,17 @@ async fn save_config(config: AppConfig) -> Result<(), String> {
     config
         .save_to_file(&config_path)
         .map_err(|e| format!("Failed to save config: {}", e))
+}
+
+#[tauri::command]
+async fn get_diagnostic_logs() -> Vec<diagnostics::DiagnosticLogEntry> {
+    diagnostics::shared_diagnostic_log_store().entries()
+}
+
+#[tauri::command]
+async fn clear_diagnostic_logs() -> Result<(), String> {
+    diagnostics::shared_diagnostic_log_store().clear();
+    Ok(())
 }
 
 #[tauri::command]
@@ -1727,8 +1740,11 @@ fn rebuild_tray_menu(
 
 fn main() {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("lt_tauri=debug,lt_audio=debug,lt_stt=debug,lt_llm=debug,lt_pipeline=debug,lt_output=debug,info")
+    let diagnostic_log_store = diagnostics::shared_diagnostic_log_store();
+    tracing_subscriber::registry()
+        .with(EnvFilter::new("lt_tauri=debug,lt_audio=debug,lt_stt=debug,lt_llm=debug,lt_pipeline=debug,lt_output=debug,info"))
+        .with(tracing_subscriber::fmt::layer())
+        .with(diagnostics::DiagnosticLogLayer::new(diagnostic_log_store))
         .init();
 
     // Load config to determine LLM processor
@@ -1841,6 +1857,8 @@ fn main() {
             get_pipeline_state,
             get_config,
             save_config,
+            get_diagnostic_logs,
+            clear_diagnostic_logs,
             set_stt_provider,
             save_api_key,
             get_stt_providers,

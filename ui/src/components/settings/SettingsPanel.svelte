@@ -2,13 +2,14 @@
   import { onDestroy, onMount } from 'svelte';
   import { getVersion } from '@tauri-apps/api/app';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import { Mic, Cpu, Keyboard, Type, BookOpen, FileCode, Info } from 'lucide-svelte';
+  import { Mic, Cpu, Keyboard, Type, BookOpen, FileCode, Bug, Info } from 'lucide-svelte';
   import ProviderConfig from './ProviderConfig.svelte';
   import DictionaryEditor from './DictionaryEditor.svelte';
   import LlmConfig from './LlmConfig.svelte';
   import HotkeyConfig from './HotkeyConfig.svelte';
   import OutputConfig from './OutputConfig.svelte';
   import PromptsEditor from './PromptsEditor.svelte';
+  import DiagnosticsPanel from './DiagnosticsPanel.svelte';
   import AboutSection from './AboutSection.svelte';
 
   let { visible, onClose }: { visible: boolean; onClose: () => void } = $props();
@@ -31,6 +32,7 @@
     { id: 'output', label: 'Output Mode', icon: Type },
     { id: 'dictionary', label: 'Dictionary', icon: BookOpen },
     { id: 'prompts', label: 'Prompts', icon: FileCode },
+    { id: 'diagnostics', label: 'Diagnostics', icon: Bug },
     { id: 'about', label: 'About', icon: Info },
   ];
 
@@ -100,6 +102,8 @@
             <DictionaryEditor />
           {:else if activeTab === 'prompts'}
             <PromptsEditor />
+          {:else if activeTab === 'diagnostics'}
+            <DiagnosticsPanel />
           {:else if activeTab === 'about'}
             <AboutSection
               pendingCheck={pendingUpdateCheck}
@@ -151,6 +155,10 @@
               <OutputConfig />
             {:else if activeTab === 'dictionary'}
               <DictionaryEditor />
+            {:else if activeTab === 'prompts'}
+              <PromptsEditor />
+            {:else if activeTab === 'diagnostics'}
+              <DiagnosticsPanel />
             {:else if activeTab === 'about'}
               <AboutSection
                 pendingCheck={pendingUpdateCheck}
