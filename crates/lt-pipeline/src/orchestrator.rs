@@ -239,7 +239,7 @@ impl PipelineOrchestrator {
 
                 tracing::info!(
                     "Starting LLM post-processing: input_len={} chars",
-                    full_transcription.len()
+                    full_transcription.chars().count()
                 );
                 tracing::debug!("LLM input text: {:?}", &full_transcription);
 
@@ -251,7 +251,7 @@ impl PipelineOrchestrator {
                         tracing::info!(
                             "LLM processing successful (took {}ms, output_len={} chars)",
                             output.processing_time_ms,
-                            final_text.len()
+                            final_text.chars().count()
                         );
                         tracing::debug!("LLM output text: {:?}", &final_text);
 
