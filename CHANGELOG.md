@@ -1,4 +1,12 @@
 # Changelog
+## 0.2.14 (2026-06-24)
+
+### Fixes
+
+- prevent custom STT backpressure
+- bound custom STT transcription backlog
+- time out custom transcription requests
+
 ## 0.2.13 (2026-06-24)
 
 ### Features
