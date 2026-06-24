@@ -3,7 +3,7 @@ use lt_core::error::{MurmurError, Result};
 use lt_core::stt::{AudioChunk, SttProvider, TranscriptionEvent};
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, warn};
 
@@ -11,6 +11,10 @@ use crate::chunker::AudioChunker;
 
 pub const DEFAULT_MODEL: &str = "whisper-1";
 const MAX_PENDING_TRANSCRIPTION_CHUNKS: usize = 4;
+#[cfg(not(test))]
+const TRANSCRIPTION_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const TRANSCRIPTION_REQUEST_TIMEOUT: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Deserialize)]
 struct WhisperResponse {
@@ -107,6 +111,20 @@ impl CustomSttProvider {
 
         Ok(whisper_response.text)
     }
+
+    async fn transcribe_audio_with_timeout(&self, wav_bytes: Vec<u8>) -> Result<String> {
+        tokio::time::timeout(
+            TRANSCRIPTION_REQUEST_TIMEOUT,
+            self.transcribe_audio(wav_bytes),
+        )
+        .await
+        .map_err(|_| {
+            MurmurError::Stt(format!(
+                "Custom STT request timed out after {:?}",
+                TRANSCRIPTION_REQUEST_TIMEOUT
+            ))
+        })?
+    }
 }
 
 #[async_trait]
@@ -140,7 +158,7 @@ impl SttProvider for CustomSttProvider {
                 while let Some((wav_bytes, timestamp_ms)) = wav_rx.recv().await {
                     last_timestamp_ms = timestamp_ms;
 
-                    match temp_provider.transcribe_audio(wav_bytes).await {
+                    match temp_provider.transcribe_audio_with_timeout(wav_bytes).await {
                         Ok(text) => {
                             if !text.trim().is_empty() {
                                 debug!("Custom STT transcription result: {}", text);
@@ -366,7 +384,7 @@ mod tests {
         }
 
         server.release_response();
-        let _ = provider.stop_session().await;
+        provider.stop_session().await.unwrap();
 
         assert!(
             blocked_at.is_none(),
@@ -411,6 +429,34 @@ mod tests {
             server.request_count(),
             1 + MAX_PENDING_TRANSCRIPTION_CHUNKS,
             "transcription requests should be capped while the endpoint is backlogged"
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_session_returns_when_custom_transcription_endpoint_hangs() {
+        let server = HangingTranscriptionServer::start().await;
+        let mut provider = CustomSttProvider::new(server.base_url(), None, None, None);
+
+        provider.start_session().await.unwrap();
+        let mut events = provider.subscribe_events().await;
+
+        provider.send_audio(test_chunk(1)).await.unwrap();
+        provider.send_audio(test_chunk(4001)).await.unwrap();
+        server.wait_for_request().await;
+
+        timeout(Duration::from_secs(1), provider.stop_session())
+            .await
+            .expect("stop_session should not wait forever for a hung transcription request")
+            .unwrap();
+
+        let event = timeout(Duration::from_secs(1), events.recv())
+            .await
+            .expect("timeout should emit a transcription error event")
+            .expect("event channel should remain open");
+        assert!(
+            matches!(event, TranscriptionEvent::Error { ref message } if message.contains("timed out")),
+            "expected timeout error event, got {:?}",
+            event
         );
     }
 
