@@ -10,6 +10,7 @@ use tokio::task::JoinHandle;
 
 use crate::commands::detect_command;
 use crate::state::{PipelineEvent, PipelineState};
+use crate::text_normalization::normalize_final_output;
 
 /// Pipeline orchestrator coordinating the full flow
 pub struct PipelineOrchestrator {
@@ -246,15 +247,16 @@ impl PipelineOrchestrator {
 
                 match llm_processor.process(task).await {
                     Ok(output) => {
+                        let final_text = normalize_final_output(&output.text);
                         tracing::info!(
                             "LLM processing successful (took {}ms, output_len={} chars)",
                             output.processing_time_ms,
-                            output.text.len()
+                            final_text.len()
                         );
-                        tracing::debug!("LLM output text: {:?}", &output.text);
+                        tracing::debug!("LLM output text: {:?}", &final_text);
 
                         // Output to clipboard/keyboard
-                        if let Err(e) = output_sink.output_text(&output.text).await {
+                        if let Err(e) = output_sink.output_text(&final_text).await {
                             tracing::error!("Failed to output text: {}", e);
                             let _ = event_tx.send(PipelineEvent::Error {
                                 message: format!("Output failed: {}", e),
@@ -264,7 +266,7 @@ impl PipelineOrchestrator {
 
                         // Emit final result
                         let _ = event_tx.send(PipelineEvent::FinalResult {
-                            text: output.text,
+                            text: final_text,
                             processing_time_ms: start_time.elapsed().as_millis() as u64,
                         });
 
@@ -280,6 +282,7 @@ impl PipelineOrchestrator {
                     }
                     Err(e) => {
                         tracing::error!("LLM processing failed: {}", e);
+                        let fallback_text = normalize_final_output(&full_transcription);
 
                         // Emit error but try to output raw transcription
                         let _ = event_tx.send(PipelineEvent::Error {
@@ -291,13 +294,13 @@ impl PipelineOrchestrator {
                         });
 
                         // Output raw transcription as fallback
-                        if let Err(e) = output_sink.output_text(&full_transcription).await {
+                        if let Err(e) = output_sink.output_text(&fallback_text).await {
                             tracing::error!("Failed to output raw transcription: {}", e);
                         }
 
                         // Emit raw transcription as final result
                         let _ = event_tx.send(PipelineEvent::FinalResult {
-                            text: full_transcription,
+                            text: fallback_text,
                             processing_time_ms: start_time.elapsed().as_millis() as u64,
                         });
 
