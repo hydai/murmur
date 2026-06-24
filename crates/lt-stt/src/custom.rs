@@ -381,6 +381,7 @@ mod tests {
                     break;
                 }
             }
+            tokio::task::yield_now().await;
         }
 
         server.release_response();
