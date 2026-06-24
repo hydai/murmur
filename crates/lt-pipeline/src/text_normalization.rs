@@ -30,10 +30,7 @@ pub(crate) fn normalize_final_output(text: &str) -> String {
 
     let converted = match opencc_s2twp() {
         Ok(opencc) => opencc.convert(text),
-        Err(error) => {
-            tracing::error!(error, "OpenCC S2TWP initialization failed");
-            fallback_normalize(text)
-        }
+        Err(_) => fallback_normalize(text),
     };
 
     apply_taiwan_term_overrides(&converted)
@@ -42,7 +39,11 @@ pub(crate) fn normalize_final_output(text: &str) -> String {
 fn opencc_s2twp() -> Result<&'static OpenCC, &'static str> {
     OPENCC_S2TWP
         .get_or_init(|| {
-            OpenCC::from_config(BuiltinConfig::S2twp).map_err(|error| error.to_string())
+            OpenCC::from_config(BuiltinConfig::S2twp).map_err(|error| {
+                let error = error.to_string();
+                tracing::error!(%error, "OpenCC S2TWP initialization failed");
+                error
+            })
         })
         .as_ref()
         .map_err(String::as_str)
