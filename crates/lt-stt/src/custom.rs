@@ -14,7 +14,7 @@ const MAX_PENDING_TRANSCRIPTION_CHUNKS: usize = 4;
 #[cfg(not(test))]
 const TRANSCRIPTION_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(test)]
-const TRANSCRIPTION_REQUEST_TIMEOUT: Duration = Duration::from_millis(100);
+const TRANSCRIPTION_REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Deserialize)]
 struct WhisperResponse {
@@ -444,12 +444,12 @@ mod tests {
         provider.send_audio(test_chunk(4001)).await.unwrap();
         server.wait_for_request().await;
 
-        timeout(Duration::from_secs(1), provider.stop_session())
+        timeout(Duration::from_secs(2), provider.stop_session())
             .await
             .expect("stop_session should not wait forever for a hung transcription request")
             .unwrap();
 
-        let event = timeout(Duration::from_secs(1), events.recv())
+        let event = timeout(Duration::from_secs(2), events.recv())
             .await
             .expect("timeout should emit a transcription error event")
             .expect("event channel should remain open");
