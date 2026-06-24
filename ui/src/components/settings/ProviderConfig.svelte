@@ -6,15 +6,7 @@
   import SectionHeader from './ui/SectionHeader.svelte';
   import StatusRow from './ui/StatusRow.svelte';
   import ActionRow from './ui/ActionRow.svelte';
-
-  interface Provider {
-    id: string;
-    name: string;
-    configured: boolean;
-    provider_type: string;
-    requires_api_key: boolean;
-    model_status: string | null;
-  }
+  import { groupSttProviders, type Provider } from './providerGroups';
 
   let providers = $state<Provider[]>([]);
   let currentProvider = $state('');
@@ -51,9 +43,10 @@
   let unlistenProgress: UnlistenFn | null = null;
 
   // Derived: group providers by type
-  let localProviders = $derived(providers.filter(p => p.provider_type === 'local'));
-  let cloudProviders = $derived(providers.filter(p => p.provider_type !== 'local' && p.id !== 'custom_stt'));
-  let customProvider = $derived(providers.find(p => p.id === 'custom_stt'));
+  let providerGroups = $derived(groupSttProviders(providers));
+  let localProviders = $derived(providerGroups.localProviders);
+  let cloudProviders = $derived(providerGroups.cloudProviders);
+  let customProvider = $derived(providerGroups.customProvider);
 
   onMount(async () => {
     await loadProviders();
@@ -151,7 +144,27 @@
     if (!provider) return;
 
     if (providerId === 'custom_stt') {
-      showCustomSttSection = !showCustomSttSection;
+      if (!provider.configured) {
+        showCustomSttSection = true;
+        return;
+      }
+
+      try {
+        loading = true;
+        error = '';
+        success = '';
+
+        await invoke('set_stt_provider', { provider: providerId });
+        currentProvider = providerId;
+
+        success = `Switched to ${provider.name}`;
+        setTimeout(() => { success = ''; }, 3000);
+      } catch (err) {
+        error = `Failed to switch provider: ${err}`;
+        console.error(error);
+      } finally {
+        loading = false;
+      }
       return;
     }
 
@@ -352,7 +365,13 @@
   }
 
   async function saveCustomSttEndpoint() {
-    if (!customSttBaseUrl.trim()) {
+    const baseUrl = customSttBaseUrl.trim();
+    const displayName = customSttDisplayName.trim();
+    const model = customSttModel.trim();
+    const language = customSttLanguage.trim();
+    const apiKey = customSttApiKey.trim();
+
+    if (!baseUrl) {
       error = 'Base URL is required for custom STT endpoint';
       return;
     }
@@ -363,24 +382,28 @@
       success = '';
 
       await invoke('set_custom_stt_endpoint', {
-        baseUrl: customSttBaseUrl,
-        displayName: customSttDisplayName || null,
-        model: customSttModel || null,
-        language: customSttLanguage || null,
+        baseUrl,
+        displayName: displayName || null,
+        model: model || null,
+        language: language || null,
       });
 
-      if (customSttApiKey.trim()) {
+      if (apiKey) {
         await invoke('save_api_key', {
           provider: 'custom_stt',
-          apiKey: customSttApiKey
+          apiKey
         });
       }
 
       await invoke('set_stt_provider', { provider: 'custom_stt' });
       currentProvider = 'custom_stt';
+      customSttBaseUrl = baseUrl;
+      customSttDisplayName = displayName;
+      customSttModel = model;
+      customSttLanguage = language;
 
       await loadProviders();
-      success = `Custom STT endpoint activated: ${customSttDisplayName || customSttBaseUrl}`;
+      success = `Custom STT endpoint activated: ${displayName || baseUrl}`;
       customSttApiKey = '';
       setTimeout(() => { success = ''; }, 3000);
     } catch (err) {
@@ -538,8 +561,27 @@
   <!-- CUSTOM ENDPOINT -->
   <div class="section">
     <SectionHeader label="CUSTOM ENDPOINT" />
+    {#if customProvider && (customProvider.configured || currentProvider === customProvider.id)}
+      <div class="section-rows">
+        <StatusRow
+          label={customProvider.name}
+          value={getProviderValue(customProvider)}
+          status={getProviderStatus(customProvider)}
+          statusText={getProviderStatusText(customProvider)}
+          onclick={() => selectProvider(customProvider.id)}
+        >
+          {#snippet children()}
+            {#if customProvider.configured}
+              <button class="inline-btn" onclick={(e) => { e.stopPropagation(); showCustomSttSection = true; }}>
+                Edit
+              </button>
+            {/if}
+          {/snippet}
+        </StatusRow>
+      </div>
+    {/if}
     <ActionRow
-      label="Add custom Whisper-compatible endpoint"
+      label={customProvider?.configured ? 'Edit custom Whisper-compatible endpoint' : 'Add custom Whisper-compatible endpoint'}
       onclick={() => { showCustomSttSection = !showCustomSttSection; }}
     />
 
