@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::fmt;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tracing::field::{Field, Visit};
@@ -49,7 +49,7 @@ impl DiagnosticLogStore {
             return;
         }
 
-        let mut entries = self.entries.lock().expect("diagnostic log lock poisoned");
+        let mut entries = self.entries_guard();
         while entries.len() >= self.capacity {
             entries.pop_front();
         }
@@ -57,19 +57,18 @@ impl DiagnosticLogStore {
     }
 
     pub fn entries(&self) -> Vec<DiagnosticLogEntry> {
-        self.entries
-            .lock()
-            .expect("diagnostic log lock poisoned")
-            .iter()
-            .cloned()
-            .collect()
+        self.entries_guard().iter().cloned().collect()
     }
 
     pub fn clear(&self) {
-        self.entries
-            .lock()
-            .expect("diagnostic log lock poisoned")
-            .clear();
+        self.entries_guard().clear();
+    }
+
+    fn entries_guard(&self) -> MutexGuard<'_, VecDeque<DiagnosticLogEntry>> {
+        match self.entries.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
     }
 }
 
@@ -124,16 +123,56 @@ impl DiagnosticFieldVisitor {
             (None, _) => self.fields.join(", "),
         }
     }
-}
 
-impl Visit for DiagnosticFieldVisitor {
-    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-        let value = trim_debug_string(&format!("{value:?}")).to_string();
+    fn record_field(&mut self, field: &Field, value: String) {
         if field.name() == "message" {
             self.message = Some(value);
         } else {
             self.fields.push(format!("{}={}", field.name(), value));
         }
+    }
+}
+
+impl Visit for DiagnosticFieldVisitor {
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        self.record_field(field, value.to_string());
+    }
+
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.record_field(field, value.to_string());
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.record_field(field, value.to_string());
+    }
+
+    fn record_i128(&mut self, field: &Field, value: i128) {
+        self.record_field(field, value.to_string());
+    }
+
+    fn record_u128(&mut self, field: &Field, value: u128) {
+        self.record_field(field, value.to_string());
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.record_field(field, value.to_string());
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.record_field(field, value.to_string());
+    }
+
+    fn record_bytes(&mut self, field: &Field, value: &[u8]) {
+        self.record_field(field, format!("{value:?}"));
+    }
+
+    fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
+        self.record_field(field, value.to_string());
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        let value = trim_debug_string(&format!("{value:?}")).to_string();
+        self.record_field(field, value);
     }
 }
 
@@ -177,6 +216,8 @@ fn redact_sensitive(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use tracing_subscriber::layer::SubscriberExt;
 
     #[test]
     fn diagnostic_log_store_keeps_recent_entries_and_clears() {
@@ -205,5 +246,54 @@ mod tests {
 
         store.clear();
         assert!(store.entries().is_empty());
+    }
+
+    #[test]
+    fn diagnostic_log_store_recovers_from_poisoned_lock() {
+        let store = DiagnosticLogStore::new(2);
+
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = store.entries.lock().expect("lock before poison");
+            panic!("poison diagnostic log lock");
+        }));
+
+        store.push(DiagnosticLogEntry::new(
+            "error".to_string(),
+            "lt_tauri".to_string(),
+            "after poison".to_string(),
+        ));
+
+        let entries = store.entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].message, "after poison");
+
+        store.clear();
+        assert!(store.entries().is_empty());
+    }
+
+    #[test]
+    fn diagnostic_log_layer_records_typed_fields() {
+        let store = Arc::new(DiagnosticLogStore::new(5));
+        let subscriber =
+            tracing_subscriber::registry().with(DiagnosticLogLayer::new(store.clone()));
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::warn!(
+                target: "lt_stt::custom",
+                error = "timeout",
+                attempts = 2_u64,
+                retry = true,
+                "Custom STT request failed"
+            );
+        });
+
+        let entries = store.entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].target, "lt_stt::custom");
+        assert_eq!(entries[0].level, "warn");
+        assert!(entries[0].message.contains("Custom STT request failed"));
+        assert!(entries[0].message.contains("error=timeout"));
+        assert!(entries[0].message.contains("attempts=2"));
+        assert!(entries[0].message.contains("retry=true"));
     }
 }
