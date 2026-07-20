@@ -35,26 +35,15 @@ pub enum AudioError {
     AlreadyRunning,
 }
 
-impl From<cpal::DevicesError> for AudioError {
-    fn from(err: cpal::DevicesError) -> Self {
-        AudioError::DeviceError(err.to_string())
-    }
-}
-
-impl From<cpal::DefaultStreamConfigError> for AudioError {
-    fn from(err: cpal::DefaultStreamConfigError) -> Self {
-        AudioError::DeviceError(err.to_string())
-    }
-}
-
-impl From<cpal::BuildStreamError> for AudioError {
-    fn from(err: cpal::BuildStreamError) -> Self {
-        AudioError::StreamError(err.to_string())
-    }
-}
-
-impl From<cpal::PlayStreamError> for AudioError {
-    fn from(err: cpal::PlayStreamError) -> Self {
-        AudioError::StreamError(err.to_string())
+impl From<cpal::Error> for AudioError {
+    fn from(err: cpal::Error) -> Self {
+        match err.kind() {
+            cpal::ErrorKind::PermissionDenied => AudioError::PermissionDenied,
+            cpal::ErrorKind::DeviceNotAvailable
+            | cpal::ErrorKind::HostUnavailable
+            | cpal::ErrorKind::DeviceBusy => AudioError::DeviceError(err.to_string()),
+            cpal::ErrorKind::UnsupportedConfig => AudioError::UnsupportedFormat(err.to_string()),
+            _ => AudioError::StreamError(err.to_string()),
+        }
     }
 }
