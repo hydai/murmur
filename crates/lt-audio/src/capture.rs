@@ -189,7 +189,7 @@ impl AudioCapture {
             }
         };
 
-        let stream = device.build_input_stream(&config, data_callback, err_fn, None)?;
+        let stream = device.build_input_stream(config, data_callback, err_fn, None)?;
         Ok(stream)
     }
 
@@ -216,7 +216,7 @@ impl AudioCapture {
             }
         };
 
-        let stream = device.build_input_stream(&config, data_callback, err_fn, None)?;
+        let stream = device.build_input_stream(config, data_callback, err_fn, None)?;
         Ok(stream)
     }
 
@@ -243,7 +243,7 @@ impl AudioCapture {
             }
         };
 
-        let stream = device.build_input_stream(&config, data_callback, err_fn, None)?;
+        let stream = device.build_input_stream(config, data_callback, err_fn, None)?;
         Ok(stream)
     }
 
