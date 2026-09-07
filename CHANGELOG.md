@@ -1,4 +1,10 @@
 # Changelog
+## 0.2.15 (2026-09-07)
+
+### Fixes
+
+- Update all Rust and UI dependencies. The bundled TLS stack now uses aws-lc-sys 0.45.0, which fixes RUSTSEC-2026-0044 through RUSTSEC-2026-0048; audio capture moves to cpal 0.18.2 and Tauri to 2.11.5.
+
 ## 0.2.14 (2026-06-24)
 
 ### Fixes
