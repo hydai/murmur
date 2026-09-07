@@ -9,17 +9,17 @@ repository.workspace = true
 lt-core = { path = "../lt-core" }
 
 # Audio capture and processing
-cpal = "0.18.1"
+cpal = "0.18.2"
 
 # Async runtime
-tokio = { version = "1.53.0", features = ["sync", "rt", "time"] }
+tokio = { version = "1.53.1", features = ["sync", "rt", "time"] }
 
 # Serialization
 serde.workspace = true
 
 # Error handling
 thiserror.workspace = true
-anyhow = "1.0.102"
+anyhow = "1.0.104"
 
 # Logging
 tracing.workspace = true
