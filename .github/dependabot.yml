@@ -60,6 +60,13 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
+      # svelte-check declares `typescript: ^5.0.0 || ^6.0.0` as a peer
+      # dependency, so a typescript 7 bump makes `npm ci` fail with
+      # ERESOLVE (see #96/#97). Allow minor/patch bumps only until
+      # svelte-check supports TypeScript 7.
+      - dependency-name: "typescript"
+        update-types:
+          - "version-update:semver-major"
 
   # GitHub Actions
   - package-ecosystem: github-actions

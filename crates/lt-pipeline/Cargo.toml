@@ -12,7 +12,7 @@ lt-stt = { path = "../lt-stt" }
 lt-llm = { path = "../lt-llm" }
 lt-output = { path = "../lt-output" }
 ferrous-opencc = { version = "0.4.0", default-features = false, features = ["s2t-conversion"] }
-tokio = { version = "1.53.0", features = ["sync", "time", "macros"] }
+tokio = { version = "1.53.1", features = ["sync", "time", "macros"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -20,4 +20,4 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1.53.0", features = ["rt-multi-thread"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread"] }
