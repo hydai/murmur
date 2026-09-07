@@ -14,3 +14,5 @@ pub use openai::OpenAIProvider;
 
 #[cfg(target_os = "macos")]
 pub use apple::AppleSttProvider;
+
+mod http;

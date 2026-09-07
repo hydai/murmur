@@ -255,12 +255,15 @@ impl LlmProcessor for HttpLlmProcessor {
                 if e.is_timeout() {
                     MurmurError::Llm(format!("Request timed out ({}s).", self.timeout_secs))
                 } else if e.is_connect() {
+                    // Custom endpoints may carry tokens in the URL path.
                     MurmurError::Llm(format!(
                         "Failed to connect to {}. Check your network connection.",
-                        self.base_url
+                        lt_core::redact::display_origin(&self.base_url)
                     ))
                 } else {
-                    MurmurError::Llm(format!("HTTP request failed: {}", e))
+                    // Gemini authenticates in the query string; reqwest's
+                    // Display includes that URL unless it is removed.
+                    MurmurError::Llm(format!("HTTP request failed: {}", e.without_url()))
                 }
             })?;
 
@@ -271,10 +274,9 @@ impl LlmProcessor for HttpLlmProcessor {
             return Err(self.map_http_error(status, &body));
         }
 
-        let json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| MurmurError::Llm(format!("Failed to parse API response: {}", e)))?;
+        let json: serde_json::Value = response.json().await.map_err(|e| {
+            MurmurError::Llm(format!("Failed to parse API response: {}", e.without_url()))
+        })?;
 
         let processed_text = self.extract_response(&json)?;
         let processing_time_ms = start_time.elapsed().as_millis() as u64;
@@ -301,6 +303,70 @@ impl LlmProcessor for HttpLlmProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn transport_error_does_not_expose_gemini_api_key() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let fake_key = "fake-key-for-error-redaction-test";
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = [0; 8192];
+            let size = stream.read(&mut request).unwrap();
+            assert!(String::from_utf8_lossy(&request[..size]).contains(fake_key));
+            // A malformed response causes a post-connect request error, whose
+            // reqwest Display includes the complete URL and query by default.
+            stream.write_all(b"not an HTTP response\r\n\r\n").unwrap();
+        });
+        let mut processor = HttpLlmProcessor::gemini_api(fake_key.into(), None);
+        processor.base_url = format!("http://{address}");
+        processor.client = Client::builder().no_proxy().build().unwrap();
+        let error = processor
+            .process(ProcessingTask::Shorten {
+                text: "test".into(),
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        server.join().unwrap();
+        assert!(error.contains("HTTP request failed"), "{error}");
+        assert!(
+            !error.contains(fake_key),
+            "API key leaked in error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn connection_error_does_not_expose_custom_endpoint_path() {
+        // Custom endpoints behind secret-URL tunnels or proxies carry the token
+        // in the path; a refused connection must not echo it back.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let secret = "top-secret-token";
+        let mut processor = HttpLlmProcessor::custom(
+            format!("http://127.0.0.1:{port}/{secret}/v1"),
+            "".into(),
+            None,
+        );
+        processor.client = Client::builder().no_proxy().build().unwrap();
+        let error = processor
+            .process(ProcessingTask::Shorten {
+                text: "test".into(),
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Failed to connect"), "{error}");
+        assert!(
+            !error.contains(secret),
+            "endpoint path leaked in error: {error}"
+        );
+    }
 
     #[test]
     fn test_openai_constructor() {

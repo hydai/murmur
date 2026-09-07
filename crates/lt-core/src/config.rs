@@ -185,7 +185,7 @@ impl AppConfig {
             std::fs::create_dir_all(parent)?;
         }
 
-        std::fs::write(path, content)?;
+        crate::persistence::atomic_write(path, content)?;
         Ok(())
     }
 }

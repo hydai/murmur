@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onMount } from 'svelte';
+  import { trapFocus } from '../../lib/focus';
+  import { useLifecycle } from '../../lib/lifecycle';
   import { getVersion } from '@tauri-apps/api/app';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { Mic, Cpu, Keyboard, Type, BookOpen, FileCode, Bug, Info } from 'lucide-svelte';
   import ProviderConfig from './ProviderConfig.svelte';
   import DictionaryEditor from './DictionaryEditor.svelte';
@@ -23,7 +24,7 @@
   let pendingUpdateCheck = $state(initialAction === 'check-update');
   let appVersion = $state('');
 
-  const unlistens: UnlistenFn[] = [];
+  const lifecycle = useLifecycle();
 
   const navItems = [
     { id: 'providers', label: 'STT Providers', icon: Mic },
@@ -36,19 +37,15 @@
     { id: 'about', label: 'About', icon: Info },
   ];
 
-  onMount(async () => {
-    appVersion = await getVersion();
+  onMount(() => {
+    getVersion().then((version) => {
+      if (!lifecycle.disposed) appVersion = version;
+    }).catch((error) => console.warn('Failed to get app version:', error));
 
-    unlistens.push(
-      await listen('open-about-and-check', () => {
-        activeTab = 'about';
-        pendingUpdateCheck = true;
-      })
-    );
-  });
-
-  onDestroy(() => {
-    for (const unlisten of unlistens) unlisten();
+    void lifecycle.listen('open-about-and-check', () => {
+      activeTab = 'about';
+      pendingUpdateCheck = true;
+    }).catch((error) => console.warn('Failed to listen for settings actions:', error));
   });
 
   function switchTab(tab: string) {
@@ -122,7 +119,7 @@
     <!-- Inline overlay mode -->
     <div class="settings-overlay" onclick={onClose} onkeydown={(e) => e.key === 'Escape' && onClose()} role="presentation">
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-      <div class="settings-dialog" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
+      <div class="settings-dialog" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') onClose(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-label="Settings">
         <div class="body">
           <nav class="sidebar">
             <div class="brand">

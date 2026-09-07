@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, untrack } from 'svelte';
+  import { useLifecycle } from '../../lib/lifecycle';
   import { getVersion } from '@tauri-apps/api/app';
   import { check } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { Settings, Shield, Cpu, ExternalLink, RefreshCw } from 'lucide-svelte';
   import PageHeader from './ui/PageHeader.svelte';
   import SectionHeader from './ui/SectionHeader.svelte';
@@ -32,40 +32,44 @@
   // Holds the update object so we can call download/install on it
   let pendingUpdate: Awaited<ReturnType<typeof check>> = $state(null);
 
-  const unlistens: UnlistenFn[] = [];
+  const lifecycle = useLifecycle();
 
-  onMount(async () => {
-    appVersion = await getVersion();
+  function releasePendingUpdate() {
+    const update = pendingUpdate;
+    pendingUpdate = null;
+    if (update) void update.close().catch((error) => console.warn('Failed to release update:', error));
+  }
 
-    // Listen for background update-available event (from Rust startup check)
-    unlistens.push(
-      await listen<{ version: string; body?: string }>('update-available', (event) => {
-        updateState = {
-          kind: 'available',
-          version: event.payload.version,
-          body: event.payload.body ?? null,
-        };
-      })
-    );
+  lifecycle.onCleanup(releasePendingUpdate);
+
+  onMount(() => {
+    getVersion().then((version) => {
+      if (!lifecycle.disposed) appVersion = version;
+    }).catch((error) => console.warn('Failed to get app version:', error));
+
+    void lifecycle.listen('update-available', () => {
+      // Event metadata alone cannot download an update: check creates its resource.
+      void checkForUpdates();
+    }).catch((error) => console.warn('Failed to listen for updates:', error));
   });
 
   $effect(() => {
     if (pendingCheck) {
       onCheckConsumed();
-      checkForUpdates();
-    }
-  });
-
-  onDestroy(() => {
-    for (const unlisten of unlistens) {
-      unlisten();
+      untrack(() => { void checkForUpdates(); });
     }
   });
 
   async function checkForUpdates() {
+    if (lifecycle.disposed || ['checking', 'downloading', 'ready'].includes(updateState.kind)) return;
+    releasePendingUpdate();
     updateState = { kind: 'checking' };
     try {
       const update = await check();
+      if (lifecycle.disposed) {
+        if (update) await update.close();
+        return;
+      }
       if (update) {
         pendingUpdate = update;
         updateState = {
@@ -82,23 +86,22 @@
   }
 
   async function downloadAndInstall() {
-    if (!pendingUpdate) return;
+    if (!pendingUpdate || updateState.kind === 'downloading') return;
     let totalBytes = 0;
     let downloadedBytes = 0;
     updateState = { kind: 'downloading', progress: 0, total: 0 };
 
     try {
       await pendingUpdate.downloadAndInstall((event) => {
+        if (lifecycle.disposed) return;
         if (event.event === 'Started' && event.data.contentLength) {
           totalBytes = event.data.contentLength;
         } else if (event.event === 'Progress') {
           downloadedBytes += event.data.chunkLength;
           updateState = { kind: 'downloading', progress: downloadedBytes, total: totalBytes };
-        } else if (event.event === 'Finished') {
-          updateState = { kind: 'ready' };
         }
       });
-      updateState = { kind: 'ready' };
+      if (!lifecycle.disposed) updateState = { kind: 'ready' };
     } catch (e) {
       updateState = { kind: 'error', message: String(e) };
     }

@@ -14,12 +14,10 @@
   const IconComponent = $derived(icon ?? Plus);
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="action-row" class:clickable={!!onclick} onclick={onclick}>
+<button type="button" class="action-row" class:clickable={!!onclick} {onclick}>
   <IconComponent size={14} color="var(--text-muted)" />
   <span class="label">{label}</span>
-</div>
+</button>
 
 <style>
   .action-row {
@@ -34,6 +32,8 @@
     width: 100%;
     transition: background 0.15s ease;
   }
+
+  .action-row:focus-visible { outline: 2px solid var(--accent); }
 
   .action-row.clickable {
     cursor: pointer;

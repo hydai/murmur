@@ -93,8 +93,6 @@ impl AudioCapture {
 
         // Build audio stream based on sample format
         let is_running = Arc::clone(&self.is_running);
-        is_running.store(true, Ordering::SeqCst);
-
         let stream = match config.sample_format() {
             cpal::SampleFormat::I16 => self.build_stream_i16(&device, &config, raw_tx)?,
             cpal::SampleFormat::U16 => self.build_stream_u16(&device, &config, raw_tx)?,
@@ -106,10 +104,10 @@ impl AudioCapture {
 
         // Start the stream
         stream.play()?;
+        is_running.store(true, Ordering::SeqCst);
         self.stream = Some(stream);
 
         // Spawn processing task
-        let is_running_clone = Arc::clone(&is_running);
         let session_start = Arc::clone(&self.session_start_ms);
 
         let processing_task = tokio::spawn(async move {
@@ -119,7 +117,6 @@ impl AudioCapture {
                 level_tx,
                 sample_rate,
                 channels,
-                is_running_clone,
                 session_start,
             )
             .await;
@@ -254,7 +251,6 @@ impl AudioCapture {
         level_tx: mpsc::Sender<AudioLevel>,
         sample_rate: u32,
         channels: usize,
-        is_running: Arc<AtomicBool>,
         session_start: Arc<AtomicU64>,
     ) {
         debug!(
@@ -275,8 +271,11 @@ impl AudioCapture {
         let vad = VadProcessor::new(0.02);
 
         let start_ms = session_start.load(Ordering::SeqCst);
+        let mut last_timestamp_ms = 0;
 
-        while is_running.load(Ordering::SeqCst) {
+        // Dropping the stream closes raw_tx. Drain queued callbacks before
+        // closing the STT channel so releasing the hotkey preserves tail audio.
+        loop {
             // Receive raw audio from cpal callback
             let raw_samples = match raw_rx.recv().await {
                 Some(samples) => samples,
@@ -291,7 +290,8 @@ impl AudioCapture {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_millis() as u64;
-            let timestamp_ms = now_ms - start_ms;
+            let timestamp_ms = now_ms.saturating_sub(start_ms);
+            last_timestamp_ms = timestamp_ms;
 
             // Resample to 16kHz mono
             let resampled = match resampler.resample(&raw_samples) {
@@ -302,6 +302,10 @@ impl AudioCapture {
                 }
             };
 
+            if resampled.is_empty() {
+                continue;
+            }
+
             // Calculate audio level and VAD
             let audio_level = vad.process(&resampled, timestamp_ms);
 
@@ -311,18 +315,30 @@ impl AudioCapture {
                 // UI updates can be dropped without issue
             }
 
-            // Send audio chunk (non-blocking)
+            // Backpressure is safe on this worker; only the device callback
+            // must remain nonblocking. Drain accepted audio on normal stop.
             let chunk = AudioChunk {
                 data: resampled,
                 timestamp_ms,
             };
 
-            if chunk_tx.try_send(chunk).is_err() {
-                // Chunk channel full - this is more critical but we still don't want to block
-                warn!("Audio chunk channel full, dropping chunk");
+            if chunk_tx.send(chunk).await.is_err() {
+                break;
             }
         }
 
+        match resampler.flush() {
+            Ok(tail) if !tail.is_empty() => {
+                let _ = chunk_tx
+                    .send(AudioChunk {
+                        data: tail,
+                        timestamp_ms: last_timestamp_ms,
+                    })
+                    .await;
+            }
+            Err(error) => error!("Failed to flush audio resampler: {}", error),
+            _ => {}
+        }
         debug!("Processing loop finished");
     }
 }
@@ -338,5 +354,45 @@ impl Drop for AudioCapture {
         if self.is_running.load(Ordering::SeqCst) {
             let _ = self.stop();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shutdown_drains_queued_callbacks_and_filter_tail_under_backpressure() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (raw_tx, raw_rx) = mpsc::channel(64);
+                let (chunk_tx, mut chunks) = mpsc::channel(1);
+                let (level_tx, _levels) = mpsc::channel(1);
+                for _ in 0..10 {
+                    raw_tx.send(vec![1000i16; 480]).await.unwrap();
+                }
+                drop(raw_tx);
+                let task = tokio::spawn(AudioCapture::processing_loop(
+                    raw_rx,
+                    chunk_tx,
+                    level_tx,
+                    48000,
+                    1,
+                    Arc::new(AtomicU64::new(0)),
+                ));
+                let mut captured = Vec::new();
+                while let Some(chunk) = chunks.recv().await {
+                    captured.extend(chunk.data);
+                }
+                task.await.unwrap();
+                let mut reference = AudioResampler::new(48000, 16000, 1).unwrap();
+                let mut expected = reference.resample(&vec![1000i16; 4800]).unwrap();
+                expected.extend(reference.flush().unwrap());
+                assert_eq!(captured.len(), 1600);
+                assert_eq!(captured, expected);
+            });
     }
 }

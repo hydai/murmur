@@ -1,8 +1,11 @@
 <script lang="ts">
+  import { useLifecycle } from '../../lib/lifecycle';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount } from 'svelte';
   import PageHeader from './ui/PageHeader.svelte';
   import SectionHeader from './ui/SectionHeader.svelte';
+
+  const lifecycle = useLifecycle();
 
   let currentHotkey = $state('Ctrl+`');
   let isRecording = $state(false);
@@ -81,7 +84,7 @@
       error = 'Hotkey must include at least one modifier key (Cmd, Ctrl, Alt, or Shift)';
       isRecording = false;
       recordedKeys = [];
-      setTimeout(() => { error = ''; }, 4000);
+      lifecycle.timeout(() => { error = ''; }, 4000, 'error');
       return;
     }
 
@@ -94,7 +97,7 @@
       isRecording = false;
       recordedKeys = [];
       success = `Hotkey updated to: ${hotkey}`;
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err: unknown) {
       error = `Failed to set hotkey: ${err}`;
       console.error(error);

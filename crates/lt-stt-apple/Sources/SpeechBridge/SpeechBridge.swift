@@ -35,6 +35,7 @@ final class SpeechSession: @unchecked Sendable {
 
     // Background task for iterating transcription results.
     private let resultTask: Task<Void, Never>
+    private let analyzer: SpeechAnalyzer
 
     // Cumulative audio timeline in nanoseconds.
     // Each buffer's start time = previous buffer's end time.
@@ -67,6 +68,9 @@ final class SpeechSession: @unchecked Sendable {
             preset: .progressiveTranscription
         )
 
+        let analyzer = SpeechAnalyzer(inputSequence: stream, modules: [transcriber])
+        self.analyzer = analyzer
+
         // Capture Sendable values for the task closure.
         let capturedCtx = self.ctx
         let capturedOnTranscription = self.onTranscription
@@ -77,11 +81,6 @@ final class SpeechSession: @unchecked Sendable {
         //   2. Iterates transcription results
         self.resultTask = Task {
             do {
-                let analyzer = SpeechAnalyzer(
-                    inputSequence: stream,
-                    modules: [transcriber]
-                )
-
                 // Iterate transcription results from the transcriber module.
                 for try await result in transcriber.results {
                     let text = String(result.text.characters)
@@ -147,20 +146,36 @@ final class SpeechSession: @unchecked Sendable {
         audioContinuation.finish()
     }
 
-    /// Cancel the result iteration task, wait for completion, and clean up.
-    /// This ensures no callbacks fire after Rust frees the CallbackContext.
+    /// Drain the input and final results before freeing the callback context.
+    /// A watchdog cancels a stalled analyzer, but we still join result delivery.
     func destroyAndWait() {
         audioContinuation.finish()
-        resultTask.cancel()
-        // Synchronously wait for the task to complete.
-        let task = resultTask
-        let semaphore = DispatchSemaphore(value: 0)
-        Task {
-            _ = await task.value
-            semaphore.signal()
+        let analyzer = self.analyzer
+        let resultTask = self.resultTask
+        runBlocking {
+            let watchdog = Task {
+                do {
+                    try await Task.sleep(for: .seconds(10))
+                } catch {
+                    return
+                }
+                await analyzer.cancelAndFinishNow()
+                resultTask.cancel()
+            }
+            do {
+                // Finishing AsyncStream alone does not finalize a SpeechAnalyzer:
+                // https://developer.apple.com/documentation/speech/speechanalyzer
+                try await analyzer.finalizeAndFinishThroughEndOfInput()
+            } catch {
+                await analyzer.cancelAndFinishNow()
+                resultTask.cancel()
+            }
+            await resultTask.value
+            watchdog.cancel()
+            await watchdog.value
         }
-        semaphore.wait()
     }
+
 }
 
 // MARK: - Sync-async bridge helpers
@@ -272,22 +287,29 @@ public func speechBridgeDownloadModel(
                 return
             }
 
-            // Start the download.
             let progress = request.progress
-            Task {
-                do {
-                    try await request.downloadAndInstall()
-                    capturedCallback?(capturedCtx.value, 1.0, true)
-                } catch {
-                    capturedCallback?(capturedCtx.value, 0.0, true)
+            let progressTask = Task {
+                while !Task.isCancelled {
+                    capturedCallback?(capturedCtx.value, progress.fractionCompleted, false)
+                    do {
+                        try await Task.sleep(for: .milliseconds(500))
+                    } catch {
+                        break
+                    }
                 }
             }
-
-            // Poll progress until complete.
-            while !progress.isFinished && !progress.isCancelled {
-                capturedCallback?(capturedCtx.value, progress.fractionCompleted, false)
-                try await Task.sleep(for: .milliseconds(500))
+            let succeeded: Bool
+            do {
+                try await request.downloadAndInstall()
+                succeeded = true
+            } catch {
+                succeeded = false
             }
+            // The Rust terminal callback releases ctx. Join every producer
+            // first so failure, cancellation, and slow downloads are safe.
+            progressTask.cancel()
+            await progressTask.value
+            capturedCallback?(capturedCtx.value, succeeded ? 1.0 : 0.0, true)
         } catch {
             capturedCallback?(capturedCtx.value, 0.0, true)
         }

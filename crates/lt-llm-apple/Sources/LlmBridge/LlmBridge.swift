@@ -19,19 +19,14 @@ struct SendableErrorCB: @unchecked Sendable {
     let fn: LlmErrorCallback
 }
 
-// MARK: - Sync-async bridge helper
+/// Rust owns one retained handle until completion or cancellation. The task
+/// owns its copied inputs and callback context independently of this handle.
+private final class LlmRequest {
+    let task: Task<Void, Never>
 
-/// Runs an async closure synchronously using a semaphore.
-/// Used by @_cdecl functions which cannot be async.
-private func runBlocking<T: Sendable>(_ body: @Sendable @escaping () async -> T) -> T {
-    let semaphore = DispatchSemaphore(value: 0)
-    nonisolated(unsafe) var result: T!
-    Task {
-        result = await body()
-        semaphore.signal()
+    init(task: Task<Void, Never>) {
+        self.task = task
     }
-    semaphore.wait()
-    return result
 }
 
 // MARK: - @_cdecl entry points
@@ -49,11 +44,11 @@ public func llmBridgeProcess(
     _ ctx: UnsafeMutableRawPointer?,
     _ onComplete: LlmCompletionCallback?,
     _ onError: LlmErrorCallback?
-) {
+) -> UnsafeMutableRawPointer? {
     guard #available(macOS 26, *) else {
         let msg = "Apple Foundation Models requires macOS 26+"
         msg.withCString { onError?(ctx, $0) }
-        return
+        return nil
     }
 
     guard let instructions = instructions,
@@ -62,7 +57,7 @@ public func llmBridgeProcess(
           let onError = onError else {
         let msg = "Invalid arguments: instructions, prompt, and callbacks are required"
         msg.withCString { onError?(ctx, $0) }
-        return
+        return nil
     }
 
     let instructionsStr = String(cString: instructions)
@@ -71,12 +66,14 @@ public func llmBridgeProcess(
     let capturedOnComplete = SendableCompletionCB(fn: onComplete)
     let capturedOnError = SendableErrorCB(fn: onError)
 
-    runBlocking {
+    let task = Task {
         do {
+            try Task.checkCancellation()
             let session = LanguageModelSession(
                 instructions: instructionsStr
             )
             let response = try await session.respond(to: promptStr)
+            try Task.checkCancellation()
             let text = String(response.content)
             text.withCString { capturedOnComplete.fn(capturedCtx.value, $0) }
         } catch {
@@ -84,6 +81,16 @@ public func llmBridgeProcess(
             msg.withCString { capturedOnError.fn(capturedCtx.value, $0) }
         }
     }
+    return Unmanaged.passRetained(LlmRequest(task: task)).toOpaque()
+}
+
+/// Consumes the retained request handle. Cancellation is cooperative; the
+/// task still invokes exactly one callback, which releases Rust's context.
+@_cdecl("llm_bridge_cancel")
+public func llmBridgeCancel(_ handle: UnsafeMutableRawPointer?) {
+    guard let handle = handle else { return }
+    let request = Unmanaged<LlmRequest>.fromOpaque(handle).takeRetainedValue()
+    request.task.cancel()
 }
 
 @_cdecl("llm_bridge_free_string")

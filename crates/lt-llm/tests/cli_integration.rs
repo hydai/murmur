@@ -41,8 +41,8 @@ async fn test_cli_exit_code_handling() {
 #[tokio::test]
 async fn test_mock_gemini_cli_success() {
     // Create a mock gemini CLI script
-    let temp_dir = std::env::temp_dir();
-    let mock_cli_path = temp_dir.join("mock_gemini");
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let mock_cli_path = temp_dir.path().join("mock_gemini");
 
     // Write mock script
     let script = r#"#!/bin/bash
@@ -76,8 +76,8 @@ exit 0
 #[tokio::test]
 async fn test_mock_gemini_cli_failure() {
     // Create a mock gemini CLI script that fails
-    let temp_dir = std::env::temp_dir();
-    let mock_cli_path = temp_dir.join("mock_gemini_fail");
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let mock_cli_path = temp_dir.path().join("mock_gemini_fail");
 
     // Write mock script that fails
     let script = r#"#!/bin/bash
@@ -114,6 +114,109 @@ async fn test_is_available() {
 
     // Test with a command that should not exist
     assert!(!executor.is_available("nonexistent-command-xyz123").await);
+    assert!(!executor.is_available("false").await);
+}
+
+#[tokio::test]
+async fn drains_large_stderr_while_waiting_for_stdout() {
+    let output = CliExecutor::with_timeout(3)
+        .execute(
+            "/bin/sh",
+            &["-c", "head -c 1048576 /dev/zero >&2; printf complete"],
+        )
+        .await
+        .unwrap();
+    assert_eq!(output.exit_code, 0);
+    assert_eq!(output.stdout, "complete");
+    assert_eq!(output.stderr.len(), 1_048_576);
+}
+
+#[tokio::test]
+async fn child_stdin_is_closed() {
+    let output = CliExecutor::with_timeout(1)
+        .execute("cat", &[])
+        .await
+        .unwrap();
+    assert_eq!(output.exit_code, 0);
+    assert!(output.stdout.is_empty());
+}
+
+async fn process_exists(pid: &str) -> bool {
+    tokio::process::Command::new("/bin/kill")
+        .args(["-0", pid])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .unwrap()
+        .success()
+}
+
+#[tokio::test]
+async fn cancellation_kills_and_reaps_child() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let pid_path = temp_dir.path().join("child.pid");
+    let task_path = pid_path.clone();
+    let task = tokio::spawn(async move {
+        CliExecutor::with_timeout(10)
+            .execute(
+                "/bin/sh",
+                &[
+                    "-c",
+                    "echo $$ > \"$1\"; exec sleep 20",
+                    "child",
+                    task_path.to_str().unwrap(),
+                ],
+            )
+            .await
+    });
+    let pid = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Ok(pid) = fs::read_to_string(&pid_path) {
+                if !pid.trim().is_empty() {
+                    break pid.trim().to_owned();
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(process_exists(&pid).await);
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while process_exists(&pid).await {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("canceled child must be killed and reaped");
+}
+
+#[tokio::test]
+async fn health_check_has_deadline_and_reaps_child() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let cli = temp_dir.path().join("slow-cli");
+    let pid_path = temp_dir.path().join("child.pid");
+    fs::write(
+        &cli,
+        format!(
+            "#!/bin/sh\necho $$ > '{}'\nexec sleep 20\n",
+            pid_path.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
+    let available = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        CliExecutor::with_timeout(1).is_available(cli.to_str().unwrap()),
+    )
+    .await
+    .unwrap();
+    assert!(!available);
+    let pid = fs::read_to_string(pid_path).unwrap();
+    assert!(!process_exists(pid.trim()).await);
 }
 
 #[tokio::test]
@@ -125,25 +228,4 @@ async fn test_cli_stdout_stderr_capture() {
     assert!(result.stdout.contains("hello world"));
     assert!(result.stderr.is_empty());
     assert_eq!(result.exit_code, 0);
-}
-
-#[tokio::test]
-async fn test_fallback_behavior_simulation() {
-    let executor = CliExecutor::new();
-
-    // Primary CLI not found
-    let primary_result = executor.execute("gemini", &["--version"]).await;
-
-    if primary_result.is_err() {
-        // Simulate fallback to secondary CLI
-        let secondary_result = executor.execute("copilot", &["--version"]).await;
-
-        if secondary_result.is_err() {
-            // Both failed - this would trigger raw transcription fallback
-            assert!(
-                true,
-                "Both CLIs unavailable - fallback to raw transcription"
-            );
-        }
-    }
 }

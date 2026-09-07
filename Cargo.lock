@@ -2657,9 +2657,12 @@ dependencies = [
  "directories",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "toml 1.1.5+spec-1.1.0",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -2733,6 +2736,7 @@ dependencies = [
 name = "lt-tauri"
 version = "0.2.15"
 dependencies = [
+ "block2",
  "image",
  "lt-audio",
  "lt-core",
@@ -2740,6 +2744,7 @@ dependencies = [
  "lt-output",
  "lt-pipeline",
  "lt-stt",
+ "objc2",
  "serde",
  "serde_json",
  "sys-locale",
@@ -2749,6 +2754,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-process",
  "tauri-plugin-updater",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

@@ -3,7 +3,7 @@ use lt_core::error::{MurmurError, Result};
 use lt_core::llm::{LlmProcessor, ProcessingOutput, ProcessingTask};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::prompts::PromptManager;
 
@@ -16,7 +16,64 @@ extern "C" {
         ctx: *mut std::ffi::c_void,
         on_complete: extern "C" fn(*mut std::ffi::c_void, *const c_char),
         on_error: extern "C" fn(*mut std::ffi::c_void, *const c_char),
-    );
+    ) -> *mut std::ffi::c_void;
+    fn llm_bridge_cancel(handle: *mut std::ffi::c_void);
+}
+
+type Callback = extern "C" fn(*mut std::ffi::c_void, *const c_char);
+type CancelRequest = unsafe extern "C" fn(*mut std::ffi::c_void);
+
+struct AppleRequest {
+    handle: *mut std::ffi::c_void,
+    cancel: CancelRequest,
+}
+
+// The opaque Swift handle is exclusively owned here. Cancellation can be
+// called from any thread, and the model task owns its inputs/context separately.
+unsafe impl Send for AppleRequest {}
+
+impl Drop for AppleRequest {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe { (self.cancel)(self.handle) };
+        }
+    }
+}
+
+async fn run_request(
+    instructions: CString,
+    prompt: CString,
+    start: impl FnOnce(
+        *const c_char,
+        *const c_char,
+        *mut std::ffi::c_void,
+        Callback,
+        Callback,
+    ) -> *mut std::ffi::c_void,
+    cancel: CancelRequest,
+) -> Result<String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let context = Box::new(LlmCallbackContext { result_tx: tx });
+    // The bridge copies the C strings before returning. The callback owns and
+    // releases this context, even if timeout/cancellation drops the receiver.
+    let request = AppleRequest {
+        handle: start(
+            instructions.as_ptr(),
+            prompt.as_ptr(),
+            Box::into_raw(context).cast(),
+            on_complete,
+            on_error,
+        ),
+        cancel,
+    };
+    let result = tokio::time::timeout(Duration::from_secs(30), rx)
+        .await
+        .map_err(|_| MurmurError::Llm("Apple LLM timed out (30s).".to_string()))?
+        .map_err(|_| {
+            MurmurError::Llm("Apple LLM callback channel closed unexpectedly".to_string())
+        })?;
+    drop(request);
+    result
 }
 
 /// Callback context for receiving LLM results via FFI.
@@ -113,29 +170,15 @@ impl LlmProcessor for AppleLlmProcessor {
         let c_prompt = CString::new(prompt)
             .map_err(|e| MurmurError::Llm(format!("Invalid prompt string: {}", e)))?;
 
-        // Create a oneshot channel for receiving the result from the callback.
-        let (tx, rx) = tokio::sync::oneshot::channel();
-
-        let context = Box::new(LlmCallbackContext { result_tx: tx });
-        let ctx_ptr = Box::into_raw(context) as *mut std::ffi::c_void;
-
-        // Call the Swift FFI bridge. This blocks until the LLM responds,
-        // but we're already on a Tokio task so that's fine.
-        unsafe {
-            llm_bridge_process(
-                instructions.as_ptr(),
-                c_prompt.as_ptr(),
-                ctx_ptr,
-                on_complete,
-                on_error,
-            );
-        }
-
-        // The callback has already fired (llm_bridge_process is synchronous),
-        // so the channel should have a value immediately.
-        let result = rx.await.map_err(|_| {
-            MurmurError::Llm("Apple LLM callback channel closed unexpectedly".to_string())
-        })??;
+        let result = run_request(
+            instructions,
+            c_prompt,
+            |instructions, prompt, ctx, complete, error| unsafe {
+                llm_bridge_process(instructions, prompt, ctx, complete, error)
+            },
+            llm_bridge_cancel,
+        )
+        .await?;
 
         let processing_time_ms = start_time.elapsed().as_millis() as u64;
 
@@ -160,5 +203,98 @@ impl LlmProcessor for AppleLlmProcessor {
             tracing::warn!("Apple Foundation Models is not available on this system");
         }
         Ok(available)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    unsafe extern "C" fn cancel_fake_request(handle: *mut std::ffi::c_void) {
+        let canceled = unsafe { Box::from_raw(handle.cast::<Arc<AtomicBool>>()) };
+        canceled.store(true, Ordering::SeqCst);
+    }
+
+    #[tokio::test]
+    async fn delayed_callback_does_not_block_runtime_and_releases_handle() {
+        let canceled = Arc::new(AtomicBool::new(false));
+        let handle_state = canceled.clone();
+        let request = run_request(
+            CString::new("instructions").unwrap(),
+            CString::new("copied prompt").unwrap(),
+            move |_, prompt, context, complete, _| {
+                // Like Swift, the fake bridge copies inputs before returning.
+                let prompt = unsafe { CStr::from_ptr(prompt) }.to_owned();
+                let context = context as usize;
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(30)).await;
+                    complete(context as *mut _, prompt.as_ptr());
+                });
+                Box::into_raw(Box::new(handle_state)).cast()
+            },
+            cancel_fake_request,
+        );
+        let (result, ()) = tokio::join!(request, async {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            assert!(!canceled.load(Ordering::SeqCst));
+        });
+        assert_eq!(result.unwrap(), "copied prompt");
+        assert!(canceled.load(Ordering::SeqCst));
+        assert_eq!(Arc::strong_count(&canceled), 1);
+    }
+
+    #[tokio::test]
+    async fn abort_cancels_request_and_late_callback_remains_valid() {
+        let canceled = Arc::new(AtomicBool::new(false));
+        let handle_state = canceled.clone();
+        let worker_state = canceled.clone();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(run_request(
+            CString::new("instructions").unwrap(),
+            CString::new("prompt").unwrap(),
+            move |_, _, context, _, error| {
+                let context = context as usize;
+                tokio::spawn(async move {
+                    while !worker_state.load(Ordering::SeqCst) {
+                        tokio::task::yield_now().await;
+                    }
+                    // The receiver is gone, but the callback still exclusively
+                    // owns the context and must reclaim it exactly once.
+                    let message = CString::new("canceled").unwrap();
+                    error(context as *mut _, message.as_ptr());
+                    let _ = finished_tx.send(());
+                });
+                let _ = started_tx.send(());
+                Box::into_raw(Box::new(handle_state)).cast()
+            },
+            cancel_fake_request,
+        ));
+        started_rx.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(Duration::from_secs(1), finished_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(canceled.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn synchronous_error_callback_needs_no_request_handle() {
+        let result = run_request(
+            CString::new("instructions").unwrap(),
+            CString::new("prompt").unwrap(),
+            |_, _, context, _, error| {
+                let message = CString::new("unavailable").unwrap();
+                error(context, message.as_ptr());
+                std::ptr::null_mut()
+            },
+            cancel_fake_request,
+        )
+        .await;
+        assert!(result.unwrap_err().to_string().contains("unavailable"));
     }
 }

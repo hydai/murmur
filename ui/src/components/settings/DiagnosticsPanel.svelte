@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { useLifecycle } from '../../lib/lifecycle';
   import { onMount } from 'svelte';
   import { writeText } from '@tauri-apps/plugin-clipboard-manager';
   import { safeInvoke as invoke } from '../../lib/tauri';
@@ -9,6 +10,8 @@
     formatLogTimestamp,
     type DiagnosticLogEntry,
   } from './diagnostics';
+
+  const lifecycle = useLifecycle();
 
   let logs = $state<DiagnosticLogEntry[]>([]);
   let loading = $state(false);
@@ -42,7 +45,7 @@
       await invoke('clear_diagnostic_logs');
       logs = [];
       success = 'Logs cleared';
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
       error = `Failed to clear diagnostics: ${err}`;
       console.error(error);
@@ -57,7 +60,7 @@
       success = '';
       await writeText(formatDiagnosticLogsForClipboard(logs));
       success = 'Diagnostics copied';
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
       error = `Failed to copy diagnostics: ${err}`;
       console.error(error);

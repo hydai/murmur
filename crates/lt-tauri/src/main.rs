@@ -2,14 +2,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod diagnostics;
+mod events;
 mod permissions;
+mod shortcuts;
 mod sound;
+mod storage;
 
 use lt_core::config::{LlmProcessorType, SttProviderType};
 use lt_core::llm::LlmProcessor;
 use lt_core::output::OutputMode;
 use lt_core::stt::SttProvider;
-use lt_core::{AppConfig, PersonalDictionary, TranscriptionHistory};
+use lt_core::{AppConfig, PersonalDictionary};
 #[cfg(target_os = "macos")]
 use lt_llm::AppleLlmProcessor;
 use lt_llm::{
@@ -17,7 +20,7 @@ use lt_llm::{
     PromptStore,
 };
 use lt_output::CombinedOutput;
-use lt_pipeline::{PipelineEvent, PipelineOrchestrator, PipelineState};
+use lt_pipeline::{PipelineOrchestrator, PipelineState};
 #[cfg(target_os = "macos")]
 use lt_stt::AppleSttProvider;
 use lt_stt::{CustomSttProvider, ElevenLabsProvider, GroqProvider, OpenAIProvider};
@@ -25,7 +28,7 @@ use std::sync::Arc;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::Mutex;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -34,39 +37,75 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 #[derive(Clone)]
 struct AppState {
     pipeline: Arc<Mutex<PipelineOrchestrator>>,
-    event_task: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
+    store: storage::AppStore,
+    hotkey_updates: Arc<Mutex<()>>,
     prompts: PromptManager,
 }
 
-#[derive(Clone, serde::Serialize)]
-struct PipelineStateEvent {
-    state: String,
-    timestamp_ms: u64,
+fn nonempty(value: String) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_owned())
+    }
 }
 
-#[derive(Clone, serde::Serialize)]
-struct AudioLevelEvent {
-    rms: f32,
-    voice_active: bool,
-    timestamp_ms: u64,
+fn register_recording_shortcut(app: &tauri::AppHandle, shortcut: Shortcut) -> Result<(), String> {
+    app.global_shortcut()
+        .on_shortcut(shortcut, |app, _, event| {
+            if event.state != ShortcutState::Pressed {
+                return;
+            }
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let state = app.state::<AppState>();
+                let current = state.pipeline.lock().await.get_state().await;
+                let result = if matches!(
+                    current,
+                    PipelineState::Recording | PipelineState::Transcribing
+                ) {
+                    stop_pipeline(app.clone(), state).await
+                } else {
+                    start_pipeline(app.clone(), state).await
+                };
+                if let Err(message) = result {
+                    tracing::warn!("Shortcut action failed: {message}");
+                    let _ = app.emit(
+                        "pipeline-error",
+                        serde_json::json!({ "message": message, "recoverable": true }),
+                    );
+                }
+            });
+        })
+        .map_err(|error| format!("Failed to register shortcut: {error}"))
 }
 
-#[derive(Clone, serde::Serialize)]
-struct TranscriptionEvent {
-    text: String,
-    timestamp_ms: u64,
+impl shortcuts::Registry for tauri::AppHandle {
+    fn register(&self, shortcut: Shortcut) -> Result<(), String> {
+        register_recording_shortcut(self, shortcut)
+    }
+    fn unregister(&self, shortcut: Shortcut) -> Result<(), String> {
+        self.global_shortcut()
+            .unregister(shortcut)
+            .map_err(|error| error.to_string())
+    }
+    fn is_registered(&self, shortcut: Shortcut) -> bool {
+        self.global_shortcut().is_registered(shortcut)
+    }
 }
 
-#[derive(Clone, serde::Serialize)]
-struct FinalResultEvent {
-    text: String,
-    processing_time_ms: u64,
-}
-
-#[derive(Clone, serde::Serialize)]
-struct ErrorEvent {
-    message: String,
-    recoverable: bool,
+async fn update_shortcut(
+    app: tauri::AppHandle,
+    updates: tokio::sync::OwnedMutexGuard<()>,
+    old: &str,
+    new: &str,
+    persist: impl std::future::Future<Output = Result<(), String>> + Send + 'static,
+) -> Result<(), String> {
+    let new = new
+        .parse::<Shortcut>()
+        .map_err(|error| format!("Invalid shortcut: {error}"))?;
+    shortcuts::replace_detached(app, updates, old.parse().ok(), new, persist).await
 }
 
 #[tauri::command]
@@ -75,25 +114,30 @@ fn get_status() -> String {
 }
 
 #[tauri::command]
-async fn get_config() -> Result<AppConfig, String> {
-    let config_path = AppConfig::default_config_file()
-        .map_err(|e| format!("Failed to get config path: {}", e))?;
-
-    if config_path.exists() {
-        AppConfig::load_from_file(&config_path).map_err(|e| format!("Failed to load config: {}", e))
-    } else {
-        Ok(AppConfig::default())
-    }
+async fn get_config(state: tauri::State<'_, AppState>) -> Result<AppConfig, String> {
+    state.store.config.read().await
 }
 
 #[tauri::command]
-async fn save_config(config: AppConfig) -> Result<(), String> {
-    let config_path = AppConfig::default_config_file()
-        .map_err(|e| format!("Failed to get config path: {}", e))?;
-
-    config
-        .save_to_file(&config_path)
-        .map_err(|e| format!("Failed to save config: {}", e))
+async fn save_config(
+    config: AppConfig,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let updates = state.hotkey_updates.clone().lock_owned().await;
+    let old = state.store.config.read().await?.hotkey;
+    let new = config.hotkey.clone();
+    let store = state.store.config.clone();
+    update_shortcut(app, updates, &old, &new, async move {
+        store
+            .update(move |current| {
+                *current = config;
+                Ok(())
+            })
+            .await
+            .map(|_| ())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -108,51 +152,48 @@ async fn clear_diagnostic_logs() -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn set_stt_provider(provider: String) -> Result<(), String> {
-    let config_path = AppConfig::default_config_file()
-        .map_err(|e| format!("Failed to get config path: {}", e))?;
-
-    let mut config = if config_path.exists() {
-        AppConfig::load_from_file(&config_path)
-            .map_err(|e| format!("Failed to load config: {}", e))?
-    } else {
-        AppConfig::default()
-    };
-
-    // Parse provider string to SttProviderType
-    let provider_type = match provider.to_lowercase().as_str() {
+async fn set_stt_provider(
+    provider: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let provider = match provider.to_lowercase().as_str() {
         "elevenlabs" => SttProviderType::ElevenLabs,
         "openai" => SttProviderType::OpenAI,
         "groq" => SttProviderType::Groq,
         "apple_stt" => SttProviderType::AppleStt,
         "custom_stt" => SttProviderType::CustomStt,
-        _ => return Err(format!("Unknown STT provider: {}", provider)),
+        _ => return Err(format!("Unknown STT provider: {provider}")),
     };
-
-    config.stt_provider = provider_type;
-
-    config
-        .save_to_file(&config_path)
-        .map_err(|e| format!("Failed to save config: {}", e))
+    state
+        .store
+        .config
+        .update(move |config| {
+            config.stt_provider = provider;
+            Ok(())
+        })
+        .await
+        .map(|_| ())
 }
 
 #[tauri::command]
-async fn save_api_key(provider: String, api_key: String) -> Result<(), String> {
-    let config_path = AppConfig::default_config_file()
-        .map_err(|e| format!("Failed to get config path: {}", e))?;
-
-    let mut config = if config_path.exists() {
-        AppConfig::load_from_file(&config_path)
-            .map_err(|e| format!("Failed to load config: {}", e))?
-    } else {
-        AppConfig::default()
-    };
-
-    config.api_keys.insert(provider.to_lowercase(), api_key);
-
-    config
-        .save_to_file(&config_path)
-        .map_err(|e| format!("Failed to save config: {}", e))
+async fn save_api_key(
+    provider: String,
+    api_key: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .store
+        .config
+        .update(move |config| {
+            if api_key.trim().is_empty() {
+                config.api_keys.remove(&provider.to_lowercase());
+            } else {
+                config.api_keys.insert(provider.to_lowercase(), api_key);
+            }
+            Ok(())
+        })
+        .await
+        .map(|_| ())
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -166,8 +207,10 @@ struct SttProviderInfo {
 }
 
 #[tauri::command]
-async fn get_stt_providers() -> Result<Vec<SttProviderInfo>, String> {
-    let config = get_config().await?;
+async fn get_stt_providers(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<SttProviderInfo>, String> {
+    let config = state.store.config.read().await?;
 
     let mut providers = vec![
         SttProviderInfo {
@@ -308,22 +351,19 @@ async fn download_apple_stt_model(locale: String, app: tauri::AppHandle) -> Resu
 }
 
 #[tauri::command]
-async fn set_apple_stt_locale(locale: String) -> Result<(), String> {
-    let config_path = AppConfig::default_config_file()
-        .map_err(|e| format!("Failed to get config path: {}", e))?;
-
-    let mut config = if config_path.exists() {
-        AppConfig::load_from_file(&config_path)
-            .map_err(|e| format!("Failed to load config: {}", e))?
-    } else {
-        AppConfig::default()
-    };
-
-    config.apple_stt_locale = locale;
-
-    config
-        .save_to_file(&config_path)
-        .map_err(|e| format!("Failed to save config: {}", e))
+async fn set_apple_stt_locale(
+    locale: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .store
+        .config
+        .update(move |config| {
+            config.apple_stt_locale = locale;
+            Ok(())
+        })
+        .await
+        .map(|_| ())
 }
 
 #[tauri::command]
@@ -434,22 +474,19 @@ async fn get_elevenlabs_languages() -> Result<Vec<(String, String)>, String> {
 }
 
 #[tauri::command]
-async fn set_elevenlabs_language(language: String) -> Result<(), String> {
-    let config_path = AppConfig::default_config_file()
-        .map_err(|e| format!("Failed to get config path: {}", e))?;
-
-    let mut config = if config_path.exists() {
-        AppConfig::load_from_file(&config_path)
-            .map_err(|e| format!("Failed to load config: {}", e))?
-    } else {
-        AppConfig::default()
-    };
-
-    config.elevenlabs_language = language;
-
-    config
-        .save_to_file(&config_path)
-        .map_err(|e| format!("Failed to save config: {}", e))
+async fn set_elevenlabs_language(
+    language: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .store
+        .config
+        .update(move |config| {
+            config.elevenlabs_language = language;
+            Ok(())
+        })
+        .await
+        .map(|_| ())
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -465,15 +502,19 @@ struct LlmProcessorInfo {
 }
 
 #[tauri::command]
-async fn get_llm_processors() -> Result<Vec<LlmProcessorInfo>, String> {
-    let config = get_config().await?;
+async fn get_llm_processors(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<LlmProcessorInfo>, String> {
+    let config = state.store.config.read().await?;
 
     // Check health for CLI processors
     let gemini = GeminiProcessor::new();
     let copilot = CopilotProcessor::new();
 
-    let gemini_available = gemini.health_check().await.unwrap_or(false);
-    let copilot_available = copilot.health_check().await.unwrap_or(false);
+    let (gemini_available, copilot_available) =
+        tokio::join!(gemini.health_check(), copilot.health_check());
+    let gemini_available = gemini_available.unwrap_or(false);
+    let copilot_available = copilot_available.unwrap_or(false);
 
     let mut processors = vec![
         // CLI processors
@@ -569,9 +610,8 @@ async fn get_llm_processors() -> Result<Vec<LlmProcessorInfo>, String> {
 }
 
 /// Create an LLM processor from its config type and optional model override.
-/// Shared between startup and hot-swap to avoid duplicating the factory logic.
-/// The same `PromptManager` handle is threaded into every processor so prompt
-/// edits propagate live without recreating the processor.
+/// Shared between startup and recording configuration. Each recording receives
+/// an independent prompt snapshot so edits apply to the next recording.
 fn create_llm_processor(
     processor_type: &LlmProcessorType,
     model: Option<String>,
@@ -659,7 +699,7 @@ fn create_llm_processor(
                 .custom_base_url
                 .clone()
                 .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
-            tracing::info!("Using custom endpoint ({}) as LLM processor", base_url);
+            tracing::info!("Using custom endpoint as LLM processor");
             Arc::new(HttpLlmProcessor::custom_with_prompts(
                 base_url,
                 api_key,
@@ -675,18 +715,7 @@ async fn set_llm_processor(
     processor: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let config_path = AppConfig::default_config_file()
-        .map_err(|e| format!("Failed to get config path: {}", e))?;
-
-    let mut config = if config_path.exists() {
-        AppConfig::load_from_file(&config_path)
-            .map_err(|e| format!("Failed to load config: {}", e))?
-    } else {
-        AppConfig::default()
-    };
-
-    // Parse processor string to LlmProcessorType
-    let processor_type = match processor.to_lowercase().as_str() {
+    let processor = match processor.to_lowercase().as_str() {
         "gemini" => LlmProcessorType::Gemini,
         "copilot" => LlmProcessorType::Copilot,
         "apple_llm" => LlmProcessorType::AppleLlm,
@@ -694,94 +723,48 @@ async fn set_llm_processor(
         "claude_api" => LlmProcessorType::ClaudeApi,
         "gemini_api" => LlmProcessorType::GeminiApi,
         "custom_api" => LlmProcessorType::CustomApi,
-        _ => return Err(format!("Unknown LLM processor: {}", processor)),
+        _ => return Err(format!("Unknown LLM processor: {processor}")),
     };
-
-    config.llm_processor = processor_type;
-
-    config
-        .save_to_file(&config_path)
-        .map_err(|e| format!("Failed to save config: {}", e))?;
-
-    // Hot-swap the live pipeline's LLM processor
-    let new_processor = create_llm_processor(
-        &processor_type,
-        config.llm_model.clone(),
-        &config,
-        &state.prompts,
-    );
-    let pipeline = state.pipeline.lock().await;
-    pipeline.set_llm_processor(new_processor).await;
-
-    Ok(())
+    state
+        .store
+        .config
+        .update(move |config| {
+            config.llm_processor = processor;
+            Ok(())
+        })
+        .await
+        .map(|_| ())
 }
 
 #[tauri::command]
 async fn set_llm_model(model: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let config_path = AppConfig::default_config_file()
-        .map_err(|e| format!("Failed to get config path: {}", e))?;
-
-    let mut config = if config_path.exists() {
-        AppConfig::load_from_file(&config_path)
-            .map_err(|e| format!("Failed to load config: {}", e))?
-    } else {
-        AppConfig::default()
-    };
-
-    // Empty string means reset to default
-    config.llm_model = if model.trim().is_empty() {
-        None
-    } else {
-        Some(model.trim().to_string())
-    };
-
-    config
-        .save_to_file(&config_path)
-        .map_err(|e| format!("Failed to save config: {}", e))?;
-
-    // Hot-swap the live pipeline's LLM processor with new model
-    let new_processor = create_llm_processor(
-        &config.llm_processor,
-        config.llm_model.clone(),
-        &config,
-        &state.prompts,
-    );
-    let pipeline = state.pipeline.lock().await;
-    pipeline.set_llm_processor(new_processor).await;
-
-    tracing::info!(
-        "LLM model updated to: {}",
-        config.llm_model.as_deref().unwrap_or("(provider default)")
-    );
-
-    Ok(())
+    state
+        .store
+        .config
+        .update(move |config| {
+            config.llm_model = nonempty(model);
+            Ok(())
+        })
+        .await
+        .map(|_| ())
 }
 
 #[tauri::command]
 async fn set_custom_llm_endpoint(
     base_url: String,
     display_name: Option<String>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let config_path = AppConfig::default_config_file()
-        .map_err(|e| format!("Failed to get config path: {}", e))?;
-
-    let mut config = if config_path.exists() {
-        AppConfig::load_from_file(&config_path)
-            .map_err(|e| format!("Failed to load config: {}", e))?
-    } else {
-        AppConfig::default()
-    };
-
-    config.http_llm_config.custom_base_url = if base_url.is_empty() {
-        None
-    } else {
-        Some(base_url)
-    };
-    config.http_llm_config.custom_display_name = display_name;
-
-    config
-        .save_to_file(&config_path)
-        .map_err(|e| format!("Failed to save config: {}", e))
+    state
+        .store
+        .config
+        .update(move |config| {
+            config.http_llm_config.custom_base_url = nonempty(base_url);
+            config.http_llm_config.custom_display_name = display_name.and_then(nonempty);
+            Ok(())
+        })
+        .await
+        .map(|_| ())
 }
 
 #[tauri::command]
@@ -790,126 +773,66 @@ async fn set_custom_stt_endpoint(
     display_name: Option<String>,
     model: Option<String>,
     language: Option<String>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let config_path = AppConfig::default_config_file()
-        .map_err(|e| format!("Failed to get config path: {}", e))?;
-
-    let mut config = if config_path.exists() {
-        AppConfig::load_from_file(&config_path)
-            .map_err(|e| format!("Failed to load config: {}", e))?
-    } else {
-        AppConfig::default()
-    };
-
-    config.http_stt_config.custom_base_url = if base_url.is_empty() {
-        None
-    } else {
-        Some(base_url)
-    };
-    config.http_stt_config.custom_display_name = display_name;
-    config.http_stt_config.custom_model = model;
-    config.http_stt_config.language = language;
-
-    config
-        .save_to_file(&config_path)
-        .map_err(|e| format!("Failed to save config: {}", e))
+    state
+        .store
+        .config
+        .update(move |config| {
+            config.http_stt_config.custom_base_url = nonempty(base_url);
+            config.http_stt_config.custom_display_name = display_name.and_then(nonempty);
+            config.http_stt_config.custom_model = model.and_then(nonempty);
+            config.http_stt_config.language = language.and_then(nonempty);
+            Ok(())
+        })
+        .await
+        .map(|_| ())
 }
 
 #[tauri::command]
-async fn set_output_mode(mode: String) -> Result<(), String> {
-    let config_path = AppConfig::default_config_file()
-        .map_err(|e| format!("Failed to get config path: {}", e))?;
-
-    let mut config = if config_path.exists() {
-        AppConfig::load_from_file(&config_path)
-            .map_err(|e| format!("Failed to load config: {}", e))?
-    } else {
-        AppConfig::default()
-    };
-
-    // Parse mode string to OutputMode
-    let output_mode = match mode.to_lowercase().as_str() {
+async fn set_output_mode(mode: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mode = match mode.to_lowercase().as_str() {
         "clipboard" => OutputMode::Clipboard,
         "keyboard" => OutputMode::Keyboard,
         "both" => OutputMode::Both,
-        _ => return Err(format!("Unknown output mode: {}", mode)),
+        _ => return Err(format!("Unknown output mode: {mode}")),
     };
-
-    config.output_mode = output_mode;
-
-    config
-        .save_to_file(&config_path)
-        .map_err(|e| format!("Failed to save config: {}", e))
+    state
+        .store
+        .config
+        .update(move |config| {
+            config.output_mode = mode;
+            Ok(())
+        })
+        .await
+        .map(|_| ())
 }
 
 #[tauri::command]
-async fn set_hotkey(hotkey: String, app: tauri::AppHandle) -> Result<(), String> {
-    let config_path = AppConfig::default_config_file()
-        .map_err(|e| format!("Failed to get config path: {}", e))?;
-
-    let mut config = if config_path.exists() {
-        AppConfig::load_from_file(&config_path)
-            .map_err(|e| format!("Failed to load config: {}", e))?
-    } else {
-        AppConfig::default()
-    };
-
-    // Validate hotkey format (basic validation)
-    if hotkey.is_empty() {
-        return Err("Hotkey cannot be empty".to_string());
-    }
-
-    // Unregister old hotkey
-    let old_hotkey = config.hotkey.clone();
-    if let Err(e) = app.global_shortcut().unregister(old_hotkey.as_str()) {
-        tracing::warn!("Failed to unregister old hotkey '{}': {}", old_hotkey, e);
-    }
-
-    // Update config
-    config.hotkey = hotkey.clone();
-    config
-        .save_to_file(&config_path)
-        .map_err(|e| format!("Failed to save config: {}", e))?;
-
-    // Register new hotkey
-    let app_handle = app.clone();
-    let hotkey_str = hotkey.clone();
-
-    // Set up the handler for the new hotkey
-    app.global_shortcut()
-        .on_shortcut(hotkey_str.as_str(), move |_app, _shortcut, event| {
-            // Only process key PRESS, not release
-            if event.state != ShortcutState::Pressed {
-                return;
-            }
-            let handle = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                let state = handle.state::<AppState>();
-                let is_currently_recording = {
-                    let pipeline = state.pipeline.lock().await;
-                    let current_state = pipeline.get_state().await;
-                    matches!(
-                        current_state,
-                        PipelineState::Recording | PipelineState::Transcribing
-                    )
-                };
-
-                if is_currently_recording {
-                    let _ = stop_pipeline(handle.clone(), state).await;
-                } else {
-                    let _ = start_pipeline(handle.clone(), state).await;
-                }
-            });
-        })
-        .map_err(|e| format!("Failed to set hotkey handler: {}", e))?;
-
-    tracing::info!("Hotkey updated to: {}", hotkey);
-    Ok(())
+async fn set_hotkey(
+    hotkey: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let updates = state.hotkey_updates.clone().lock_owned().await;
+    let old = state.store.config.read().await?.hotkey;
+    let store = state.store.config.clone();
+    let persisted = hotkey.clone();
+    update_shortcut(app, updates, &old, &hotkey, async move {
+        store
+            .update(move |config| {
+                config.hotkey = persisted;
+                Ok(())
+            })
+            .await
+            .map(|_| ())
+    })
+    .await
 }
 
 #[tauri::command]
 async fn start_pipeline(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     tracing::info!("Starting pipeline");
@@ -928,17 +851,7 @@ async fn start_pipeline(
         _ => {} // Idle, Done, Error are all acceptable starting states
     }
 
-    // Load config and get API key
-    let config_path = AppConfig::default_config_file()
-        .map_err(|e| format!("Failed to get config path: {}", e))?;
-
-    let config = if config_path.exists() {
-        AppConfig::load_from_file(&config_path)
-            .map_err(|e| format!("Failed to load config: {}", e))?
-    } else {
-        tracing::warn!("Config file not found, using default config");
-        AppConfig::default()
-    };
+    let config = state.store.config.read().await?;
 
     // Create STT provider based on config
     let stt: Box<dyn SttProvider> = match config.stt_provider {
@@ -1006,192 +919,20 @@ async fn start_pipeline(
         }
     };
 
-    // Subscribe to pipeline events before starting
-    let mut event_rx = pipeline.subscribe_events();
-    let app_clone = app.clone();
-
-    // Spawn task to forward pipeline events to frontend
-    let event_task = tauri::async_runtime::spawn(async move {
-        // Track raw transcription and command for history
-        let mut raw_transcription = String::new();
-        let mut detected_command: Option<String> = None;
-
-        while let Ok(event) = event_rx.recv().await {
-            match event {
-                PipelineEvent::StateChanged {
-                    state,
-                    timestamp_ms,
-                } => {
-                    match state {
-                        PipelineState::Recording => sound::play_start_sound(),
-                        PipelineState::Done | PipelineState::Error => sound::play_stop_sound(),
-                        _ => {}
-                    }
-                    tracing::info!("Pipeline state changed: {:?}", state);
-                    let state_str = match state {
-                        PipelineState::Idle => "idle",
-                        PipelineState::Recording => "recording",
-                        PipelineState::Transcribing => "transcribing",
-                        PipelineState::Processing => "processing",
-                        PipelineState::Done => "done",
-                        PipelineState::Error => "error",
-                    };
-
-                    let _ = app_clone.emit(
-                        "pipeline-state",
-                        PipelineStateEvent {
-                            state: state_str.to_string(),
-                            timestamp_ms,
-                        },
-                    );
-
-                    // Also emit recording-state for compatibility
-                    let is_recording = matches!(
-                        state,
-                        PipelineState::Recording | PipelineState::Transcribing
-                    );
-                    let _ = app_clone.emit(
-                        "recording-state",
-                        serde_json::json!({
-                            "is_recording": is_recording
-                        }),
-                    );
-
-                    // Update tray menu to reflect recording state
-                    if let Err(e) = rebuild_tray_menu(&app_clone, is_recording) {
-                        tracing::warn!("Failed to update tray menu: {}", e);
-                    }
-                }
-                PipelineEvent::AudioLevel {
-                    rms,
-                    voice_active,
-                    timestamp_ms,
-                } => {
-                    let _ = app_clone.emit(
-                        "audio-level",
-                        AudioLevelEvent {
-                            rms,
-                            voice_active,
-                            timestamp_ms,
-                        },
-                    );
-                }
-                PipelineEvent::PartialTranscription { text, timestamp_ms } => {
-                    let _ = app_clone.emit(
-                        "transcription-partial",
-                        TranscriptionEvent { text, timestamp_ms },
-                    );
-                }
-                PipelineEvent::CommittedTranscription { text, timestamp_ms } => {
-                    // Accumulate raw transcription for history
-                    if !raw_transcription.is_empty() {
-                        raw_transcription.push(' ');
-                    }
-                    raw_transcription.push_str(&text);
-
-                    let _ = app_clone.emit(
-                        "transcription-committed",
-                        TranscriptionEvent { text, timestamp_ms },
-                    );
-                }
-                PipelineEvent::CommandDetected {
-                    command_name,
-                    timestamp_ms,
-                } => {
-                    // Capture command for history
-                    detected_command = command_name.clone();
-
-                    let _ = app_clone.emit(
-                        "command-detected",
-                        serde_json::json!({
-                            "command_name": command_name,
-                            "timestamp_ms": timestamp_ms
-                        }),
-                    );
-                }
-                PipelineEvent::FinalResult {
-                    text,
-                    processing_time_ms,
-                } => {
-                    tracing::info!(
-                        "Pipeline completed: {} chars in {}ms",
-                        text.len(),
-                        processing_time_ms
-                    );
-
-                    let _ = app_clone.emit(
-                        "pipeline-result",
-                        FinalResultEvent {
-                            text: text.clone(),
-                            processing_time_ms,
-                        },
-                    );
-
-                    // Emit as transcription-processed for compatibility
-                    let _ = app_clone.emit(
-                        "transcription-processed",
-                        serde_json::json!({
-                            "text": text,
-                            "processing_time_ms": processing_time_ms
-                        }),
-                    );
-
-                    // Save to history
-                    let timestamp_ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
-                    let raw = std::mem::take(&mut raw_transcription);
-                    let cmd = detected_command.take();
-                    let entry = lt_core::history::HistoryEntry {
-                        id: timestamp_ms.to_string(),
-                        final_text: text,
-                        raw_text: if raw.is_empty() { None } else { Some(raw) },
-                        timestamp_ms,
-                        processing_time_ms,
-                        command_name: cmd,
-                    };
-                    if let Ok(config_dir) = AppConfig::default_config_dir() {
-                        let history_path = config_dir.join("history.json");
-                        let mut history = if history_path.exists() {
-                            TranscriptionHistory::load_from_file(&history_path).unwrap_or_default()
-                        } else {
-                            TranscriptionHistory::new()
-                        };
-                        history.add_entry(entry);
-                        if let Err(e) = history.save_to_file(&history_path) {
-                            tracing::warn!("Failed to save history: {}", e);
-                        }
-                    }
-                }
-                PipelineEvent::Error {
-                    message,
-                    recoverable,
-                } => {
-                    tracing::error!("Pipeline error: {} (recoverable: {})", message, recoverable);
-
-                    let _ = app_clone.emit(
-                        "pipeline-error",
-                        ErrorEvent {
-                            message: message.clone(),
-                            recoverable,
-                        },
-                    );
-
-                    // Emit as audio-error for compatibility
-                    let _ = app_clone.emit(
-                        "audio-error",
-                        serde_json::json!({
-                            "message": message
-                        }),
-                    );
-                }
-            }
-        }
-        tracing::debug!("Pipeline event forwarding task finished");
-    });
-
-    *state.event_task.lock().await = Some(event_task);
+    // Apply one coherent persisted configuration snapshot to the next recording.
+    let prompts = PromptManager::from_set(state.prompts.shared().read().await.clone());
+    pipeline
+        .set_llm_processor(create_llm_processor(
+            &config.llm_processor,
+            config.llm_model.clone(),
+            &config,
+            &prompts,
+        ))
+        .await;
+    let output = CombinedOutput::new(config.output_mode)
+        .map_err(|error| format!("Failed to initialize output: {error}"))?;
+    pipeline.set_output_sink(Arc::new(output)).await;
+    *pipeline.get_dictionary().lock().await = state.store.dictionary.read().await?;
 
     // Start the pipeline
     pipeline.start(stt).await.map_err(|e| {
@@ -1252,17 +993,8 @@ async fn get_pipeline_state(state: tauri::State<'_, AppState>) -> Result<String,
 // Dictionary management commands
 
 #[tauri::command]
-async fn get_dictionary() -> Result<PersonalDictionary, String> {
-    let dict_path = AppConfig::default_config_dir()
-        .map_err(|e| format!("Failed to get config dir: {}", e))?
-        .join("dictionary.json");
-
-    if dict_path.exists() {
-        PersonalDictionary::load_from_file(&dict_path)
-            .map_err(|e| format!("Failed to load dictionary: {}", e))
-    } else {
-        Ok(PersonalDictionary::new())
-    }
+async fn get_dictionary(state: tauri::State<'_, AppState>) -> Result<PersonalDictionary, String> {
+    state.store.dictionary.read().await
 }
 
 #[derive(serde::Deserialize)]
@@ -1277,39 +1009,19 @@ async fn add_dictionary_entry(
     params: AddEntryParams,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let dict_path = AppConfig::default_config_dir()
-        .map_err(|e| format!("Failed to get config dir: {}", e))?
-        .join("dictionary.json");
-
-    // Ensure directory exists
-    if let Some(parent) = dict_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create config directory: {}", e))?;
-    }
-
-    let mut dict = if dict_path.exists() {
-        PersonalDictionary::load_from_file(&dict_path)
-            .map_err(|e| format!("Failed to load dictionary: {}", e))?
-    } else {
-        PersonalDictionary::new()
-    };
-
-    let entry = lt_core::dictionary::DictionaryEntry {
-        term: params.term,
-        aliases: params.aliases,
-        description: params.description,
-    };
-
-    dict.add_entry(entry);
-    dict.save_to_file(&dict_path)
-        .map_err(|e| format!("Failed to save dictionary: {}", e))?;
-
-    // Update the dictionary in the pipeline
-    let pipeline = state.pipeline.lock().await;
-    let pipeline_dict = pipeline.get_dictionary();
-    *pipeline_dict.lock().await = dict;
-
-    Ok(())
+    state
+        .store
+        .dictionary
+        .update(move |dict| {
+            dict.add_entry(lt_core::DictionaryEntry {
+                term: params.term,
+                aliases: params.aliases,
+                description: params.description,
+            });
+            Ok(())
+        })
+        .await
+        .map(|_| ())
 }
 
 #[derive(serde::Deserialize)]
@@ -1325,36 +1037,24 @@ async fn update_dictionary_entry(
     params: UpdateEntryParams,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let dict_path = AppConfig::default_config_dir()
-        .map_err(|e| format!("Failed to get config dir: {}", e))?
-        .join("dictionary.json");
-
-    let mut dict = if dict_path.exists() {
-        PersonalDictionary::load_from_file(&dict_path)
-            .map_err(|e| format!("Failed to load dictionary: {}", e))?
-    } else {
-        return Err("Dictionary file not found".to_string());
-    };
-
-    let new_entry = lt_core::dictionary::DictionaryEntry {
-        term: params.term,
-        aliases: params.aliases,
-        description: params.description,
-    };
-
-    if !dict.update_entry(&params.old_term, new_entry) {
-        return Err(format!("Entry '{}' not found", params.old_term));
-    }
-
-    dict.save_to_file(&dict_path)
-        .map_err(|e| format!("Failed to save dictionary: {}", e))?;
-
-    // Update the dictionary in the pipeline
-    let pipeline = state.pipeline.lock().await;
-    let pipeline_dict = pipeline.get_dictionary();
-    *pipeline_dict.lock().await = dict;
-
-    Ok(())
+    state
+        .store
+        .dictionary
+        .update(move |dict| {
+            if !dict.update_entry(
+                &params.old_term,
+                lt_core::DictionaryEntry {
+                    term: params.term,
+                    aliases: params.aliases,
+                    description: params.description,
+                },
+            ) {
+                return Err(format!("Entry '{}' not found", params.old_term));
+            }
+            Ok(())
+        })
+        .await
+        .map(|_| ())
 }
 
 #[tauri::command]
@@ -1362,48 +1062,25 @@ async fn delete_dictionary_entry(
     term: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let dict_path = AppConfig::default_config_dir()
-        .map_err(|e| format!("Failed to get config dir: {}", e))?
-        .join("dictionary.json");
-
-    let mut dict = if dict_path.exists() {
-        PersonalDictionary::load_from_file(&dict_path)
-            .map_err(|e| format!("Failed to load dictionary: {}", e))?
-    } else {
-        return Err("Dictionary file not found".to_string());
-    };
-
-    if !dict.remove_entry(&term) {
-        return Err(format!("Entry '{}' not found", term));
-    }
-
-    dict.save_to_file(&dict_path)
-        .map_err(|e| format!("Failed to save dictionary: {}", e))?;
-
-    // Update the dictionary in the pipeline
-    let pipeline = state.pipeline.lock().await;
-    let pipeline_dict = pipeline.get_dictionary();
-    *pipeline_dict.lock().await = dict;
-
-    Ok(())
+    state
+        .store
+        .dictionary
+        .update(move |dict| {
+            if !dict.remove_entry(&term) {
+                return Err(format!("Entry '{term}' not found"));
+            }
+            Ok(())
+        })
+        .await
+        .map(|_| ())
 }
 
 #[tauri::command]
 async fn search_dictionary(
     query: String,
-) -> Result<Vec<lt_core::dictionary::DictionaryEntry>, String> {
-    let dict_path = AppConfig::default_config_dir()
-        .map_err(|e| format!("Failed to get config dir: {}", e))?
-        .join("dictionary.json");
-
-    let dict = if dict_path.exists() {
-        PersonalDictionary::load_from_file(&dict_path)
-            .map_err(|e| format!("Failed to load dictionary: {}", e))?
-    } else {
-        PersonalDictionary::new()
-    };
-
-    Ok(dict.search_entries(&query))
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<lt_core::DictionaryEntry>, String> {
+    Ok(state.store.dictionary.read().await?.search_entries(&query))
 }
 
 // Prompt template management commands
@@ -1451,22 +1128,18 @@ async fn set_prompt(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     if params.content.trim().is_empty() {
-        return Err("Prompt content cannot be empty".to_string());
+        return Err("Prompt content cannot be empty".to_owned());
     }
-
-    let config_dir =
-        AppConfig::default_config_dir().map_err(|e| format!("Failed to get config dir: {}", e))?;
-    PromptStore::save(&config_dir, params.name, &params.content)
-        .map_err(|e| format!("Failed to save prompt: {}", e))?;
-
-    state
-        .prompts
-        .shared()
-        .write()
-        .await
-        .set_override(params.name, params.content);
-    tracing::info!("Prompt '{}' override saved", params.name.as_str());
-    Ok(())
+    let config_dir = AppConfig::default_config_dir().map_err(|error| error.to_string())?;
+    let mut prompts = state.prompts.shared().write_owned().await;
+    tokio::task::spawn_blocking(move || {
+        PromptStore::save(&config_dir, params.name, &params.content)
+            .map_err(|error| format!("Failed to save prompt: {error}"))?;
+        prompts.set_override(params.name, params.content);
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("Prompt storage task failed: {error}"))?
 }
 
 #[derive(serde::Deserialize)]
@@ -1479,19 +1152,16 @@ async fn reset_prompt(
     params: ResetPromptParams,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let config_dir =
-        AppConfig::default_config_dir().map_err(|e| format!("Failed to get config dir: {}", e))?;
-    PromptStore::reset(&config_dir, params.name)
-        .map_err(|e| format!("Failed to reset prompt: {}", e))?;
-
-    state
-        .prompts
-        .shared()
-        .write()
-        .await
-        .clear_override(params.name);
-    tracing::info!("Prompt '{}' reset to default", params.name.as_str());
-    Ok(())
+    let config_dir = AppConfig::default_config_dir().map_err(|error| error.to_string())?;
+    let mut prompts = state.prompts.shared().write_owned().await;
+    tokio::task::spawn_blocking(move || {
+        PromptStore::reset(&config_dir, params.name)
+            .map_err(|error| format!("Failed to reset prompt: {error}"))?;
+        prompts.clear_override(params.name);
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("Prompt storage task failed: {error}"))?
 }
 
 fn ensure_settings_window_open(app: &tauri::AppHandle, query: &str) -> Result<(), String> {
@@ -1528,87 +1198,46 @@ async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
 async fn get_history(
     offset: usize,
     limit: usize,
-) -> Result<Vec<lt_core::history::HistoryEntry>, String> {
-    let history_path = AppConfig::default_config_dir()
-        .map_err(|e| format!("Failed to get config dir: {}", e))?
-        .join("history.json");
-
-    let history = if history_path.exists() {
-        TranscriptionHistory::load_from_file(&history_path)
-            .map_err(|e| format!("Failed to load history: {}", e))?
-    } else {
-        TranscriptionHistory::new()
-    };
-
-    let entries: Vec<_> = history
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<lt_core::HistoryEntry>, String> {
+    Ok(state
+        .store
+        .history
+        .read()
+        .await?
         .entries
         .into_iter()
         .skip(offset)
         .take(limit)
-        .collect();
-
-    Ok(entries)
+        .collect())
 }
 
 #[tauri::command]
-async fn search_history(query: String) -> Result<Vec<lt_core::history::HistoryEntry>, String> {
-    let history_path = AppConfig::default_config_dir()
-        .map_err(|e| format!("Failed to get config dir: {}", e))?
-        .join("history.json");
-
-    let history = if history_path.exists() {
-        TranscriptionHistory::load_from_file(&history_path)
-            .map_err(|e| format!("Failed to load history: {}", e))?
-    } else {
-        TranscriptionHistory::new()
-    };
-
-    Ok(history.search_entries(&query))
+async fn search_history(
+    query: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<lt_core::HistoryEntry>, String> {
+    Ok(state.store.history.read().await?.search_entries(&query))
 }
 
 #[tauri::command]
-async fn delete_history_entry(id: String) -> Result<(), String> {
-    let history_path = AppConfig::default_config_dir()
-        .map_err(|e| format!("Failed to get config dir: {}", e))?
-        .join("history.json");
-
-    let mut history = if history_path.exists() {
-        TranscriptionHistory::load_from_file(&history_path)
-            .map_err(|e| format!("Failed to load history: {}", e))?
-    } else {
-        return Err("History file not found".to_string());
-    };
-
-    if !history.delete_entry(&id) {
-        return Err(format!("History entry '{}' not found", id));
-    }
-
-    history
-        .save_to_file(&history_path)
-        .map_err(|e| format!("Failed to save history: {}", e))?;
-
-    Ok(())
+async fn delete_history_entry(id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state
+        .store
+        .history
+        .update(move |history| {
+            if !history.delete_entry(&id) {
+                return Err(format!("History entry '{id}' not found"));
+            }
+            Ok(())
+        })
+        .await
+        .map(|_| ())
 }
 
 #[tauri::command]
-async fn clear_history() -> Result<(), String> {
-    let history_path = AppConfig::default_config_dir()
-        .map_err(|e| format!("Failed to get config dir: {}", e))?
-        .join("history.json");
-
-    let mut history = if history_path.exists() {
-        TranscriptionHistory::load_from_file(&history_path)
-            .map_err(|e| format!("Failed to load history: {}", e))?
-    } else {
-        TranscriptionHistory::new()
-    };
-
-    history.clear();
-    history
-        .save_to_file(&history_path)
-        .map_err(|e| format!("Failed to save history: {}", e))?;
-
-    Ok(())
+async fn clear_history(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.store.history.clear().await
 }
 
 #[tauri::command]
@@ -1648,8 +1277,8 @@ fn check_permissions() -> permissions::PermissionsResult {
 }
 
 #[tauri::command]
-fn request_microphone_permission() -> Result<(), String> {
-    permissions::request_microphone_permission()
+async fn request_microphone_permission() -> Result<(), String> {
+    permissions::request_microphone_permission().await
 }
 
 #[tauri::command]
@@ -1821,7 +1450,7 @@ fn main() {
     };
 
     // Initialize output sink (clipboard by default)
-    let output_sink = match CombinedOutput::new(OutputMode::Clipboard) {
+    let output_sink = match CombinedOutput::new(config.output_mode) {
         Ok(output) => Arc::new(output),
         Err(e) => {
             eprintln!("Fatal: Failed to initialize output sink: {e}");
@@ -1836,10 +1465,14 @@ fn main() {
         Arc::new(Mutex::new(dictionary)),
     );
 
+    let event_rx = pipeline.subscribe_events();
+    let config_dir = AppConfig::default_config_dir().expect("application config directory");
+
     // Create app state
     let app_state = AppState {
         pipeline: Arc::new(Mutex::new(pipeline)),
-        event_task: Arc::new(Mutex::new(None)),
+        store: storage::AppStore::new(config_dir),
+        hotkey_updates: Arc::new(Mutex::new(())),
         prompts,
     };
 
@@ -1893,6 +1526,11 @@ fn main() {
             set_elevenlabs_language
         ])
         .setup(move |app| {
+            app.manage(events::spawn(
+                app.handle().clone(),
+                event_rx,
+                app.state::<AppState>().store.history.clone(),
+            ));
             // Set up system tray - embed icon at compile time to avoid runtime path issues
             let icon_png_bytes = include_bytes!("../icons/tray-icon.png");
             let icon_image = match image::load_from_memory(icon_png_bytes) {
@@ -2078,47 +1716,13 @@ fn main() {
                 }
             });
 
-            // Try to register global shortcut for pipeline toggle
-            let app_handle = app.handle().clone();
-
-            // Register the shortcut handler (on_shortcut registers internally)
-            if let Err(e) = app.global_shortcut().on_shortcut(
-                startup_hotkey.as_str(),
-                move |_app, _shortcut, event| {
-                    // Only process key PRESS, not release
-                    if event.state != ShortcutState::Pressed {
-                        return;
-                    }
-
-                    // Toggle pipeline using the cloned handle
-                    let handle = app_handle.clone();
-
-                    tauri::async_runtime::spawn(async move {
-                        let state = handle.state::<AppState>();
-
-                        let is_currently_recording = {
-                            let pipeline = state.pipeline.lock().await;
-                            let current_state = pipeline.get_state().await;
-                            matches!(
-                                current_state,
-                                PipelineState::Recording | PipelineState::Transcribing
-                            )
-                        };
-
-                        if is_currently_recording {
-                            // Stop pipeline
-                            let _ = stop_pipeline(handle.clone(), state).await;
-                        } else {
-                            // Start pipeline
-                            let _ = start_pipeline(handle.clone(), state).await;
-                        }
-                    });
-                },
-            ) {
-                tracing::warn!("Failed to set up shortcut handler: {}", e);
+            if let Err(error) = startup_hotkey
+                .parse::<Shortcut>()
+                .map_err(|error| error.to_string())
+                .and_then(|shortcut| register_recording_shortcut(app.handle(), shortcut))
+            {
+                tracing::warn!("Failed to set up shortcut handler: {error}");
             }
-            // Note: on_shortcut() internally registers the shortcut, so no
-            // separate register() call is needed.
 
             if is_first_launch {
                 let handle = app.handle().clone();

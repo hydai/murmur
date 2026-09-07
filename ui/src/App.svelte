@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { safeInvoke as invoke } from './lib/tauri';
   import FloatingOverlay from './components/overlay/FloatingOverlay.svelte';
   import SettingsPanel from './components/settings/SettingsPanel.svelte';
@@ -21,8 +22,11 @@
   });
 
   async function closeSettingsWindow() {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window');
-    getCurrentWindow().close();
+    try {
+      await getCurrentWindow().close();
+    } catch (error) {
+      console.warn('Failed to close settings window:', error);
+    }
   }
 </script>
 

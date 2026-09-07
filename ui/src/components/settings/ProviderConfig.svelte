@@ -1,12 +1,15 @@
 <script lang="ts">
+  import { useLifecycle } from '../../lib/lifecycle';
+  import { trapFocus } from '../../lib/focus';
   import { safeInvoke as invoke } from '../../lib/tauri';
-  import { onMount, onDestroy } from 'svelte';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { onMount } from 'svelte';
   import PageHeader from './ui/PageHeader.svelte';
   import SectionHeader from './ui/SectionHeader.svelte';
   import StatusRow from './ui/StatusRow.svelte';
   import ActionRow from './ui/ActionRow.svelte';
   import { groupSttProviders, type Provider } from './providerGroups';
+
+  const lifecycle = useLifecycle();
 
   let providers = $state<Provider[]>([]);
   let currentProvider = $state('');
@@ -40,15 +43,56 @@
   let downloadError = $state('');
   let downloadStartTime = $state(0);
 
-  let unlistenProgress: UnlistenFn | null = null;
-
   // Derived: group providers by type
   let providerGroups = $derived(groupSttProviders(providers));
   let localProviders = $derived(providerGroups.localProviders);
   let cloudProviders = $derived(providerGroups.cloudProviders);
   let customProvider = $derived(providerGroups.customProvider);
 
-  onMount(async () => {
+  onMount(() => {
+    void initialize().catch((err) => { error = `Failed to initialize providers: ${err}`; });
+  });
+
+  async function initialize() {
+    try {
+      await lifecycle.listen<{ locale: string; progress: number; finished: boolean; error: string | null }>(
+        'apple-stt-model-progress',
+        (event) => {
+          const { progress, finished, error: errorMsg } = event.payload;
+          modelDownloadProgress = progress;
+
+          if (!finished && progress > 0) {
+            downloadStatus = 'downloading';
+          }
+
+          if (finished) {
+            modelDownloading = false;
+            const elapsed = Date.now() - downloadStartTime;
+
+            if (errorMsg) {
+              downloadStatus = 'error';
+              downloadError = errorMsg;
+            } else if (elapsed < 500 && progress >= 1.0) {
+              downloadStatus = 'already_installed';
+            } else {
+              downloadStatus = 'success';
+            }
+
+            lifecycle.timeout(() => {
+              downloadStatus = '';
+              downloadError = '';
+              modelDownloadProgress = 0;
+            }, 4000, 'download-status');
+
+            loadProviders();
+          }
+        }
+      );
+    } catch (err) {
+      // Progress reporting is optional; the page must still load its data.
+      console.warn(`Model download progress unavailable: ${err}`);
+    }
+    if (lifecycle.disposed) return;
     await loadProviders();
     await loadConfig();
 
@@ -58,47 +102,7 @@
     if (currentProvider === 'elevenlabs') {
       await loadElevenLabsLanguages();
     }
-
-    unlistenProgress = await listen<{ locale: string; progress: number; finished: boolean; error: string | null }>(
-      'apple-stt-model-progress',
-      (event) => {
-        const { progress, finished, error: errorMsg } = event.payload;
-        modelDownloadProgress = progress;
-
-        if (!finished && progress > 0) {
-          downloadStatus = 'downloading';
-        }
-
-        if (finished) {
-          modelDownloading = false;
-          const elapsed = Date.now() - downloadStartTime;
-
-          if (errorMsg) {
-            downloadStatus = 'error';
-            downloadError = errorMsg;
-          } else if (elapsed < 500 && progress >= 1.0) {
-            downloadStatus = 'already_installed';
-          } else {
-            downloadStatus = 'success';
-          }
-
-          setTimeout(() => {
-            downloadStatus = '';
-            downloadError = '';
-            modelDownloadProgress = 0;
-          }, 4000);
-
-          loadProviders();
-        }
-      }
-    );
-  });
-
-  onDestroy(() => {
-    if (unlistenProgress) {
-      unlistenProgress();
-    }
-  });
+  }
 
   async function loadProviders() {
     try {
@@ -158,7 +162,7 @@
         currentProvider = providerId;
 
         success = `Switched to ${provider.name}`;
-        setTimeout(() => { success = ''; }, 3000);
+        lifecycle.timeout(() => { success = ''; }, 3000, 'success');
       } catch (err) {
         error = `Failed to switch provider: ${err}`;
         console.error(error);
@@ -194,7 +198,7 @@
         }
 
         success = `Switched to ${provider.name}`;
-        setTimeout(() => { success = ''; }, 3000);
+        lifecycle.timeout(() => { success = ''; }, 3000, 'success');
       } catch (err) {
         error = `Failed to switch provider: ${err}`;
         console.error(error);
@@ -225,7 +229,7 @@
       }
 
       success = `Switched to ${provider.name}`;
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
       error = `Failed to switch provider: ${err}`;
       console.error(error);
@@ -271,7 +275,7 @@
       showApiKeyModal = false;
       await loadProviders();
 
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
       error = `Failed to save API key: ${err}`;
       console.error(error);
@@ -357,7 +361,7 @@
       await invoke('set_elevenlabs_language', { language });
       const displayName = elevenlabsLanguages.find(([code]) => code === language)?.[1] ?? language;
       success = `Language set to ${displayName}`;
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
       error = `Failed to set language: ${err}`;
       console.error(error);
@@ -405,7 +409,7 @@
       await loadProviders();
       success = `Custom STT endpoint activated: ${displayName || baseUrl}`;
       customSttApiKey = '';
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
       error = `Failed to save custom STT endpoint: ${err}`;
       console.error(error);
@@ -431,7 +435,7 @@
       await invoke('set_apple_stt_locale', { locale });
       await loadProviders();
       success = `Language set to ${locale === 'auto' ? 'Auto-detect' : locale}`;
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
       error = `Failed to set locale: ${err}`;
       console.error(error);
@@ -621,8 +625,8 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal-overlay" onclick={closeModal} onkeydown={(e) => e.key === 'Escape' && closeModal()} role="presentation">
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
-      <h3>{editingExistingKey ? 'Update' : 'Configure'} {selectedProvider?.name}</h3>
+    <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') closeModal(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="stt-api-key-title">
+      <h3 id="stt-api-key-title">{editingExistingKey ? 'Update' : 'Configure'} {selectedProvider?.name}</h3>
       <p>{editingExistingKey ? 'Enter a new API key:' : 'Enter your API key to enable this provider:'}</p>
 
       <div class="api-key-wrapper">

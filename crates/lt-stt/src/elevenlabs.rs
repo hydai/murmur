@@ -4,7 +4,7 @@ use futures_util::{SinkExt, StreamExt};
 use lt_core::error::{MurmurError, Result};
 use lt_core::stt::{AudioChunk, SttProvider, TranscriptionEvent};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::{
     connect_async, tungstenite::client::IntoClientRequest, tungstenite::Message,
@@ -84,6 +84,8 @@ pub struct ElevenLabsProvider {
     ws_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     reconnect_config: ReconnectConfig,
     should_reconnect: Arc<Mutex<bool>>,
+    #[cfg(test)]
+    test_url: Option<Url>,
 }
 
 impl ElevenLabsProvider {
@@ -99,6 +101,8 @@ impl ElevenLabsProvider {
             ws_task: Arc::new(Mutex::new(None)),
             reconnect_config: ReconnectConfig::default(),
             should_reconnect: Arc::new(Mutex::new(true)),
+            #[cfg(test)]
+            test_url: None,
         }
     }
 
@@ -114,11 +118,17 @@ impl ElevenLabsProvider {
             ws_task: Arc::new(Mutex::new(None)),
             reconnect_config: ReconnectConfig::default(),
             should_reconnect: Arc::new(Mutex::new(true)),
+            #[cfg(test)]
+            test_url: None,
         }
     }
 
     /// Build WebSocket URL
     fn build_ws_url(&self) -> Result<Url> {
+        #[cfg(test)]
+        if let Some(url) = &self.test_url {
+            return Ok(url.clone());
+        }
         let url = if self.language_code == "auto" {
             format!(
                 "wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id={}&audio_format=pcm_16000",
@@ -156,12 +166,17 @@ impl ElevenLabsProvider {
                     .map_err(|_| MurmurError::Stt("Invalid API key header value".to_string()))?,
             );
 
-            match connect_async(request).await {
-                Ok((ws_stream, _)) => {
+            match tokio::time::timeout(Duration::from_secs(10), connect_async(request)).await {
+                Ok(Ok((ws_stream, _))) => {
                     info!("WebSocket connected to ElevenLabs");
                     return Ok(ws_stream);
                 }
-                Err(e) => {
+                failure => {
+                    let e = match failure {
+                        Ok(Err(e)) => e.to_string(),
+                        Err(_) => "WebSocket connection timed out".to_string(),
+                        Ok(Ok(_)) => unreachable!(),
+                    };
                     if retry_count >= self.reconnect_config.max_retries {
                         error!("Failed to connect after {} retries", retry_count);
                         return Err(MurmurError::Stt(format!(
@@ -217,7 +232,7 @@ impl SttProvider for ElevenLabsProvider {
         let task = tokio::spawn(async move {
             // Spawn receiver task
             let event_tx_clone = event_tx.clone();
-            let receiver_task = tokio::spawn(async move {
+            let mut receiver_task = tokio::spawn(async move {
                 while let Some(msg) = ws_read.next().await {
                     match msg {
                         Ok(Message::Text(text)) => {
@@ -284,62 +299,90 @@ impl SttProvider for ElevenLabsProvider {
                 debug!("WebSocket receiver task finished");
             });
 
-            // Send audio chunks
-            while let Some(chunk) = audio_rx.recv().await {
-                // Convert i16 PCM to raw bytes
-                let pcm_bytes: Vec<u8> = chunk.data.iter().flat_map(|s| s.to_le_bytes()).collect();
+            // Cancelling the outer task must cancel its child as well.
+            let _receiver_guard = AbortTaskOnDrop(receiver_task.abort_handle());
 
-                let audio_base_64 = BASE64.encode(&pcm_bytes);
+            let upload = async {
+                // Send audio chunks
+                while let Some(chunk) = audio_rx.recv().await {
+                    // Convert i16 PCM to raw bytes
+                    let pcm_bytes: Vec<u8> =
+                        chunk.data.iter().flat_map(|s| s.to_le_bytes()).collect();
 
-                // Create JSON message
-                let msg = ElevenLabsMessage {
-                    message_type: "input_audio_chunk".to_string(),
-                    audio_base_64,
-                    sample_rate: Some(16000),
-                    commit: None,
-                };
-                let json = serde_json::to_string(&msg).unwrap();
+                    let audio_base_64 = BASE64.encode(&pcm_bytes);
 
-                // Send to WebSocket
-                if let Err(e) = ws_write.send(Message::Text(json.into())).await {
-                    error!("Failed to send audio chunk: {}", e);
-                    break;
-                }
-            }
+                    // Create JSON message
+                    let msg = ElevenLabsMessage {
+                        message_type: "input_audio_chunk".to_string(),
+                        audio_base_64,
+                        sample_rate: Some(16000),
+                        commit: None,
+                    };
+                    let json = serde_json::to_string(&msg).unwrap();
 
-            debug!("Audio sender finished, sending commit signal");
-
-            // Send a final commit message to flush the server's transcription buffer.
-            // With vad_commit_strategy disabled, the server won't auto-commit;
-            // we must explicitly request it.
-            let commit_msg = ElevenLabsMessage {
-                message_type: "input_audio_chunk".to_string(),
-                audio_base_64: String::new(),
-                sample_rate: Some(16000),
-                commit: Some(true),
-            };
-            let json = serde_json::to_string(&commit_msg).unwrap();
-            if let Err(e) = ws_write.send(Message::Text(json.into())).await {
-                warn!("Failed to send commit message: {}", e);
-            }
-
-            // Give the server time to process the commit and send back
-            // a committed_transcript before we tear down the connection.
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-            debug!("Closing WebSocket");
-            let _ = ws_write.close().await;
-
-            // Wait for receiver with timeout to avoid hanging
-            match tokio::time::timeout(tokio::time::Duration::from_secs(2), receiver_task).await {
-                Ok(result) => {
-                    if let Err(e) = result {
-                        warn!("Receiver task error: {}", e);
+                    // Send to WebSocket
+                    match tokio::time::timeout(
+                        Duration::from_secs(10),
+                        ws_write.send(Message::Text(json.into())),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        result => {
+                            error!("Failed to send audio chunk: {:?}", result);
+                            let _ = event_tx
+                                .send(TranscriptionEvent::Error {
+                                    message: "ElevenLabs audio upload failed or timed out"
+                                        .to_string(),
+                                })
+                                .await;
+                            break;
+                        }
                     }
                 }
-                Err(_) => {
-                    warn!("Receiver task timed out during shutdown");
+
+                debug!("Audio sender finished, sending commit signal");
+
+                // Send a final commit message to flush the server's transcription buffer.
+                // With vad_commit_strategy disabled, the server won't auto-commit;
+                // we must explicitly request it.
+                let commit_msg = ElevenLabsMessage {
+                    message_type: "input_audio_chunk".to_string(),
+                    audio_base_64: String::new(),
+                    sample_rate: Some(16000),
+                    commit: Some(true),
+                };
+                let json = serde_json::to_string(&commit_msg).unwrap();
+                if !matches!(
+                    tokio::time::timeout(
+                        Duration::from_secs(10),
+                        ws_write.send(Message::Text(json.into()))
+                    )
+                    .await,
+                    Ok(Ok(()))
+                ) {
+                    warn!("Failed to send commit message before deadline");
                 }
+
+                // Give the server time to process the commit and send back
+                // a committed_transcript before we tear down the connection.
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+                debug!("Closing WebSocket");
+                let _ = tokio::time::timeout(Duration::from_secs(2), ws_write.close()).await;
+            };
+            let cancelled = tokio::select! {
+                biased;
+                _ = event_tx.closed() => true,
+                _ = upload => false,
+            };
+            if cancelled {
+                // Terminal pipeline failure cancels buffered and in-flight
+                // uploads instead of treating them as a graceful drain.
+                receiver_task.abort();
+                let _ = receiver_task.await;
+            } else {
+                finish_receiver(&mut receiver_task, Duration::from_secs(2)).await;
             }
 
             info!("WebSocket task finished");
@@ -373,9 +416,11 @@ impl SttProvider for ElevenLabsProvider {
 
         // Wait for WebSocket task to finish
         if let Some(task) = self.ws_task.lock().await.take() {
+            let _guard = AbortTaskOnDrop(task.abort_handle());
             let _ = task.await;
         }
 
+        self.event_tx.lock().await.take();
         info!("ElevenLabs STT session stopped");
         Ok(())
     }
@@ -385,5 +430,92 @@ impl SttProvider for ElevenLabsProvider {
         rx_lock
             .take()
             .expect("subscribe_events called multiple times")
+    }
+}
+
+struct AbortTaskOnDrop(tokio::task::AbortHandle);
+
+impl Drop for AbortTaskOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn finish_receiver(task: &mut tokio::task::JoinHandle<()>, deadline: Duration) {
+    if tokio::time::timeout(deadline, &mut *task).await.is_err() {
+        warn!("Receiver task timed out during shutdown");
+        task.abort();
+        let _ = task.await;
+    }
+}
+
+impl Drop for ElevenLabsProvider {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = self.ws_task.try_lock() {
+            if let Some(task) = guard.take() {
+                task.abort();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn timeout_joins_receiver_and_closes_its_event_channel() {
+        let (tx, mut rx) = mpsc::channel::<TranscriptionEvent>(1);
+        let mut task = tokio::spawn(async move {
+            let _keep_sender_alive = tx;
+            std::future::pending::<()>().await;
+        });
+        finish_receiver(&mut task, Duration::from_millis(10)).await;
+        assert!(task.is_finished());
+        assert!(rx.recv().await.is_none());
+    }
+    #[tokio::test]
+    async fn closing_consumer_discards_buffered_audio_and_joins_websocket() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut websocket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let mut audio_messages = 0;
+            while let Some(Ok(message)) = websocket.next().await {
+                if message.is_text() {
+                    audio_messages += 1;
+                }
+            }
+            audio_messages
+        });
+        let mut provider = ElevenLabsProvider::new("test".into());
+        provider.test_url = Some(format!("ws://{address}").parse().unwrap());
+        provider.start_session().await.unwrap();
+        let events = provider.subscribe_events().await;
+        let audio_tx = provider.ws_tx.lock().await.as_ref().unwrap().clone();
+        for timestamp in 0..8 {
+            audio_tx
+                .try_send(AudioChunk {
+                    data: vec![0; 160],
+                    timestamp_ms: timestamp,
+                })
+                .unwrap();
+        }
+        drop(audio_tx);
+        // This current-thread test queues audio without yielding to the worker.
+        // Cancellation must win over every buffered upload and the final commit.
+        drop(events);
+        tokio::time::timeout(Duration::from_millis(200), provider.stop_session())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), server)
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
     }
 }

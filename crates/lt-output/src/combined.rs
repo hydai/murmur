@@ -92,6 +92,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Types into the focused application; run only in an isolated desktop session"]
     async fn test_combined_output_text() {
         // Test keyboard mode to avoid interfering with clipboard tests
         // Note: This may fail without accessibility permissions on macOS

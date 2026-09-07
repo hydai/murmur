@@ -53,6 +53,10 @@ cargo tauri dev
 
 - Use `safeInvoke()` from `ui/src/lib/tauri.ts` instead of raw Tauri `invoke()`
 - Clean up event listeners in `onDestroy`
+- Use the lifecycle helper for asynchronous subscriptions and timers so late registrations are also cleaned up.
+- Run `npm run check`, `npm test`, and `npm run build` from `ui/`.
+
+Tests that type into a focused application, overwrite the system clipboard, request OS permissions, or require an installed AI CLI are ignored by default. Run them explicitly only in an appropriate isolated environment. The normal suite uses mock providers and local test servers.
 
 ### Commits
 

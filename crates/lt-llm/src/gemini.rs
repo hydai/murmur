@@ -171,6 +171,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "requires a locally installed Gemini CLI"]
     async fn test_gemini_health_check() {
         let processor = GeminiProcessor::new();
         // This will return false if gemini is not installed, which is expected

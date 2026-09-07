@@ -137,6 +137,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "requires a locally installed Copilot CLI"]
     async fn test_copilot_health_check() {
         let processor = CopilotProcessor::new();
         // This will return false if copilot is not installed, which is expected

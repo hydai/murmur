@@ -39,7 +39,7 @@ impl PersonalDictionary {
     /// Save dictionary to JSON file
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
+        crate::persistence::atomic_write(path, content)?;
         Ok(())
     }
 

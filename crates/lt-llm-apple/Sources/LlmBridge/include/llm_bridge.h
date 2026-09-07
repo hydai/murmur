@@ -27,20 +27,27 @@ bool llm_bridge_is_available(void);
 /// Process text using Apple Foundation Models.
 /// Creates a LanguageModelSession with the given system instructions,
 /// sends the prompt, and invokes the appropriate callback with the result.
-/// This call blocks until the LLM responds.
+/// Copies its string arguments and returns immediately. Exactly one callback
+/// fires, including after cancellation. Returns a retained request handle, or
+/// NULL if an error callback was invoked synchronously.
 ///
 /// `instructions` - system instructions for the session (UTF-8 C string).
 /// `prompt` - the user prompt to process (UTF-8 C string).
-/// `ctx` - opaque pointer forwarded to callbacks (caller owns its lifetime).
+/// `ctx` - opaque pointer that must remain valid until a callback fires.
 /// `on_complete` - called with the response text on success.
 /// `on_error` - called with an error message on failure.
-void llm_bridge_process(
+void *llm_bridge_process(
     const char *instructions,
     const char *prompt,
     void *ctx,
     LlmCompletionCallback on_complete,
     LlmErrorCallback on_error
 );
+
+/// Cancel and release a request handle, including after successful completion.
+/// Each non-NULL handle returned by llm_bridge_process must be passed exactly
+/// once. Cancellation is cooperative and does not suppress the final callback.
+void llm_bridge_cancel(void *handle);
 
 /// Free a string previously returned by LlmBridge functions.
 void llm_bridge_free_string(char *ptr);

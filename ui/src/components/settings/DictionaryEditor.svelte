@@ -1,10 +1,14 @@
 <script lang="ts">
+  import { useLifecycle } from '../../lib/lifecycle';
+  import { trapFocus } from '../../lib/focus';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount } from 'svelte';
   import { BookPlus } from 'lucide-svelte';
   import PageHeader from './ui/PageHeader.svelte';
   import SectionHeader from './ui/SectionHeader.svelte';
   import ActionRow from './ui/ActionRow.svelte';
+
+  const lifecycle = useLifecycle();
 
   interface DictEntry {
     term: string;
@@ -122,7 +126,7 @@
       success = `Added "${formData.term}"`;
       await loadDictionary();
       closeModals();
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
       error = `Failed to add entry: ${err}`;
       console.error(error);
@@ -161,7 +165,7 @@
       success = `Updated "${formData.term}"`;
       await loadDictionary();
       closeModals();
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
       error = `Failed to update entry: ${err}`;
       console.error(error);
@@ -185,7 +189,7 @@
       success = `Deleted "${currentEntry.term}"`;
       await loadDictionary();
       closeModals();
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
       error = `Failed to delete entry: ${err}`;
       console.error(error);
@@ -259,8 +263,8 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal-overlay" onclick={closeModals} onkeydown={(e) => e.key === 'Escape' && closeModals()} role="presentation">
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
-      <h3>Add Dictionary Entry</h3>
+    <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') closeModals(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dictionary-add-title">
+      <h3 id="dictionary-add-title">Add Dictionary Entry</h3>
 
       <div class="form-group">
         <label for="term">Term *</label>
@@ -296,8 +300,8 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal-overlay" onclick={closeModals} onkeydown={(e) => e.key === 'Escape' && closeModals()} role="presentation">
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
-      <h3>Edit Dictionary Entry</h3>
+    <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') closeModals(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dictionary-edit-title">
+      <h3 id="dictionary-edit-title">Edit Dictionary Entry</h3>
 
       <div class="form-group">
         <label for="edit-term">Term *</label>
@@ -333,8 +337,8 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal-overlay" onclick={closeModals} onkeydown={(e) => e.key === 'Escape' && closeModals()} role="presentation">
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class="modal modal-small" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
-      <h3>Delete Entry</h3>
+    <div class="modal modal-small" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') closeModals(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dictionary-delete-title">
+      <h3 id="dictionary-delete-title">Delete Entry</h3>
       <p>Are you sure you want to delete "{currentEntry?.term}"?</p>
 
       {#if error}

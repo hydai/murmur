@@ -2,10 +2,16 @@ use lt_audio::AudioCapture;
 use lt_core::error::{MurmurError, Result};
 use lt_core::llm::LlmProcessor;
 use lt_core::output::OutputSink;
-use lt_core::stt::{SttProvider, TranscriptionEvent};
+use lt_core::stt::{AudioChunk, SttProvider, TranscriptionEvent};
 use lt_core::PersonalDictionary;
-use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex, RwLock};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use tokio::sync::{broadcast, mpsc, watch, Mutex, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::commands::detect_command;
@@ -14,10 +20,12 @@ use crate::text_normalization::normalize_final_output;
 
 /// Pipeline orchestrator coordinating the full flow
 pub struct PipelineOrchestrator {
-    audio_capture: Arc<Mutex<Option<AudioCapture>>>,
-    stt_provider: Arc<Mutex<Option<Box<dyn SttProvider>>>>,
+    audio_capture: Arc<Mutex<Option<Box<dyn CaptureControl>>>>,
+    capture_factory: Arc<dyn Fn() -> lt_audio::Result<AudioInput> + Send + Sync>,
+    lifecycle: Mutex<()>,
+    cancel_tx: Mutex<Option<watch::Sender<bool>>>,
     llm_processor: Arc<RwLock<Arc<dyn LlmProcessor>>>,
-    output_sink: Arc<dyn OutputSink>,
+    output_sink: Arc<RwLock<Arc<dyn OutputSink>>>,
     dictionary: Arc<Mutex<PersonalDictionary>>,
     state: Arc<Mutex<PipelineState>>,
     event_tx: broadcast::Sender<PipelineEvent>,
@@ -38,9 +46,11 @@ impl PipelineOrchestrator {
 
         Self {
             audio_capture: Arc::new(Mutex::new(None)),
-            stt_provider: Arc::new(Mutex::new(None)),
+            capture_factory: Arc::new(AudioInput::open),
+            lifecycle: Mutex::new(()),
+            cancel_tx: Mutex::new(None),
             llm_processor: Arc::new(RwLock::new(llm_processor)),
-            output_sink,
+            output_sink: Arc::new(RwLock::new(output_sink)),
             dictionary,
             state: Arc::new(Mutex::new(PipelineState::Idle)),
             event_tx,
@@ -73,9 +83,19 @@ impl PipelineOrchestrator {
         tracing::info!("LLM processor hot-swapped (takes effect on next recording)");
     }
 
-    /// Start the pipeline with the provided STT provider
+    /// Hot-swap the output destination for the next recording.
+    pub async fn set_output_sink(&self, sink: Arc<dyn OutputSink>) {
+        *self.output_sink.write().await = sink;
+    }
+
+    /// Start the pipeline with the provided STT provider.
+    ///
+    /// Drive this future to completion (callers spawn it on detached tasks):
+    /// a startup failure rolls the state back, but dropping the future while
+    /// provider startup is pending would leave it in `Recording`.
     pub async fn start(&self, stt_provider: Box<dyn SttProvider>) -> Result<()> {
-        let mut state = self.state.lock().await;
+        let _lifecycle = self.lifecycle.lock().await;
+        let state = self.state.lock().await;
 
         match *state {
             PipelineState::Recording | PipelineState::Transcribing | PipelineState::Processing => {
@@ -84,33 +104,39 @@ impl PipelineOrchestrator {
                     *state
                 )));
             }
-            PipelineState::Done | PipelineState::Error => {
-                // Reset from completed/error state to allow new recording
-                *state = PipelineState::Idle;
-            }
-            PipelineState::Idle => {
-                // Already idle, ready to start
-            }
+            _ => {}
         }
-
-        tracing::info!("Starting pipeline");
-
-        // Transition to Recording state
-        *state = PipelineState::Recording;
-        self.emit_state_change(PipelineState::Recording);
         drop(state);
+        self.cancel_session().await;
+        *self.state.lock().await = PipelineState::Recording;
+        self.emit_state_change(PipelineState::Recording);
 
-        // Store STT provider
-        let mut stt_guard = self.stt_provider.lock().await;
-        *stt_guard = Some(stt_provider);
-        let mut stt = stt_guard.take().unwrap();
-        drop(stt_guard);
-
-        // Start STT session
-        stt.start_session().await.map_err(|e| {
-            tracing::error!("Failed to start STT session: {}", e);
-            e
-        })?;
+        let mut stt = stt_provider;
+        let startup = tokio::time::timeout(Duration::from_secs(30), stt.start_session()).await;
+        let startup =
+            startup.unwrap_or_else(|_| Err(MurmurError::Stt("STT startup timed out".into())));
+        if let Err(error) = startup {
+            self.fail_start(&error).await;
+            return Err(error);
+        }
+        let AudioInput {
+            capture,
+            chunks: mut chunk_rx,
+            levels,
+        } = match (self.capture_factory)() {
+            Ok(input) => input,
+            Err(error) => {
+                // Drop owns provider cleanup; do not leave an active session on
+                // a device/permission failure after the network connected.
+                let error = MurmurError::Audio(error.to_string());
+                self.fail_start(&error).await;
+                return Err(error);
+            }
+        };
+        *self.audio_capture.lock().await = Some(capture);
+        let (cancel_tx, mut cancel_rx) = watch::channel(false);
+        *self.cancel_tx.lock().await = Some(cancel_tx.clone());
+        let failed = Arc::new(AtomicBool::new(false));
 
         // Subscribe to transcription events
         let mut event_rx = stt.subscribe_events().await;
@@ -118,9 +144,11 @@ impl PipelineOrchestrator {
         // Clone the processor under a read lock so the current recording
         // uses a snapshot; hot-swaps take effect on the next recording.
         let llm_processor = self.llm_processor.read().await.clone();
-        let output_sink = self.output_sink.clone();
+        let output_sink = self.output_sink.read().await.clone();
         let dictionary = self.dictionary.clone();
         let state_arc = self.state.clone();
+        let capture_arc = self.audio_capture.clone();
+        let transcription_failed = failed.clone();
 
         // Spawn transcription event handler
         let transcription_task = tokio::spawn(async move {
@@ -174,6 +202,7 @@ impl PipelineOrchestrator {
                         last_partial_text.clear();
                     }
                     TranscriptionEvent::Error { message } => {
+                        transcription_failed.store(true, Ordering::SeqCst);
                         tracing::error!("STT error: {}", message);
                         let _ = event_tx.send(PipelineEvent::Error {
                             message: message.clone(),
@@ -183,6 +212,15 @@ impl PipelineOrchestrator {
                     }
                 }
             }
+
+            // A failed provider may still be finalizing. Closing its receiver
+            // makes callbacks fail promptly instead of blocking during the LLM.
+            drop(event_rx);
+
+            // Ending transcription (including provider failure) ends capture.
+            // Do this before emitting any terminal state or writing output.
+            let _ = stop_capture(&capture_arc).await;
+            let _ = cancel_tx.send(true);
 
             // Append any uncommitted trailing partial text.
             // Covers two cases:
@@ -273,10 +311,18 @@ impl PipelineOrchestrator {
                         // Transition to Done state
                         {
                             let mut state = state_arc.lock().await;
-                            *state = PipelineState::Done;
+                            *state = if transcription_failed.load(Ordering::SeqCst) {
+                                PipelineState::Error
+                            } else {
+                                PipelineState::Done
+                            };
                         }
                         let _ = event_tx.send(PipelineEvent::StateChanged {
-                            state: PipelineState::Done,
+                            state: if transcription_failed.load(Ordering::SeqCst) {
+                                PipelineState::Error
+                            } else {
+                                PipelineState::Done
+                            },
                             timestamp_ms: last_timestamp,
                         });
                     }
@@ -321,10 +367,18 @@ impl PipelineOrchestrator {
                 // Transition back to Idle
                 {
                     let mut state = state_arc.lock().await;
-                    *state = PipelineState::Idle;
+                    *state = if transcription_failed.load(Ordering::SeqCst) {
+                        PipelineState::Error
+                    } else {
+                        PipelineState::Idle
+                    };
                 }
                 let _ = event_tx.send(PipelineEvent::StateChanged {
-                    state: PipelineState::Idle,
+                    state: if transcription_failed.load(Ordering::SeqCst) {
+                        PipelineState::Error
+                    } else {
+                        PipelineState::Idle
+                    },
                     timestamp_ms: last_timestamp,
                 });
             }
@@ -334,15 +388,8 @@ impl PipelineOrchestrator {
 
         *self.transcription_task.lock().await = Some(transcription_task);
 
-        // Create audio capture
-        let mut capture = AudioCapture::new();
-        capture.start().map_err(|e| {
-            tracing::error!("Failed to start audio capture: {}", e);
-            MurmurError::Audio(e.to_string())
-        })?;
-
         // Subscribe to audio levels for waveform
-        if let Some(mut level_rx) = capture.subscribe_levels() {
+        if let Some(mut level_rx) = levels {
             let event_tx = self.event_tx.clone();
 
             let level_task = tokio::spawn(async move {
@@ -359,74 +406,93 @@ impl PipelineOrchestrator {
             *self.level_task.lock().await = Some(level_task);
         }
 
-        // Subscribe to audio chunks and forward to STT
-        if let Some(mut chunk_rx) = capture.subscribe_chunks() {
-            let audio_task = tokio::spawn(async move {
-                while let Some(chunk) = chunk_rx.recv().await {
-                    if let Err(e) = stt.send_audio(chunk).await {
-                        tracing::error!("Failed to send audio to STT: {}", e);
-                        break;
+        let capture_arc = self.audio_capture.clone();
+        let event_tx = self.event_tx.clone();
+        let audio_task = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = cancel_rx.changed() => break,
+                    chunk = chunk_rx.recv() => {
+                        let Some(chunk) = chunk else { break; };
+                        let sent = tokio::select! {
+                            biased;
+                            _ = cancel_rx.changed() => break,
+                            result = tokio::time::timeout(Duration::from_secs(30), stt.send_audio(chunk)) => result,
+                        };
+                        if !matches!(sent, Ok(Ok(()))) {
+                            failed.store(true, Ordering::SeqCst);
+                            let _ = event_tx.send(PipelineEvent::Error {
+                                message: "STT audio delivery failed or timed out".into(),
+                                recoverable: false,
+                            });
+                            let _ = stop_capture(&capture_arc).await;
+                            break;
+                        }
                     }
                 }
-                tracing::debug!("Audio forwarding task finished");
-
-                // Stop STT session when audio ends
-                let _ = stt.stop_session().await;
-            });
-
-            *self.audio_task.lock().await = Some(audio_task);
-        }
-
-        // Store capture instance
-        *self.audio_capture.lock().await = Some(capture);
+            }
+            // Providers own cleanup when this future is cancelled. A stalled
+            // shutdown cannot retain the transcription event channel forever.
+            // Allow a full HTTP backlog (4 queued + in-flight + final buffer)
+            // to drain, with at most 30 seconds per request.
+            if !matches!(
+                tokio::time::timeout(Duration::from_secs(180), stt.stop_session()).await,
+                Ok(Ok(()))
+            ) {
+                failed.store(true, Ordering::SeqCst);
+                let _ = event_tx.send(PipelineEvent::Error {
+                    message: "STT shutdown failed or timed out".into(),
+                    recoverable: false,
+                });
+            }
+        });
+        *self.audio_task.lock().await = Some(audio_task);
 
         tracing::info!("Pipeline started successfully");
         Ok(())
     }
 
-    /// Stop the pipeline
+    /// Stop capture and let queued transcription and output finish normally.
     pub async fn stop(&self) -> Result<()> {
-        // Read state for logging only (don't hold lock across async operations)
-        {
-            let state = self.state.lock().await;
-            tracing::info!("Stopping pipeline (current state: {:?})", *state);
-        }
-
-        // Stop audio capture
-        if let Some(mut capture) = self.audio_capture.lock().await.take() {
-            capture
-                .stop()
-                .map_err(|e| MurmurError::Audio(e.to_string()))?;
-        }
-
-        // Cancel level task (just UI, safe to abort)
+        let _lifecycle = self.lifecycle.lock().await;
+        let result = stop_capture(&self.audio_capture).await;
         if let Some(task) = self.level_task.lock().await.take() {
             task.abort();
+            let _ = task.await;
         }
+        result
+    }
 
-        // DON'T abort audio_task — let it finish naturally.
-        // Stopping audio capture (above) closes chunk_tx, causing chunk_rx.recv()
-        // to return None, which triggers stt.stop_session() for clean shutdown.
-        // This is important for Apple STT's destroyAndWait() synchronization.
-
-        // DON'T abort transcription_task — let it finish naturally.
-        // The flow: audio capture stops → chunk channel closes → audio_task
-        // calls stt.stop_session() → STT processes remaining audio → event
-        // channel closes → transcription task exits loop → post-processing
-        // runs (LLM, clipboard copy, FinalResult, Done state transition).
-
-        tracing::info!("Pipeline stopped (post-processing will continue)");
+    /// Cancel the session and return to Idle without later output from old tasks.
+    pub async fn reset(&self) -> Result<()> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.cancel_session().await;
+        *self.state.lock().await = PipelineState::Idle;
+        self.emit_state_change(PipelineState::Idle);
         Ok(())
     }
 
-    /// Reset the pipeline to idle state
-    pub async fn reset(&self) -> Result<()> {
-        let state = *self.state.lock().await;
-        if state != PipelineState::Idle {
-            self.stop().await?;
+    async fn fail_start(&self, error: &MurmurError) {
+        *self.state.lock().await = PipelineState::Error;
+        let _ = self.event_tx.send(PipelineEvent::Error {
+            message: error.to_string(),
+            recoverable: false,
+        });
+        self.emit_state_change(PipelineState::Error);
+    }
+
+    async fn cancel_session(&self) {
+        if let Some(cancel) = self.cancel_tx.lock().await.take() {
+            let _ = cancel.send(true);
         }
-        tracing::info!("Pipeline reset to idle");
-        Ok(())
+        let _ = stop_capture(&self.audio_capture).await;
+        for slot in [&self.level_task, &self.transcription_task, &self.audio_task] {
+            if let Some(task) = slot.lock().await.take() {
+                task.abort();
+                let _ = task.await;
+            }
+        }
     }
 
     fn emit_state_change(&self, state: PipelineState) {
@@ -442,82 +508,299 @@ impl PipelineOrchestrator {
     }
 }
 
+trait CaptureControl: Send {
+    fn stop(&mut self) -> lt_audio::Result<()>;
+}
+
+impl CaptureControl for AudioCapture {
+    fn stop(&mut self) -> lt_audio::Result<()> {
+        AudioCapture::stop(self)
+    }
+}
+
+struct AudioInput {
+    capture: Box<dyn CaptureControl>,
+    chunks: mpsc::Receiver<AudioChunk>,
+    levels: Option<mpsc::Receiver<lt_audio::AudioLevel>>,
+}
+
+impl AudioInput {
+    fn open() -> lt_audio::Result<Self> {
+        let mut capture = AudioCapture::new();
+        capture.start()?;
+        let chunks = capture
+            .subscribe_chunks()
+            .expect("new audio capture has a chunk receiver");
+        let levels = capture.subscribe_levels();
+        Ok(Self {
+            capture: Box::new(capture),
+            chunks,
+            levels,
+        })
+    }
+}
+
+async fn stop_capture(capture: &Mutex<Option<Box<dyn CaptureControl>>>) -> Result<()> {
+    if let Some(mut capture) = capture.lock().await.take() {
+        capture
+            .stop()
+            .map_err(|error| MurmurError::Audio(error.to_string()))?;
+    }
+    Ok(())
+}
+
+impl Drop for PipelineOrchestrator {
+    fn drop(&mut self) {
+        if let Ok(mut capture) = self.audio_capture.try_lock() {
+            if let Some(mut capture) = capture.take() {
+                let _ = capture.stop();
+            }
+        }
+        for slot in [&self.level_task, &self.transcription_task, &self.audio_task] {
+            if let Ok(mut slot) = slot.try_lock() {
+                if let Some(task) = slot.take() {
+                    task.abort();
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
     use lt_core::llm::{ProcessingOutput, ProcessingTask};
-    use lt_core::stt::AudioChunk;
-    use lt_output::ClipboardOutput;
-    use std::sync::Arc;
-    use tokio::sync::mpsc;
+    use std::sync::Mutex as SyncMutex;
+    use tokio::sync::Notify;
 
-    // Mock LLM processor for testing
-    struct MockLlmProcessor;
-
+    struct TestLlm(Option<Arc<Notify>>);
     #[async_trait]
-    impl LlmProcessor for MockLlmProcessor {
+    impl LlmProcessor for TestLlm {
         async fn process(&self, task: ProcessingTask) -> Result<ProcessingOutput> {
-            match task {
-                ProcessingTask::PostProcess { text, .. } => Ok(ProcessingOutput {
-                    text: format!("Processed: {}", text),
-                    processing_time_ms: 10,
-                    metadata: None,
-                }),
-                _ => unimplemented!(),
+            if let Some(release) = &self.0 {
+                release.notified().await;
             }
+            let ProcessingTask::PostProcess { text, .. } = task else {
+                panic!("unexpected task")
+            };
+            Ok(ProcessingOutput {
+                text,
+                processing_time_ms: 0,
+                metadata: None,
+            })
         }
-
         async fn health_check(&self) -> Result<bool> {
             Ok(true)
         }
     }
 
-    // Mock STT provider for testing
-    struct MockSttProvider {
-        event_tx: mpsc::Sender<TranscriptionEvent>,
-    }
-
+    #[derive(Default)]
+    struct TestOutput(SyncMutex<Vec<String>>);
     #[async_trait]
-    impl SttProvider for MockSttProvider {
+    impl OutputSink for TestOutput {
+        async fn output_text(&self, text: &str) -> Result<()> {
+            self.0.lock().unwrap().push(text.to_string());
+            Ok(())
+        }
+    }
+
+    struct TestCapture {
+        chunks: Option<mpsc::Sender<AudioChunk>>,
+        running: Arc<AtomicBool>,
+    }
+    impl CaptureControl for TestCapture {
+        fn stop(&mut self) -> lt_audio::Result<()> {
+            self.running.store(false, Ordering::SeqCst);
+            self.chunks.take();
+            Ok(())
+        }
+    }
+
+    struct TestStt {
+        tx: Option<mpsc::Sender<TranscriptionEvent>>,
+        rx: SyncMutex<Option<mpsc::Receiver<TranscriptionEvent>>>,
+        fail_start: bool,
+    }
+    impl TestStt {
+        fn new(fail_start: bool) -> (Box<Self>, mpsc::Sender<TranscriptionEvent>) {
+            let (tx, rx) = mpsc::channel(16);
+            (
+                Box::new(Self {
+                    tx: Some(tx.clone()),
+                    rx: SyncMutex::new(Some(rx)),
+                    fail_start,
+                }),
+                tx,
+            )
+        }
+    }
+    #[async_trait]
+    impl SttProvider for TestStt {
         async fn start_session(&mut self) -> Result<()> {
+            if self.fail_start {
+                Err(MurmurError::Stt("startup failed".into()))
+            } else {
+                Ok(())
+            }
+        }
+        async fn send_audio(&mut self, _: AudioChunk) -> Result<()> {
             Ok(())
         }
-
-        async fn send_audio(&mut self, _chunk: AudioChunk) -> Result<()> {
-            Ok(())
-        }
-
         async fn stop_session(&mut self) -> Result<()> {
+            self.tx.take();
             Ok(())
         }
-
-        async fn subscribe_events(&self) -> tokio::sync::mpsc::Receiver<TranscriptionEvent> {
-            let (_tx, rx) = mpsc::channel(10);
-            rx
+        async fn subscribe_events(&self) -> mpsc::Receiver<TranscriptionEvent> {
+            self.rx.lock().unwrap().take().unwrap()
         }
     }
 
-    #[tokio::test]
-    async fn test_orchestrator_creation() {
-        let llm = Arc::new(MockLlmProcessor);
-        let output = Arc::new(ClipboardOutput::new().unwrap());
-        let dict = Arc::new(Mutex::new(PersonalDictionary::new()));
+    fn pipeline(
+        output: Arc<TestOutput>,
+        llm: Arc<TestLlm>,
+    ) -> (PipelineOrchestrator, Arc<AtomicBool>) {
+        let running = Arc::new(AtomicBool::new(false));
+        let status = running.clone();
+        let mut pipeline =
+            PipelineOrchestrator::new(llm, output, Arc::new(Mutex::new(PersonalDictionary::new())));
+        pipeline.capture_factory = Arc::new(move || {
+            let (tx, rx) = mpsc::channel(4);
+            status.store(true, Ordering::SeqCst);
+            Ok(AudioInput {
+                capture: Box::new(TestCapture {
+                    chunks: Some(tx),
+                    running: status.clone(),
+                }),
+                chunks: rx,
+                levels: None,
+            })
+        });
+        (pipeline, running)
+    }
 
-        let orchestrator = PipelineOrchestrator::new(llm, output, dict);
-
-        assert_eq!(orchestrator.get_state().await, PipelineState::Idle);
+    async fn wait_state(events: &mut broadcast::Receiver<PipelineEvent>, expected: PipelineState) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if matches!(events.recv().await.unwrap(), PipelineEvent::StateChanged { state, .. } if state == expected) { break; }
+            }
+        }).await.expect("expected pipeline state");
     }
 
     #[tokio::test]
-    async fn test_orchestrator_state_transitions() {
-        let llm = Arc::new(MockLlmProcessor);
-        let output = Arc::new(ClipboardOutput::new().unwrap());
-        let dict = Arc::new(Mutex::new(PersonalDictionary::new()));
+    async fn failed_start_can_retry_and_reset_returns_idle() {
+        let (p, running) = pipeline(Arc::default(), Arc::new(TestLlm(None)));
+        let (failed, _) = TestStt::new(true);
+        assert!(p.start(failed).await.is_err());
+        assert_eq!(p.get_state().await, PipelineState::Error);
+        assert!(!running.load(Ordering::SeqCst));
+        let (working, _events) = TestStt::new(false);
+        p.start(working).await.unwrap();
+        assert!(running.load(Ordering::SeqCst));
+        p.reset().await.unwrap();
+        assert_eq!(p.get_state().await, PipelineState::Idle);
+        assert!(!running.load(Ordering::SeqCst));
+    }
 
-        let orchestrator = PipelineOrchestrator::new(llm, output, dict);
+    #[tokio::test]
+    async fn capture_start_failure_rolls_back_started_provider() {
+        let (mut p, _) = pipeline(Arc::default(), Arc::new(TestLlm(None)));
+        p.capture_factory = Arc::new(|| Err(lt_audio::AudioError::NoInputDevice));
+        let (stt, events) = TestStt::new(false);
+        assert!(p.start(stt).await.is_err());
+        assert!(events.is_closed());
+        assert_eq!(p.get_state().await, PipelineState::Error);
+    }
 
-        // Initial state should be Idle
-        assert_eq!(orchestrator.get_state().await, PipelineState::Idle);
+    #[tokio::test]
+    async fn terminal_stt_error_stops_capture_before_terminal_state() {
+        let (p, running) = pipeline(Arc::default(), Arc::new(TestLlm(None)));
+        let mut events = p.subscribe_events();
+        let (stt, tx) = TestStt::new(false);
+        p.start(stt).await.unwrap();
+        tx.send(TranscriptionEvent::Error {
+            message: "provider failed".into(),
+        })
+        .await
+        .unwrap();
+        wait_state(&mut events, PipelineState::Error).await;
+        assert!(!running.load(Ordering::SeqCst));
+        p.reset().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_transcription_closes_callbacks_before_slow_postprocessing() {
+        let release = Arc::new(Notify::new());
+        let (p, running) = pipeline(Arc::default(), Arc::new(TestLlm(Some(release))));
+        let mut events = p.subscribe_events();
+        let (stt, tx) = TestStt::new(false);
+        p.start(stt).await.unwrap();
+        tx.send(TranscriptionEvent::Partial {
+            text: "preserved words".into(),
+            timestamp_ms: 1,
+        })
+        .await
+        .unwrap();
+        tx.send(TranscriptionEvent::Error {
+            message: "provider failed".into(),
+        })
+        .await
+        .unwrap();
+        wait_state(&mut events, PipelineState::Processing).await;
+        assert!(!running.load(Ordering::SeqCst));
+        assert!(
+            tx.is_closed(),
+            "FFI callbacks must not block while LLM runs"
+        );
+        p.reset().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn output_destination_is_snapshotted_per_recording() {
+        let first = Arc::new(TestOutput::default());
+        let second = Arc::new(TestOutput::default());
+        let (p, _) = pipeline(first.clone(), Arc::new(TestLlm(None)));
+        let mut events = p.subscribe_events();
+        for (index, text) in ["first recording", "second recording"].iter().enumerate() {
+            let (stt, tx) = TestStt::new(false);
+            p.start(stt).await.unwrap();
+            if index == 0 {
+                p.set_output_sink(second.clone()).await;
+            }
+            tx.send(TranscriptionEvent::Committed {
+                text: text.to_string(),
+                timestamp_ms: 1,
+            })
+            .await
+            .unwrap();
+            drop(tx);
+            p.stop().await.unwrap();
+            wait_state(&mut events, PipelineState::Done).await;
+        }
+        assert_eq!(*first.0.lock().unwrap(), ["first recording"]);
+        assert_eq!(*second.0.lock().unwrap(), ["second recording"]);
+    }
+
+    #[tokio::test]
+    async fn reset_cancels_processing_without_late_output() {
+        let output = Arc::new(TestOutput::default());
+        let release = Arc::new(Notify::new());
+        let (p, _) = pipeline(output.clone(), Arc::new(TestLlm(Some(release.clone()))));
+        let mut events = p.subscribe_events();
+        let (stt, tx) = TestStt::new(false);
+        p.start(stt).await.unwrap();
+        tx.send(TranscriptionEvent::Committed {
+            text: "cancel me".into(),
+            timestamp_ms: 1,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+        p.stop().await.unwrap();
+        wait_state(&mut events, PipelineState::Processing).await;
+        p.reset().await.unwrap();
+        release.notify_one();
+        assert_eq!(p.get_state().await, PipelineState::Idle);
+        assert!(output.0.lock().unwrap().is_empty());
     }
 }
