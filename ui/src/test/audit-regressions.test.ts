@@ -417,6 +417,51 @@ describe('prompt editor', () => {
     expect(target.querySelector('.alert-success')?.textContent).toContain('Saved');
   });
 
+  it('keeps unsaved edits when the selector moves away and back', async () => {
+    mockPrompts(prompt('post_process', 'a'), prompt('shorten', 'b'));
+    const { target } = render(PromptsEditor, {});
+    await settle();
+
+    const editor = () => target.querySelector('textarea')!;
+    editor().value = 'work in progress';
+    editor().dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+
+    const select = target.querySelector('select')!;
+    const choose = async (name: string) => {
+      select.value = name;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+    };
+
+    await choose('shorten');
+    expect(editor().value).toBe('b');
+    await choose('post_process');
+    expect(editor().value).toBe('work in progress');
+  });
+
+  it('drops the draft once the prompt is reset to its default', async () => {
+    // Reset is only offered for a prompt that currently has an override.
+    mocks.invoke.mockImplementation(async command => command === 'get_prompts'
+      ? [{ ...prompt('post_process', 'a'), is_override: true, default_content: 'a' }]
+      : undefined);
+    const { target } = render(PromptsEditor, {});
+    await settle();
+
+    const editor = () => target.querySelector('textarea')!;
+    editor().value = 'edited';
+    editor().dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+
+    button(target, 'Reset to default').click();
+    await settle();
+    expect(mocks.invoke).toHaveBeenCalledWith('reset_prompt', {
+      params: { name: 'post_process' },
+    });
+    // A surviving draft would shadow the content that just came back from disk.
+    expect(editor().value).toBe('a');
+  });
+
   it('clears the banner when a different prompt is selected', async () => {
     mockPrompts(prompt('post_process', 'a'), prompt('shorten', 'b'));
     const { target } = render(PromptsEditor, {});

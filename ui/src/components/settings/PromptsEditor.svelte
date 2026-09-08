@@ -21,6 +21,8 @@
   let prompts = $state<PromptInfo[]>([]);
   let selectedName = $state<string>('post_process');
   let editorContent = $state<string>('');
+  // Unsaved edits, kept per prompt so switching the selector never loses work.
+  let drafts = $state<Record<string, string>>({});
   let loading = $state(false);
   let error = $state('');
   let success = $state('');
@@ -45,10 +47,19 @@
   }
 
   function syncEditor() {
-    editorContent = current?.content ?? '';
+    editorContent = drafts[selectedName] ?? current?.content ?? '';
   }
 
-  function onSelectChange() {
+  function selectPrompt(next: string) {
+    // Switching away used to overwrite the editor from the newly selected
+    // prompt, discarding unsaved work with no warning. Park the edit instead,
+    // so every prompt keeps its own draft until it is saved or reset.
+    if (isDirty) {
+      drafts[selectedName] = editorContent;
+    } else {
+      delete drafts[selectedName];
+    }
+    selectedName = next;
     // Reloading after a save must keep the banner, so the reset lives with the
     // selection change rather than inside syncEditor.
     error = '';
@@ -69,6 +80,7 @@
         params: { name: selectedName, content: editorContent },
       });
       success = `Saved "${current?.title ?? selectedName}"`;
+      delete drafts[selectedName];
       await loadPrompts();
       lifecycle.timeout(() => {
         success = '';
@@ -88,6 +100,7 @@
       success = '';
       await invoke('reset_prompt', { params: { name: selectedName } });
       success = `Reset "${current?.title ?? selectedName}" to default`;
+      delete drafts[selectedName];
       await loadPrompts();
       lifecycle.timeout(() => {
         success = '';
@@ -116,7 +129,11 @@
 
   <div class="section">
     <SectionHeader label="PROMPT" />
-    <select class="prompt-select" bind:value={selectedName} onchange={onSelectChange}>
+    <select
+      class="prompt-select"
+      value={selectedName}
+      onchange={(event) => selectPrompt(event.currentTarget.value)}
+    >
       {#each prompts as p}
         <option value={p.name}>{p.title}{p.is_override ? ' *' : ''}</option>
       {/each}
