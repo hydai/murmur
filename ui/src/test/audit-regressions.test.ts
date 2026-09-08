@@ -8,6 +8,7 @@ import ProviderConfig from '../components/settings/ProviderConfig.svelte';
 import HistoryPanel from '../components/history/HistoryPanel.svelte';
 import DictionaryEditor from '../components/settings/DictionaryEditor.svelte';
 import OutputConfig from '../components/settings/OutputConfig.svelte';
+import PromptsEditor from '../components/settings/PromptsEditor.svelte';
 import StatusRowHarness from './StatusRowHarness.svelte';
 
 const mocks = vi.hoisted(() => ({
@@ -382,5 +383,58 @@ describe('chinese conversion setting', () => {
     await settle();
     expect(mocks.invoke).toHaveBeenCalledWith('set_chinese_conversion', { mode: 'none' });
     expect(button(target, 'No conversion').textContent).toContain('Active');
+  });
+});
+
+describe('prompt editor', () => {
+  const prompt = (name: string, content: string) => ({
+    name, title: name, description: '', required_placeholders: [],
+    task_variant: 'post_process', content, is_override: false, default_content: content,
+  });
+
+  function mockPrompts(...entries: ReturnType<typeof prompt>[]) {
+    mocks.invoke.mockImplementation(async command =>
+      command === 'get_prompts' ? entries : undefined);
+  }
+
+  it('keeps the success banner after the save reloads the prompts', async () => {
+    mockPrompts(prompt('post_process', 'original'));
+    const { target } = render(PromptsEditor, {});
+    await settle();
+
+    const editor = target.querySelector('textarea')!;
+    editor.value = 'edited';
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+
+    button(target, 'Save').click();
+    await settle();
+
+    expect(mocks.invoke).toHaveBeenCalledWith('set_prompt', {
+      params: { name: 'post_process', content: 'edited' },
+    });
+    // loadPrompts() runs after the banner is set; syncEditor must not wipe it.
+    expect(target.querySelector('.alert-success')?.textContent).toContain('Saved');
+  });
+
+  it('clears the banner when a different prompt is selected', async () => {
+    mockPrompts(prompt('post_process', 'a'), prompt('shorten', 'b'));
+    const { target } = render(PromptsEditor, {});
+    await settle();
+
+    const editor = target.querySelector('textarea')!;
+    editor.value = 'edited';
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+
+    button(target, 'Save').click();
+    await settle();
+    expect(target.querySelector('.alert-success')).not.toBeNull();
+
+    const select = target.querySelector('select')!;
+    select.value = 'shorten';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    expect(target.querySelector('.alert-success')).toBeNull();
   });
 });
