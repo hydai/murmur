@@ -19,6 +19,109 @@ pub enum SttProviderType {
     CustomStt,
 }
 
+/// How the settings UI groups a provider. Serialized as the `provider_type`
+/// field the frontend filters on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderKind {
+    /// Streams partial transcripts over a socket.
+    Streaming,
+    /// Uploads finished audio to a REST endpoint.
+    Batch,
+    /// A command-line tool on the user's machine.
+    Cli,
+    /// Runs on the device with no network call.
+    Local,
+    /// A cloud HTTP API.
+    Http,
+    /// A user-supplied endpoint.
+    Custom,
+}
+
+impl ProviderKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Streaming => "streaming",
+            Self::Batch => "batch",
+            Self::Cli => "cli",
+            Self::Local => "local",
+            Self::Http => "http",
+            Self::Custom => "custom",
+        }
+    }
+}
+
+impl SttProviderType {
+    /// Every provider, in the order the settings page lists them.
+    pub const ALL: [Self; 5] = [
+        Self::ElevenLabs,
+        Self::OpenAI,
+        Self::Groq,
+        Self::AppleStt,
+        Self::CustomStt,
+    ];
+
+    /// Stable identifier shared by the config file, the IPC surface and the UI.
+    /// Kept in step with the serde representation by a test.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::ElevenLabs => "elevenlabs",
+            Self::OpenAI => "openai",
+            Self::Groq => "groq",
+            Self::AppleStt => "apple_stt",
+            Self::CustomStt => "custom_stt",
+        }
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::ElevenLabs => "ElevenLabs Scribe",
+            Self::OpenAI => "OpenAI Whisper",
+            Self::Groq => "Groq Whisper Turbo",
+            Self::AppleStt => "Apple Speech",
+            Self::CustomStt => "Custom Endpoint",
+        }
+    }
+
+    /// Key into [`AppConfig::api_keys`], or `None` when no key is needed.
+    pub fn api_key_name(self) -> Option<&'static str> {
+        match self {
+            Self::ElevenLabs => Some("elevenlabs"),
+            Self::OpenAI => Some("openai"),
+            Self::Groq => Some("groq"),
+            // On-device.
+            Self::AppleStt => None,
+            // Optional: a local Whisper server usually needs no auth.
+            Self::CustomStt => None,
+        }
+    }
+
+    pub fn kind(self) -> ProviderKind {
+        match self {
+            Self::ElevenLabs => ProviderKind::Streaming,
+            Self::OpenAI | Self::Groq => ProviderKind::Batch,
+            Self::AppleStt => ProviderKind::Local,
+            Self::CustomStt => ProviderKind::Batch,
+        }
+    }
+
+    /// Only available on macOS, so the settings list omits it elsewhere.
+    pub fn is_macos_only(self) -> bool {
+        matches!(self, Self::AppleStt)
+    }
+}
+
+impl std::str::FromStr for SttProviderType {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        let value = value.to_lowercase();
+        Self::ALL
+            .into_iter()
+            .find(|provider| provider.id() == value)
+            .ok_or_else(|| format!("Unknown STT provider: {value}"))
+    }
+}
+
 /// LLM processor type
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -36,6 +139,90 @@ pub enum LlmProcessorType {
     GeminiApi,
     #[serde(rename = "custom_api")]
     CustomApi,
+}
+
+impl LlmProcessorType {
+    /// Every processor, in the order the settings page lists them.
+    pub const ALL: [Self; 7] = [
+        Self::Gemini,
+        Self::Copilot,
+        Self::AppleLlm,
+        Self::OpenAiApi,
+        Self::ClaudeApi,
+        Self::GeminiApi,
+        Self::CustomApi,
+    ];
+
+    /// Stable identifier shared by the config file, the IPC surface and the UI.
+    /// Kept in step with the serde representation by a test.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Gemini => "gemini",
+            Self::Copilot => "copilot",
+            Self::AppleLlm => "apple_llm",
+            Self::OpenAiApi => "openai_api",
+            Self::ClaudeApi => "claude_api",
+            Self::GeminiApi => "gemini_api",
+            Self::CustomApi => "custom_api",
+        }
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Gemini => "Gemini CLI",
+            Self::Copilot => "Copilot CLI",
+            Self::AppleLlm => "Apple Intelligence",
+            Self::OpenAiApi => "OpenAI API",
+            Self::ClaudeApi => "Claude API",
+            Self::GeminiApi => "Gemini API",
+            Self::CustomApi => "Custom Endpoint",
+        }
+    }
+
+    /// Key into [`AppConfig::api_keys`], or `None` when no key is needed.
+    pub fn api_key_name(self) -> Option<&'static str> {
+        match self {
+            // The CLIs and the on-device model carry their own auth.
+            Self::Gemini | Self::Copilot | Self::AppleLlm => None,
+            // Shared with the OpenAI STT provider.
+            Self::OpenAiApi => Some("openai"),
+            Self::ClaudeApi => Some("anthropic"),
+            Self::GeminiApi => Some("google_ai"),
+            // Optional: a local server usually needs no auth.
+            Self::CustomApi => Some("custom_llm"),
+        }
+    }
+
+    /// Whether the processor cannot run at all without its key.
+    pub fn requires_api_key(self) -> bool {
+        matches!(self, Self::OpenAiApi | Self::ClaudeApi | Self::GeminiApi)
+    }
+
+    pub fn kind(self) -> ProviderKind {
+        match self {
+            Self::Gemini | Self::Copilot => ProviderKind::Cli,
+            Self::AppleLlm => ProviderKind::Local,
+            Self::OpenAiApi | Self::ClaudeApi | Self::GeminiApi => ProviderKind::Http,
+            Self::CustomApi => ProviderKind::Custom,
+        }
+    }
+
+    /// Only available on macOS, so the settings list omits it elsewhere.
+    pub fn is_macos_only(self) -> bool {
+        matches!(self, Self::AppleLlm)
+    }
+}
+
+impl std::str::FromStr for LlmProcessorType {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        let value = value.to_lowercase();
+        Self::ALL
+            .into_iter()
+            .find(|processor| processor.id() == value)
+            .ok_or_else(|| format!("Unknown LLM processor: {value}"))
+    }
 }
 
 /// HTTP LLM provider configuration
@@ -344,6 +531,66 @@ mod tests {
         let none: AppConfig =
             toml::from_str(&format!("chinese_conversion = \"none\"\n{legacy}")).unwrap();
         assert_eq!(none.chinese_conversion, ChineseConversion::None);
+    }
+
+    #[test]
+    fn provider_ids_match_their_serde_representation() {
+        // id() is what the IPC surface, the UI and the config file all use, so
+        // it has to stay in step with rename_all/rename rather than being a
+        // second, hand-maintained spelling of the same thing.
+        for provider in SttProviderType::ALL {
+            let encoded = serde_json::to_string(&provider).unwrap();
+            assert_eq!(encoded, format!("\"{}\"", provider.id()), "{provider:?}");
+        }
+        for processor in LlmProcessorType::ALL {
+            let encoded = serde_json::to_string(&processor).unwrap();
+            assert_eq!(encoded, format!("\"{}\"", processor.id()), "{processor:?}");
+        }
+    }
+
+    #[test]
+    fn every_variant_appears_exactly_once_in_all() {
+        // A variant missing from ALL would silently disappear from settings.
+        let stt: std::collections::HashSet<_> =
+            SttProviderType::ALL.iter().map(|p| p.id()).collect();
+        assert_eq!(stt.len(), SttProviderType::ALL.len());
+        let llm: std::collections::HashSet<_> =
+            LlmProcessorType::ALL.iter().map(|p| p.id()).collect();
+        assert_eq!(llm.len(), LlmProcessorType::ALL.len());
+    }
+
+    #[test]
+    fn provider_ids_round_trip_through_from_str() {
+        use std::str::FromStr;
+        for provider in SttProviderType::ALL {
+            assert_eq!(SttProviderType::from_str(provider.id()), Ok(provider));
+            // The IPC layer used to lowercase before matching.
+            assert_eq!(
+                SttProviderType::from_str(&provider.id().to_uppercase()),
+                Ok(provider)
+            );
+        }
+        for processor in LlmProcessorType::ALL {
+            assert_eq!(LlmProcessorType::from_str(processor.id()), Ok(processor));
+            assert_eq!(
+                LlmProcessorType::from_str(&processor.id().to_uppercase()),
+                Ok(processor)
+            );
+        }
+        assert!(SttProviderType::from_str("nope").is_err());
+        assert!(LlmProcessorType::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn api_key_names_are_declared_for_everything_that_requires_one() {
+        for processor in LlmProcessorType::ALL {
+            if processor.requires_api_key() {
+                assert!(
+                    processor.api_key_name().is_some(),
+                    "{processor:?} requires a key but names none"
+                );
+            }
+        }
     }
 
     #[test]
