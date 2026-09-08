@@ -2,3 +2,10 @@
 set -e
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
+
+# Frontend changes previously bypassed every local check.
+if git diff --cached --name-only | grep -q '^ui/'; then
+  npm --prefix ui run lint
+  npm --prefix ui run check
+  npm --prefix ui test
+fi
