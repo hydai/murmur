@@ -180,6 +180,25 @@ impl Default for AppConfig {
     }
 }
 
+/// toml's Display echoes the offending line, which in a config file can be an
+/// API key; keep only the location and the message.
+fn describe_toml_error(content: &str, error: &toml::de::Error) -> String {
+    match error.span() {
+        Some(span) => {
+            // The span is a byte offset; counting newline bytes avoids slicing
+            // the str on what might not be a char boundary.
+            let offset = span.start.min(content.len());
+            let line = content.as_bytes()[..offset]
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count()
+                + 1;
+            format!("TOML parse error at line {line}: {}", error.message())
+        }
+        None => format!("TOML parse error: {}", error.message()),
+    }
+}
+
 impl AppConfig {
     /// Get the default config directory path
     pub fn default_config_dir() -> Result<PathBuf> {
@@ -196,8 +215,8 @@ impl AppConfig {
     /// Load config from TOML file
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let config: AppConfig = toml::from_str(&content)?;
-        Ok(config)
+        toml::from_str(&content)
+            .map_err(|error| MurmurError::Config(describe_toml_error(&content, &error)))
     }
 
     /// Save config to TOML file
@@ -300,5 +319,39 @@ mod tests {
         let none: AppConfig =
             toml::from_str(&format!("chinese_conversion = \"none\"\n{legacy}")).unwrap();
         assert_eq!(none.chinese_conversion, ChineseConversion::None);
+    }
+
+    #[test]
+    fn load_errors_count_lines_correctly_after_multibyte_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "hotkey = \"Ctrl+A\" # 快捷鍵\n# 設定檔\n[api_keys]\nopenai = \"sk-top-secret-token\n",
+        )
+        .unwrap();
+        let error = AppConfig::load_from_file(&path).unwrap_err().to_string();
+        assert!(
+            !error.contains("sk-top-secret-token"),
+            "secret echoed: {error}"
+        );
+        assert!(error.contains("line 4"), "{error}");
+    }
+
+    #[test]
+    fn load_errors_locate_the_problem_without_echoing_the_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "hotkey = \"Ctrl+A\"\n[api_keys]\nopenai = \"sk-top-secret-token\n",
+        )
+        .unwrap();
+        let error = AppConfig::load_from_file(&path).unwrap_err().to_string();
+        assert!(
+            !error.contains("sk-top-secret-token"),
+            "secret echoed: {error}"
+        );
+        assert!(error.contains("line 3"), "{error}");
     }
 }

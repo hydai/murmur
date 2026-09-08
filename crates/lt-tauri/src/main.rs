@@ -1430,22 +1430,22 @@ fn main() {
     // Initialize tracing
     let diagnostic_log_store = diagnostics::shared_diagnostic_log_store();
     tracing_subscriber::registry()
-        .with(EnvFilter::new("lt_tauri=debug,lt_audio=debug,lt_stt=debug,lt_llm=debug,lt_pipeline=debug,lt_output=debug,info"))
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new(
+                "lt_tauri=debug,lt_audio=debug,lt_stt=debug,lt_llm=debug,lt_pipeline=debug,lt_output=debug,info",
+            )
+        }))
         .with(tracing_subscriber::fmt::layer())
         .with(diagnostics::DiagnosticLogLayer::new(diagnostic_log_store))
         .init();
 
-    // Load config to determine LLM processor
-    let config = AppConfig::default_config_file()
-        .ok()
-        .and_then(|path| {
-            if path.exists() {
-                AppConfig::load_from_file(&path).ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
+    // Load config to determine LLM processor. A corrupt file is reported at
+    // WARN so the diagnostics view shows why the defaults are in effect.
+    let config_path = AppConfig::default_config_file().ok();
+    let (config, config_warning) = storage::load_startup_config(config_path.as_deref());
+    if let Some(warning) = config_warning {
+        tracing::warn!("{warning}");
+    }
 
     let is_first_launch = AppConfig::default_config_file()
         .map(|path| !path.exists())

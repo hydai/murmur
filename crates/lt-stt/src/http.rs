@@ -190,7 +190,10 @@ impl SttProvider for HttpSttProvider {
                     match transcription {
                         Ok(text) => {
                             if !text.trim().is_empty() {
-                                debug!("HTTP STT transcription result: {}", text);
+                                debug!(
+                                    chars = text.chars().count(),
+                                    "HTTP STT transcription result"
+                                );
 
                                 if !accumulated_text.is_empty() {
                                     accumulated_text.push(' ');
@@ -455,6 +458,45 @@ mod tests {
             stream.shutdown().await.unwrap();
         });
         port
+    }
+
+    use crate::test_support::{captured_logs, logs_text};
+
+    #[tokio::test]
+    async fn transcription_results_never_reach_the_logs() {
+        let logs = captured_logs();
+        let port = serve_once(r#"{"text":"result-zebra-quartz"}"#).await;
+        let mut provider = provider_at(port);
+        provider.start_session().await.unwrap();
+        let mut events = provider.subscribe_events().await;
+        provider
+            .send_audio(AudioChunk {
+                data: vec![0; 1600],
+                timestamp_ms: 0,
+            })
+            .await
+            .unwrap();
+        // Stopping flushes the buffered audio as the single upload.
+        provider.stop_session().await.unwrap();
+        let mut delivered = None;
+        while let Some(event) = events.recv().await {
+            match event {
+                TranscriptionEvent::Committed { text, .. }
+                | TranscriptionEvent::Partial { text, .. } => delivered = Some(text),
+                TranscriptionEvent::Error { message } => panic!("unexpected error: {message}"),
+            }
+        }
+        assert_eq!(delivered.as_deref(), Some("result-zebra-quartz"));
+
+        let captured = logs_text(&logs);
+        assert!(
+            captured.contains("HTTP STT transcription result"),
+            "logs were not captured:\n{captured}"
+        );
+        assert!(
+            !captured.contains("zebra-quartz"),
+            "transcript leaked into logs:\n{captured}"
+        );
     }
 
     #[tokio::test]
