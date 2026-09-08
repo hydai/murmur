@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-
   interface Props {
     rms: number;
     voiceActive: boolean;
@@ -11,42 +9,14 @@
   // Number of bars in the waveform
   const barCount = 24;
 
-  // Smoothed RMS value for smoother animations
-  let smoothedRms = $state(0);
-  let previousBarHeights = $state<number[]>(Array(barCount).fill(5));
-
-  // Smooth RMS changes with exponential moving average
-  $effect(() => {
-    const alpha = 0.3; // Smoothing factor (0-1, lower = smoother)
-    smoothedRms = alpha * rms + (1 - alpha) * smoothedRms;
-  });
-
-  // Generate bar heights based on smoothed RMS level
+  // Derivations stay pure; CSS transitions smooth changes between audio samples.
   let barHeights = $derived(
     Array.from({ length: barCount }, (_, i) => {
-      // Create a wave pattern with some randomness
-      const baseHeight = smoothedRms * 100; // Scale RMS (0-1) to 0-100
-
-      // Create a more organic wave pattern
+      const baseHeight = rms * 100;
       const wavePhase = (i / barCount) * Math.PI * 2;
       const wave1 = Math.sin(wavePhase) * 0.3;
-      const wave2 = Math.sin(wavePhase * 1.5 + Date.now() * 0.001) * 0.2;
-      const offset = wave1 + wave2;
-
-      // Add controlled randomness
-      const randomness = (Math.random() - 0.5) * 0.15;
-
-      // Calculate new height
-      const targetHeight = Math.max(8, Math.min(100, baseHeight * (1 + offset + randomness)));
-
-      // Smooth transition from previous height
-      const previousHeight = previousBarHeights[i] || targetHeight;
-      const smoothedHeight = previousHeight * 0.7 + targetHeight * 0.3;
-
-      // Update previous heights
-      previousBarHeights[i] = smoothedHeight;
-
-      return smoothedHeight;
+      const wave2 = Math.sin(wavePhase * 1.5) * 0.2;
+      return Math.max(8, Math.min(100, baseHeight * (1 + wave1 + wave2)));
     })
   );
 </script>

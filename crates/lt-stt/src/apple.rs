@@ -176,9 +176,18 @@ unsafe extern "C" fn on_model_progress(ctx: *mut std::ffi::c_void, progress: f64
         return;
     }
     let dl_ctx = unsafe { &*(ctx as *const DownloadContext) };
-    let _ = dl_ctx.progress_tx.blocking_send((progress, finished));
-
-    // If finished, the context will be cleaned up by the caller.
+    // Reserve one slot for the terminal event. Progress may be coalesced, but
+    // completion must be delivered even if the UI has not drained the queue.
+    // This callback can also be invoked synchronously by an unavailable bridge,
+    // so it must never use blocking_send on a Tokio runtime thread.
+    if finished || dl_ctx.progress_tx.capacity() > 1 {
+        let _ = dl_ctx.progress_tx.try_send((progress, finished));
+    }
+    if finished {
+        // Swift guarantees exactly one terminal callback, after cancelling and
+        // joining its progress task. No callback can use ctx after this point.
+        drop(unsafe { Box::from_raw(ctx as *mut DownloadContext) });
+    }
 }
 
 /// Download the speech model for a locale. Returns a channel that reports
@@ -193,18 +202,6 @@ pub fn download_model(locale: &str) -> mpsc::Receiver<(f64, bool)> {
     unsafe {
         speech_bridge_download_model(c_locale.as_ptr(), ctx_ptr, on_model_progress);
     }
-
-    // The context will leak if the Swift side finishes and we don't reclaim it.
-    // Spawn a task that waits for the "finished" signal, then cleans up.
-    let ctx_raw = ctx_ptr as usize; // safe to send across threads
-    tokio::spawn(async move {
-        // Wait a reasonable time for download to finish.
-        tokio::time::sleep(tokio::time::Duration::from_secs(600)).await;
-        // Safety: reclaim the Box to avoid leak if Swift never sent "finished".
-        unsafe {
-            let _ = Box::from_raw(ctx_raw as *mut DownloadContext);
-        }
-    });
 
     rx
 }
@@ -333,19 +330,15 @@ impl SttProvider for AppleSttProvider {
             s
         };
 
-        if !session.is_null() {
-            unsafe {
-                speech_bridge_stop_session(session);
-                speech_bridge_destroy_session(session);
-            }
-        }
-
-        // Reclaim the callback context.
-        if let Some(ctx_ptr) = self.callback_ctx.lock().unwrap().take() {
-            unsafe {
-                let _ = Box::from_raw(ctx_ptr);
-            }
-        }
+        let callback_ctx = self.callback_ctx.lock().unwrap().take().map(|p| p as usize);
+        let session = session as usize;
+        // Swift finalization waits for callbacks. Keep Tokio workers available
+        // to consume those callbacks, and move ownership into the blocking job
+        // so cancellation of this future cannot free an in-use context.
+        tokio::task::spawn_blocking(move || destroy_session(session, callback_ctx))
+            .await
+            .map_err(|e| MurmurError::Stt(format!("Apple STT shutdown failed: {e}")))?;
+        self.event_tx.lock().unwrap().take();
 
         info!("Apple STT session stopped");
         Ok(())
@@ -360,22 +353,57 @@ impl SttProvider for AppleSttProvider {
     }
 }
 
+fn destroy_session(session: usize, callback_ctx: Option<usize>) {
+    if session != 0 {
+        unsafe {
+            speech_bridge_stop_session(session as *mut std::ffi::c_void);
+            speech_bridge_destroy_session(session as *mut std::ffi::c_void);
+        }
+    }
+    if let Some(ctx) = callback_ctx {
+        drop(unsafe { Box::from_raw(ctx as *mut CallbackContext) });
+    }
+}
+
 impl Drop for AppleSttProvider {
     fn drop(&mut self) {
-        // Ensure cleanup if the provider is dropped without stopping.
-        let session = *self.session.lock().unwrap();
-        if !session.is_null() {
-            warn!("AppleSttProvider dropped without stop_session — cleaning up");
-            unsafe {
-                speech_bridge_stop_session(session);
-                speech_bridge_destroy_session(session);
-            }
+        let session = *self.session.lock().unwrap() as usize;
+        let ctx = self.callback_ctx.lock().unwrap().take().map(|p| p as usize);
+        if session != 0 || ctx.is_some() {
+            // Drop may run on a Tokio worker or after its runtime has stopped.
+            // A dedicated thread owns the FFI resources until callbacks finish.
+            std::thread::spawn(move || destroy_session(session, ctx));
         }
+    }
+}
 
-        if let Some(ctx_ptr) = self.callback_ctx.lock().unwrap().take() {
-            unsafe {
-                let _ = Box::from_raw(ctx_ptr);
-            }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn download_completion_reclaims_context_and_preserves_terminal_event() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let ctx =
+            Box::into_raw(Box::new(DownloadContext { progress_tx: tx })) as *mut std::ffi::c_void;
+        for _ in 0..100 {
+            unsafe { on_model_progress(ctx, 0.5, false) };
         }
+        unsafe { on_model_progress(ctx, 1.0, true) };
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        assert_eq!(events.len(), 4);
+        assert_eq!(events.last(), Some(&(1.0, true)));
+    }
+
+    #[test]
+    fn download_completion_is_safe_when_ui_has_gone_away() {
+        let (tx, rx) = mpsc::channel(4);
+        drop(rx);
+        let ctx =
+            Box::into_raw(Box::new(DownloadContext { progress_tx: tx })) as *mut std::ffi::c_void;
+        unsafe { on_model_progress(ctx, 0.0, true) };
     }
 }

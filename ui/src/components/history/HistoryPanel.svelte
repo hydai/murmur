@@ -1,7 +1,9 @@
 <script lang="ts">
   import { safeInvoke as invoke } from '../../lib/tauri';
+  import { trapFocus } from '../../lib/focus';
   import { writeText } from '@tauri-apps/plugin-clipboard-manager';
   import { onMount } from 'svelte';
+  import { useLifecycle } from '../../lib/lifecycle';
 
   interface HistoryEntry {
     id: string;
@@ -19,106 +21,107 @@
   let success = $state('');
   let showClearModal = $state(false);
   let expandedId: string | null = $state(null);
-  let offset = $state(0);
+  let visibleLimit = $state(50);
+  let mutating = $state(false);
   let hasMore = $state(true);
   const PAGE_SIZE = 50;
 
-  let searchTimer: ReturnType<typeof setTimeout>;
+  const MAX_ENTRIES = 500;
+  const lifecycle = useLifecycle();
+  let requestId = 0;
 
   onMount(async () => {
     await loadHistory();
   });
 
-  async function loadHistory() {
+  async function loadHistory(limit = PAGE_SIZE) {
+    const request = ++requestId;
+    const query = searchQuery.trim();
+    loading = true;
+    error = '';
     try {
-      loading = true;
-      error = '';
-      offset = 0;
-      const result = await invoke('get_history', { offset: 0, limit: PAGE_SIZE });
-      entries = (result as HistoryEntry[]) || [];
-      hasMore = entries.length === PAGE_SIZE;
+      const result = query
+        ? await invoke<HistoryEntry[]>('search_history', { query })
+        : await invoke<HistoryEntry[]>('get_history', { offset: 0, limit });
+      if (lifecycle.disposed || request !== requestId) return;
+      // Replace one consistent snapshot so insertions/deletions cannot shift pages.
+      entries = result || [];
+      visibleLimit = limit;
+      hasMore = !query && entries.length === limit && limit < MAX_ENTRIES;
     } catch (err) {
+      if (lifecycle.disposed || request !== requestId) return;
       error = `Failed to load history: ${err}`;
       console.error(error);
     } finally {
-      loading = false;
+      if (!lifecycle.disposed && request === requestId) loading = false;
     }
   }
 
   async function loadMore() {
-    try {
-      loading = true;
-      offset += PAGE_SIZE;
-      const result = await invoke('get_history', { offset, limit: PAGE_SIZE });
-      const newEntries = (result as HistoryEntry[]) || [];
-      entries = [...entries, ...newEntries];
-      hasMore = newEntries.length === PAGE_SIZE;
-    } catch (err) {
-      error = `Failed to load more: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
-  }
-
-  async function handleSearch() {
-    if (!searchQuery.trim()) {
-      await loadHistory();
-      return;
-    }
-    try {
-      loading = true;
-      error = '';
-      const result = await invoke('search_history', { query: searchQuery });
-      entries = (result as HistoryEntry[]) || [];
-      hasMore = false; // search returns all matches
-    } catch (err) {
-      error = `Search failed: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+    if (loading || searchQuery.trim()) return;
+    // The visible limit only advances on success, so retries request the same range.
+    await loadHistory(Math.min(visibleLimit + PAGE_SIZE, MAX_ENTRIES));
   }
 
   function onSearchInput() {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(handleSearch, 300);
+    requestId++;
+    loading = true;
+    lifecycle.timeout(() => { void loadHistory(); }, 300, 'search');
   }
 
   async function copyText(text: string) {
     try {
       await writeText(text);
       success = 'Copied to clipboard';
-      setTimeout(() => { success = ''; }, 2000);
+      lifecycle.timeout(() => { success = ''; }, 2000, 'success');
     } catch (err) {
       error = `Failed to copy: ${err}`;
     }
   }
 
   async function deleteEntry(id: string) {
+    if (loading || mutating) return;
+    mutating = true;
+    loading = true;
+    requestId++;
     try {
       await invoke('delete_history_entry', { id });
-      entries = entries.filter(e => e.id !== id);
+      if (lifecycle.disposed) return;
+      entries = entries.filter(entry => entry.id !== id);
+      if (expandedId === id) expandedId = null;
+      await loadHistory(visibleLimit);
       success = 'Entry deleted';
-      setTimeout(() => { success = ''; }, 2000);
+      lifecycle.timeout(() => { success = ''; }, 2000, 'success');
     } catch (err) {
       error = `Failed to delete: ${err}`;
       console.error(error);
+    } finally {
+      mutating = false;
+      loading = false;
     }
   }
 
   async function clearAll() {
+    if (loading || mutating) return;
+    mutating = true;
+    loading = true;
+    requestId++;
+    lifecycle.cancelTimeout('search');
     try {
-      loading = true;
       await invoke('clear_history');
+      if (lifecycle.disposed) return;
       entries = [];
+      visibleLimit = PAGE_SIZE;
+      hasMore = false;
+      expandedId = null;
       showClearModal = false;
       success = 'History cleared';
-      setTimeout(() => { success = ''; }, 2000);
+      lifecycle.timeout(() => { success = ''; }, 2000, 'success');
     } catch (err) {
       error = `Failed to clear history: ${err}`;
       console.error(error);
     } finally {
+      mutating = false;
       loading = false;
     }
   }
@@ -164,6 +167,7 @@
     <input
       type="text"
       bind:value={searchQuery}
+      disabled={mutating}
       oninput={onSearchInput}
       placeholder="Search transcriptions..."
       class="search-input"
@@ -210,7 +214,7 @@
             <button class="btn-icon" onclick={() => copyText(entry.final_text)} title="Copy">
               📋
             </button>
-            <button class="btn-icon btn-danger" onclick={() => deleteEntry(entry.id)} title="Delete">
+            <button class="btn-icon btn-danger" onclick={() => deleteEntry(entry.id)} title="Delete" disabled={loading || mutating}>
               ✕
             </button>
           </div>
@@ -229,9 +233,9 @@
 <!-- Clear All Confirmation Modal -->
 {#if showClearModal}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="modal-overlay" onclick={() => { showClearModal = false; }} onkeypress={(e: KeyboardEvent) => e.key === 'Escape' && (showClearModal = false)} role="presentation">
-    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events a11y_interactive_supports_focus -->
-    <div class="modal modal-small" onclick={(e: MouseEvent) => e.stopPropagation()} role="dialog">
+  <div class="modal-overlay" onclick={() => { showClearModal = false; }} onkeydown={(e: KeyboardEvent) => e.key === 'Escape' && (showClearModal = false)} role="presentation">
+
+    <div class="modal modal-small" onclick={(e: MouseEvent) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') showClearModal = false; e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-label="Clear all history">
       <h3>Clear All History</h3>
       <p>Are you sure you want to delete all transcription history? This cannot be undone.</p>
 

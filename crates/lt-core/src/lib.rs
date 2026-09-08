@@ -4,6 +4,8 @@ pub mod error;
 pub mod history;
 pub mod llm;
 pub mod output;
+pub mod persistence;
+pub mod redact;
 pub mod stt;
 
 pub use config::{AppConfig, LlmProcessorType, SttProviderType, UiPreferences};

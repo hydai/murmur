@@ -1,7 +1,7 @@
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 use tokio::time::timeout;
 
 /// CLI execution result
@@ -30,66 +30,84 @@ impl CliExecutor {
 
     /// Execute a CLI command and capture output
     pub async fn execute(&self, program: &str, args: &[&str]) -> Result<CliOutput, std::io::Error> {
+        self.execute_with_timeout(program, args, Duration::from_secs(self.timeout_secs))
+            .await
+    }
+
+    async fn execute_with_timeout(
+        &self,
+        program: &str,
+        args: &[&str],
+        duration: Duration,
+    ) -> Result<CliOutput, std::io::Error> {
         let mut child = Command::new(program)
             .args(args)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .kill_on_drop(true)
             .spawn()?;
 
-        let timeout_duration = Duration::from_secs(self.timeout_secs);
-
-        // Wait for process to complete with timeout
-        let result = timeout(timeout_duration, async {
-            let stdout = if let Some(mut stdout) = child.stdout.take() {
-                let mut buf = String::new();
-                stdout.read_to_string(&mut buf).await?;
-                buf
-            } else {
-                String::new()
+        // A dedicated owner can kill AND reap the child even when the caller
+        // drops its future. kill_on_drop also covers runtime shutdown.
+        let (mut tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let result = tokio::select! {
+                biased;
+                _ = tx.closed() => None,
+                result = timeout(duration, collect_output(&mut child)) => Some(match result {
+                    Ok(result) => result,
+                    Err(_) => Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!("Command timed out after {} seconds", duration.as_secs()),
+                    )),
+                }),
             };
-
-            let stderr = if let Some(mut stderr) = child.stderr.take() {
-                let mut buf = String::new();
-                stderr.read_to_string(&mut buf).await?;
-                buf
-            } else {
-                String::new()
-            };
-
-            let status = child.wait().await?;
-
-            Ok::<CliOutput, std::io::Error>(CliOutput {
-                stdout,
-                stderr,
-                exit_code: status.code().unwrap_or(-1),
-            })
-        })
-        .await;
-
-        match result {
-            Ok(output) => output,
-            Err(_) => {
-                // Kill the process on timeout
+            if child.id().is_some() {
                 let _ = child.kill().await;
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    format!("Command timed out after {} seconds", self.timeout_secs),
-                ))
             }
-        }
+            if let Some(result) = result {
+                let _ = tx.send(result);
+            }
+        });
+
+        rx.await.map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "CLI execution task stopped",
+            )
+        })?
     }
 
     /// Check if a CLI tool is available in PATH
     pub async fn is_available(&self, program: &str) -> bool {
-        let result = Command::new(program)
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await;
-
-        result.is_ok()
+        self.execute_with_timeout(
+            program,
+            &["--version"],
+            Duration::from_secs(self.timeout_secs.min(5)),
+        )
+        .await
+        .is_ok_and(|output| output.exit_code == 0)
     }
+}
+
+async fn collect_output(child: &mut Child) -> Result<CliOutput, std::io::Error> {
+    let mut stdout = child.stdout.take().expect("stdout is piped");
+    let mut stderr = child.stderr.take().expect("stderr is piped");
+    let mut stdout_bytes = Vec::new();
+    let mut stderr_bytes = Vec::new();
+    // Both pipes must drain while the child runs, otherwise a full stderr
+    // pipe can prevent it from ever closing stdout.
+    let (_, _, status) = tokio::try_join!(
+        stdout.read_to_end(&mut stdout_bytes),
+        stderr.read_to_end(&mut stderr_bytes),
+        child.wait(),
+    )?;
+    Ok(CliOutput {
+        stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
+        exit_code: status.code().unwrap_or(-1),
+    })
 }
 
 impl Default for CliExecutor {

@@ -1,10 +1,9 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
+  import { useLifecycle } from '../../lib/lifecycle';
   import { fade, fly, slide } from 'svelte/transition';
-  import { LogicalPosition } from '@tauri-apps/api/dpi';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { safeInvoke as invoke } from '../../lib/tauri';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import WaveformIndicator from './WaveformIndicator.svelte';
   import TranscriptionView from './TranscriptionView.svelte';
 
@@ -23,46 +22,33 @@
   let isProcessing = $state(false);
   let processedText = $state('');
   let pipelineState = $state('idle');
-  let showCopiedIndicator = $state(false);
+  let showResultIndicator = $state(false);
   let detectedCommand = $state<string | null>(null);
 
-  let isDragging = $state(false);
-  let dragStartX = $state(0);
-  let dragStartY = $state(0);
+  const lifecycle = useLifecycle();
   let overlayVisible = $state(true);
 
-  // Event listeners cleanup
-  let unlistenAudioLevel: UnlistenFn | null = null;
-  let unlistenRecordingState: UnlistenFn | null = null;
-  let unlistenAudioError: UnlistenFn | null = null;
-  let unlistenTranscriptionPartial: UnlistenFn | null = null;
-  let unlistenTranscriptionCommitted: UnlistenFn | null = null;
-  let unlistenTranscriptionError: UnlistenFn | null = null;
-  let unlistenProcessingStatus: UnlistenFn | null = null;
-  let unlistenTranscriptionProcessed: UnlistenFn | null = null;
-  let unlistenPipelineState: UnlistenFn | null = null;
-  let unlistenPipelineResult: UnlistenFn | null = null;
-  let unlistenPipelineError: UnlistenFn | null = null;
-  let unlistenCommandDetected: UnlistenFn | null = null;
-
-  async function handleMouseDown(e: MouseEvent) {
-    isDragging = true;
-    const appWindow = getCurrentWindow();
-
-    const position = await appWindow.outerPosition();
-    dragStartX = e.clientX - position.x;
-    dragStartY = e.clientY - position.y;
+  async function startDragging(event: MouseEvent) {
+    if (event.button !== 0 || (event.target as Element).closest('button, input, select, textarea, a')) return;
+    try {
+      await getCurrentWindow().startDragging();
+    } catch (error) {
+      console.warn('Failed to drag overlay:', error);
+    }
   }
 
-  async function handleMouseMove(e: MouseEvent) {
-    if (!isDragging) return;
-
-    const appWindow = getCurrentWindow();
-    await appWindow.setPosition(new LogicalPosition(e.screenX - dragStartX, e.screenY - dragStartY));
-  }
-
-  function handleMouseUp() {
-    isDragging = false;
+  function resetRecordingView() {
+    lifecycle.cancelTimeout('dismiss');
+    lifecycle.cancelTimeout('result');
+    audioLevel = { rms: 0, voiceActive: false, timestamp_ms: 0 };
+    errorMessage = null;
+    partialText = '';
+    committedText = '';
+    processedText = '';
+    isProcessing = false;
+    showResultIndicator = false;
+    detectedCommand = null;
+    overlayVisible = true;
   }
 
   async function toggleRecording() {
@@ -70,14 +56,6 @@
       if (isRecording) {
         await invoke('stop_pipeline');
       } else {
-        errorMessage = null;
-        partialText = '';
-        committedText = '';
-        processedText = '';
-        isProcessing = false;
-        showCopiedIndicator = false;
-        detectedCommand = null;
-        overlayVisible = true;
         await invoke('start_pipeline');
       }
     } catch (error) {
@@ -88,13 +66,13 @@
 
   function dismissOverlay() {
     overlayVisible = false;
-    setTimeout(() => {
+    lifecycle.timeout(() => {
       committedText = '';
       processedText = '';
       partialText = '';
       errorMessage = null;
       overlayVisible = true;
-    }, 300);
+    }, 300, 'dismiss');
   }
 
   async function openSettings() {
@@ -108,7 +86,7 @@
   onMount(async () => {
     try {
       // Listen for audio level events
-      unlistenAudioLevel = await listen('audio-level', (event) => {
+      await lifecycle.listen('audio-level', (event) => {
         const payload = event.payload as { rms: number; voice_active: boolean; timestamp_ms: number };
         audioLevel = {
           rms: payload.rms,
@@ -118,25 +96,25 @@
       });
 
       // Listen for recording state changes
-      unlistenRecordingState = await listen('recording-state', (event) => {
+      await lifecycle.listen('recording-state', (event) => {
         const payload = event.payload as { is_recording: boolean };
         isRecording = payload.is_recording;
       });
 
       // Listen for audio errors
-      unlistenAudioError = await listen('audio-error', (event) => {
+      await lifecycle.listen('audio-error', (event) => {
         const payload = event.payload as { message: string };
         errorMessage = payload.message;
         isRecording = false;
       });
 
       // Listen for transcription events
-      unlistenTranscriptionPartial = await listen('transcription-partial', (event) => {
+      await lifecycle.listen('transcription-partial', (event) => {
         const payload = event.payload as { text: string };
         partialText = payload.text;
       });
 
-      unlistenTranscriptionCommitted = await listen('transcription-committed', (event) => {
+      await lifecycle.listen('transcription-committed', (event) => {
         const payload = event.payload as { text: string };
         // Append to committed text
         if (committedText) {
@@ -148,19 +126,19 @@
         partialText = '';
       });
 
-      unlistenTranscriptionError = await listen('transcription-error', (event) => {
+      await lifecycle.listen('transcription-error', (event) => {
         const payload = event.payload as { message: string };
         errorMessage = payload.message;
       });
 
       // Listen for processing status events
-      unlistenProcessingStatus = await listen('processing-status', (event) => {
+      await lifecycle.listen('processing-status', (event) => {
         const payload = event.payload as { status: string };
         isProcessing = payload.status === 'processing';
       });
 
       // Listen for processed transcription
-      unlistenTranscriptionProcessed = await listen('transcription-processed', (event) => {
+      await lifecycle.listen('transcription-processed', (event) => {
         const payload = event.payload as { text: string; processing_time_ms: number };
         processedText = payload.text;
         committedText = payload.text; // Update committed text with processed version
@@ -168,8 +146,11 @@
       });
 
       // Listen for pipeline state changes
-      unlistenPipelineState = await listen('pipeline-state', (event) => {
+      await lifecycle.listen('pipeline-state', (event) => {
         const payload = event.payload as { state: string; timestamp_ms: number };
+        if (payload.state === 'recording' && pipelineState !== 'recording') {
+          resetRecordingView();
+        }
         pipelineState = payload.state;
 
         // Update processing flag based on pipeline state
@@ -178,25 +159,25 @@
         console.log('Pipeline state:', payload.state);
       });
 
-      // Listen for pipeline result (final text with clipboard copy)
-      unlistenPipelineResult = await listen('pipeline-result', (event) => {
+      // Final text remains available even if delivery to the selected output fails.
+      await lifecycle.listen('pipeline-result', (event) => {
         const payload = event.payload as { text: string; processing_time_ms: number };
         processedText = payload.text;
         committedText = payload.text;
 
-        // Show "Copied!" indicator
-        showCopiedIndicator = true;
+        // Report text availability without claiming clipboard delivery.
+        showResultIndicator = true;
 
         // Hide after 2 seconds
-        setTimeout(() => {
-          showCopiedIndicator = false;
-        }, 2000);
+        lifecycle.timeout(() => {
+          showResultIndicator = false;
+        }, 2000, 'result');
 
         console.log('Pipeline completed:', payload.text.length, 'chars in', payload.processing_time_ms, 'ms');
       });
 
       // Listen for pipeline errors
-      unlistenPipelineError = await listen('pipeline-error', (event) => {
+      await lifecycle.listen('pipeline-error', (event) => {
         const payload = event.payload as { message: string; recoverable: boolean };
         errorMessage = payload.message;
         if (!payload.recoverable) {
@@ -205,7 +186,7 @@
       });
 
       // Listen for command detection
-      unlistenCommandDetected = await listen('command-detected', (event) => {
+      await lifecycle.listen('command-detected', (event) => {
         const payload = event.payload as { command_name: string | null; timestamp_ms: number };
         detectedCommand = payload.command_name;
         console.log('Command detected:', payload.command_name);
@@ -216,42 +197,7 @@
     }
   });
 
-  onDestroy(() => {
-    if (unlistenAudioLevel) unlistenAudioLevel();
-    if (unlistenRecordingState) unlistenRecordingState();
-    if (unlistenAudioError) unlistenAudioError();
-    if (unlistenTranscriptionPartial) unlistenTranscriptionPartial();
-    if (unlistenTranscriptionCommitted) unlistenTranscriptionCommitted();
-    if (unlistenTranscriptionError) unlistenTranscriptionError();
-    if (unlistenProcessingStatus) unlistenProcessingStatus();
-    if (unlistenTranscriptionProcessed) unlistenTranscriptionProcessed();
-    if (unlistenPipelineState) unlistenPipelineState();
-    if (unlistenPipelineResult) unlistenPipelineResult();
-    if (unlistenPipelineError) unlistenPipelineError();
-    if (unlistenCommandDetected) unlistenCommandDetected();
-  });
-
-  // Compute display state based on pipeline state
-  $effect(() => {
-    let displayState = pipelineState;
-
-    // Override with more specific states
-    if (isProcessing) {
-      displayState = 'processing';
-    } else if (isRecording && (partialText || committedText)) {
-      displayState = 'transcribing';
-    } else if (isRecording) {
-      displayState = 'recording';
-    } else if (committedText && !showCopiedIndicator) {
-      displayState = 'done';
-    }
-  });
 </script>
-
-<svelte:window
-  onmousemove={handleMouseMove}
-  onmouseup={handleMouseUp}
-/>
 
 <div class="overlay-container">
   {#if overlayVisible}
@@ -259,9 +205,8 @@
       class="overlay-window"
       class:compact={!isRecording && !committedText}
       class:expanded={isRecording || committedText}
-      onmousedown={handleMouseDown}
-      role="button"
-      tabindex="0"
+      onmousedown={startDragging}
+      role="presentation"
       transition:fade={{ duration: 200 }}
     >
       <div class="header-row">
@@ -310,9 +255,9 @@
 
       <div class="app-title">Murmur</div>
 
-      {#if showCopiedIndicator}
-        <div class="copied-indicator" transition:fly={{ y: -10, duration: 300 }}>
-          ✓ Copied to clipboard!
+      {#if showResultIndicator}
+        <div class="result-indicator" transition:fly={{ y: -10, duration: 300 }}>
+          ✓ Text ready
         </div>
       {/if}
 
@@ -523,7 +468,7 @@
     letter-spacing: -0.02em;
   }
 
-  .copied-indicator {
+  .result-indicator {
     background: rgba(52, 211, 153, 0.18);
     border: 1px solid rgba(52, 211, 153, 0.35);
     border-radius: 10px;

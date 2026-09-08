@@ -42,7 +42,7 @@ impl PromptStore {
     pub fn save(config_dir: &Path, name: PromptName, content: &str) -> io::Result<()> {
         let dir = Self::dir(config_dir);
         fs::create_dir_all(&dir)?;
-        fs::write(Self::file_for(config_dir, name), content)
+        lt_core::persistence::atomic_write(Self::file_for(config_dir, name), content)
     }
 
     pub fn reset(config_dir: &Path, name: PromptName) -> io::Result<()> {

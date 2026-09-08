@@ -1,10 +1,14 @@
 <script lang="ts">
+  import { useLifecycle } from '../../lib/lifecycle';
+  import { trapFocus } from '../../lib/focus';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount } from 'svelte';
   import PageHeader from './ui/PageHeader.svelte';
   import SectionHeader from './ui/SectionHeader.svelte';
   import StatusRow from './ui/StatusRow.svelte';
   import ActionRow from './ui/ActionRow.svelte';
+
+  const lifecycle = useLifecycle();
 
   interface LlmProcessorInfo {
     name: string;
@@ -91,7 +95,7 @@
 
     if (processor.provider_type === 'cli' && !processor.available) {
       error = `${processor.name} is not installed. Please install it first.`;
-      setTimeout(() => { error = ''; }, 5000);
+      lifecycle.timeout(() => { error = ''; }, 5000, 'error');
       return;
     }
 
@@ -105,7 +109,7 @@
 
     if (processor.provider_type === 'local' && !processor.available) {
       error = `${processor.name} is not available on this system.`;
-      setTimeout(() => { error = ''; }, 5000);
+      lifecycle.timeout(() => { error = ''; }, 5000, 'error');
       return;
     }
 
@@ -118,7 +122,7 @@
       currentProcessor = processorId;
       updateDefaultModel();
       success = `Switched to ${processor.name}`;
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
       error = `Failed to switch processor: ${err}`;
       console.error(error);
@@ -165,7 +169,7 @@
       showApiKeyModal = false;
       await loadProcessors();
 
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
       error = `Failed to save API key: ${err}`;
       console.error(error);
@@ -192,7 +196,7 @@
       success = currentModel
         ? `Model set to ${currentModel}`
         : `Reset to default model (${defaultModel})`;
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
       error = `Failed to set model: ${err}`;
       console.error(error);
@@ -231,7 +235,7 @@
       updateDefaultModel();
       success = `Custom endpoint activated: ${customDisplayName || customBaseUrl}`;
       customApiKey = '';
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
       error = `Failed to save custom endpoint: ${err}`;
       console.error(error);
@@ -402,8 +406,8 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal-overlay" onclick={closeModal} onkeydown={(e) => e.key === 'Escape' && closeModal()} role="presentation">
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
-      <h3>{editingExistingKey ? 'Update' : 'Configure'} {selectedProvider?.name}</h3>
+    <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') closeModal(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="llm-api-key-title">
+      <h3 id="llm-api-key-title">{editingExistingKey ? 'Update' : 'Configure'} {selectedProvider?.name}</h3>
       <p>{editingExistingKey ? 'Enter a new API key:' : 'Enter your API key to enable this provider:'}</p>
 
       <div class="api-key-wrapper">

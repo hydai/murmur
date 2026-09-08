@@ -8,7 +8,7 @@ const DEFAULT_MAX_ENTRIES: usize = 500;
 /// A single transcription history entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
-    /// Unique identifier (timestamp_ms as string)
+    /// Unique identifier, independent of display timestamp.
     pub id: String,
     /// LLM-processed final text
     pub final_text: String,
@@ -30,6 +30,27 @@ pub struct TranscriptionHistory {
     pub entries: Vec<HistoryEntry>,
     #[serde(default = "default_max_entries")]
     pub max_entries: usize,
+}
+
+impl HistoryEntry {
+    pub fn new(
+        final_text: String,
+        raw_text: Option<String>,
+        processing_time_ms: u64,
+        command_name: Option<String>,
+    ) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            final_text,
+            raw_text,
+            timestamp_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            processing_time_ms,
+            command_name,
+        }
+    }
 }
 
 fn default_max_entries() -> usize {
@@ -55,7 +76,7 @@ impl TranscriptionHistory {
     /// Save history to a JSON file
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
+        crate::persistence::atomic_write(path, content)?;
         Ok(())
     }
 

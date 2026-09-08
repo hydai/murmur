@@ -44,6 +44,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "Overwrites the system clipboard; run only in an isolated desktop session"]
     async fn test_clipboard_output() {
         let output = ClipboardOutput::new().expect("Failed to create clipboard output");
 

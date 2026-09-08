@@ -20,6 +20,10 @@ cargo build -p lt-tauri --release
 # Run all tests
 cargo test --workspace
 
+# Frontend type checking and regression tests
+npm --prefix ui run check
+npm --prefix ui test
+
 # Dev mode
 cargo tauri dev
 
@@ -38,6 +42,8 @@ cargo tauri build
 - `crates/lt-stt/` - STT providers (ElevenLabs, OpenAI, Groq, Custom, Apple wrapper)
 - `crates/lt-stt-apple/` - Swift FFI bridge for Apple SpeechTranscriber (on-device STT)
 - `crates/lt-tauri/` - Tauri app, system tray, IPC commands
+- `crates/lt-tauri/src/storage.rs` - Serialized document transactions; file I/O runs on blocking workers
+- `crates/lt-tauri/src/events.rs` - One app-lifetime pipeline event forwarder
 - `crates/lt-tauri/permissions/default.toml` - ACL command allowlist (update when adding IPC commands)
 - `ui/` - Svelte 5 + TypeScript frontend
 - `ui/src/components/history/` - HistoryPanel (transcription history with search)
@@ -65,8 +71,9 @@ cargo tauri build
 - CLI defaults: Gemini → `gemini-3-flash-preview`, Copilot → `gpt-5-mini`, Apple → system default
 - HTTP API defaults: OpenAI → `gpt-4o-mini`, Claude → `claude-sonnet-4-20250514`, Gemini API → `gemini-2.0-flash`
 - `AppConfig.llm_model` stores the user override (`None` = use provider default)
-- `create_llm_processor()` in `main.rs` is the single factory — accepts `(type, model, config)` and is used at both startup and hot-swap
-- `set_llm_model` IPC command saves config and hot-swaps the processor; empty string resets to default
+- `create_llm_processor()` in `main.rs` is the single factory — accepts `(type, model, config, prompts)` and is used at startup and before each recording
+- Config setters persist through `AppStore`; `start_pipeline` applies a fresh LLM, output, dictionary, and prompt snapshot for the next recording
+- `set_llm_model` saves the next recording's model; empty string resets to default
 - When adding a new LLM provider: add `DEFAULT_MODEL`, `with_model()`, and update the factory + `get_llm_processors()`
 
 ### HTTP API LLM Providers
@@ -102,6 +109,16 @@ cargo tauri build
 ### Pipeline State Machine
 - States: Idle → Recording → Transcribing → Processing → Done / Error
 - Reference: `crates/lt-pipeline/src/state.rs`
+- Startup failure rolls back to Error. Terminal STT events stop capture before final processing; `reset()` cancels and joins session tasks before returning to Idle.
+- Create the event forwarder once in app setup, never once per recording. Reset accumulated event data when Recording begins.
+- OpenAI, Groq, and Custom STT share the bounded HTTP worker in `crates/lt-stt/src/http.rs`.
+
+### Persistence and Tests
+- Read and mutate config, history, and dictionary through the shared `AppStore`; do not add independent read-modify-write sequences in IPC commands.
+- File replacements use `lt_core::persistence::atomic_write`. Corrupt or unreadable files must not silently become empty documents.
+- Prompt disk and memory updates share an owned write guard, including when the command caller is cancelled.
+- Desktop-mutating tests and tests requiring installed CLI tools are opt-in (`#[ignore]`); normal tests use fake providers/processes and local HTTP servers.
+- Run `npm run check`, `npm test`, and `npm run build` in `ui` for frontend changes.
 
 ### Voice Commands
 - Detection: `crates/lt-pipeline/src/commands.rs` (`detect_command()`)

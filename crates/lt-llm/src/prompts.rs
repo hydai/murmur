@@ -188,29 +188,53 @@ impl PromptManager {
                 } else {
                     dictionary_terms.join(", ")
                 };
-                set.get(PromptName::PostProcess)
-                    .replace("{dictionary_terms}", &dict_terms_str)
-                    .replace("{raw_text}", text)
+                render_template(
+                    set.get(PromptName::PostProcess),
+                    &[
+                        ("{dictionary_terms}", &dict_terms_str),
+                        ("{raw_text}", text),
+                    ],
+                )
             }
             ProcessingTask::Shorten { text } => {
-                set.get(PromptName::Shorten).replace("{text}", text)
+                render_template(set.get(PromptName::Shorten), &[("{text}", text)])
             }
-            ProcessingTask::ChangeTone { text, target_tone } => set
-                .get(PromptName::ChangeTone)
-                .replace("{text}", text)
-                .replace("{tone}", target_tone),
-            ProcessingTask::GenerateReply { context } => set
-                .get(PromptName::GenerateReply)
-                .replace("{context}", context),
+            ProcessingTask::ChangeTone { text, target_tone } => render_template(
+                set.get(PromptName::ChangeTone),
+                &[("{text}", text), ("{tone}", target_tone)],
+            ),
+            ProcessingTask::GenerateReply { context } => render_template(
+                set.get(PromptName::GenerateReply),
+                &[("{context}", context)],
+            ),
             ProcessingTask::Translate {
                 text,
                 target_language,
-            } => set
-                .get(PromptName::Translate)
-                .replace("{text}", text)
-                .replace("{language}", target_language),
+            } => render_template(
+                set.get(PromptName::Translate),
+                &[("{text}", text), ("{language}", target_language)],
+            ),
         }
     }
+}
+
+/// Replace tokens in the original template only. Inserted transcription,
+/// dictionary terms, and command arguments are always treated as literal text.
+fn render_template(mut template: &str, values: &[(&str, &str)]) -> String {
+    let mut output = String::with_capacity(template.len());
+    while let Some(index) = template.find('{') {
+        output.push_str(&template[..index]);
+        template = &template[index..];
+        if let Some((token, value)) = values.iter().find(|(token, _)| template.starts_with(token)) {
+            output.push_str(value);
+            template = &template[token.len()..];
+        } else {
+            output.push('{');
+            template = &template[1..];
+        }
+    }
+    output.push_str(template);
+    output
 }
 
 impl Default for PromptManager {
@@ -222,6 +246,53 @@ impl Default for PromptManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn inserted_values_are_not_interpreted_as_template_tokens() {
+        let mut set = PromptSet::default();
+        set.set_override(PromptName::Translate, "{language}: {text} / {text}".into());
+        set.set_override(PromptName::ChangeTone, "{tone}: {text}".into());
+        set.set_override(
+            PromptName::PostProcess,
+            "{dictionary_terms}: {raw_text}".into(),
+        );
+        let manager = PromptManager::from_set(set);
+        assert_eq!(
+            manager
+                .build_prompt(&ProcessingTask::Translate {
+                    text: "保留 {language} 與 {text}".into(),
+                    target_language: "English".into(),
+                })
+                .await,
+            "English: 保留 {language} 與 {text} / 保留 {language} 與 {text}"
+        );
+        assert_eq!(
+            manager
+                .build_prompt(&ProcessingTask::ChangeTone {
+                    text: "keep {tone}".into(),
+                    target_tone: "formal {text}".into(),
+                })
+                .await,
+            "formal {text}: keep {tone}"
+        );
+        assert_eq!(
+            manager
+                .build_prompt(&ProcessingTask::PostProcess {
+                    text: "literal {dictionary_terms}".into(),
+                    dictionary_terms: vec!["{raw_text}".into()],
+                })
+                .await,
+            "{raw_text}: literal {dictionary_terms}"
+        );
+    }
+
+    #[test]
+    fn unknown_and_unclosed_template_braces_are_preserved() {
+        assert_eq!(
+            render_template("{{text}} {unknown} {", &[("{text}", "ok")]),
+            "{ok} {unknown} {"
+        );
+    }
 
     #[tokio::test]
     async fn test_prompt_manager_creation() {

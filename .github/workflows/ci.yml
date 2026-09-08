@@ -24,9 +24,23 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
       - name: Install frontend dependencies
         working-directory: ui
         run: npm ci
+
+      - name: Check frontend
+        working-directory: ui
+        run: npm run check
+
+      - name: Test frontend
+        working-directory: ui
+        run: npm test
 
       - name: Build frontend
         working-directory: ui

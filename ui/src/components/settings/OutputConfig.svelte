@@ -1,9 +1,12 @@
 <script lang="ts">
+  import { useLifecycle } from '../../lib/lifecycle';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount } from 'svelte';
   import PageHeader from './ui/PageHeader.svelte';
   import SectionHeader from './ui/SectionHeader.svelte';
   import StatusRow from './ui/StatusRow.svelte';
+
+  const lifecycle = useLifecycle();
 
   let currentOutputMode = $state('clipboard');
   let loading = $state(false);
@@ -56,7 +59,7 @@
 
       const modeName = outputModes.find((m: typeof outputModes[number]) => m.id === modeId)?.name || modeId;
       success = `Output mode set to: ${modeName}`;
-      setTimeout(() => { success = ''; }, 3000);
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err: unknown) {
       error = `Failed to set output mode: ${err}`;
       console.error(error);

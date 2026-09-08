@@ -1,8 +1,11 @@
 <script lang="ts">
+  import { useLifecycle } from '../../lib/lifecycle';
   import { onMount } from 'svelte';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import PageHeader from './ui/PageHeader.svelte';
   import SectionHeader from './ui/SectionHeader.svelte';
+
+  const lifecycle = useLifecycle();
 
   interface PromptInfo {
     name: string;
@@ -65,7 +68,7 @@
       });
       success = `Saved "${current?.title ?? selectedName}"`;
       await loadPrompts();
-      setTimeout(() => {
+      lifecycle.timeout(() => {
         success = '';
       }, 3000);
     } catch (err) {
@@ -84,7 +87,7 @@
       await invoke('reset_prompt', { params: { name: selectedName } });
       success = `Reset "${current?.title ?? selectedName}" to default`;
       await loadPrompts();
-      setTimeout(() => {
+      lifecycle.timeout(() => {
         success = '';
       }, 3000);
     } catch (err) {

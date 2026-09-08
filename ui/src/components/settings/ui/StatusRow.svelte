@@ -7,6 +7,7 @@
     status = 'none',
     statusText = '',
     onclick,
+    disabled = false,
     children,
   }: {
     label: string;
@@ -14,6 +15,7 @@
     status?: 'green' | 'yellow' | 'red' | 'none';
     statusText?: string;
     onclick?: () => void;
+    disabled?: boolean;
     children?: Snippet;
   } = $props();
 
@@ -25,28 +27,26 @@
   };
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div
-  class="status-row"
-  class:clickable={!!onclick}
-  onclick={onclick}
->
-  {#if status !== 'none'}
-    <span class="dot" style="background: {statusColors[status]}"></span>
-  {:else}
-    <span class="dot" style="background: var(--text-muted)"></span>
-  {/if}
+{#snippet contents()}
+  <span class="dot" style="background: {statusColors[status]}"></span>
   <span class="label">{label}</span>
   <span class="spacer"></span>
-  {#if value}
-    <span class="value">{value}</span>
-  {/if}
+  {#if value}<span class="value">{value}</span>{/if}
   {#if statusText}
     <span class="status-text" style="color: {statusColors[status]}">{statusText}</span>
   {/if}
+{/snippet}
+
+<div class="status-row">
+  {#if onclick}
+    <button type="button" class="status-main" {onclick} {disabled}>
+      {@render contents()}
+    </button>
+  {:else}
+    <div class="status-main">{@render contents()}</div>
+  {/if}
   {#if children}
-    {@render children()}
+    <div class="row-actions">{@render children()}</div>
   {/if}
 </div>
 
@@ -56,20 +56,32 @@
     align-items: center;
     gap: 10px;
     height: 38px;
-    padding: 0 12px;
     background: var(--bg-card);
     border-radius: 8px;
     width: 100%;
     transition: background 0.15s ease;
   }
 
-  .status-row.clickable {
-    cursor: pointer;
+  .status-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    text-align: left;
+    font: inherit;
   }
 
-  .status-row.clickable:hover {
-    background: #1a1a2e;
-  }
+  button.status-main { cursor: pointer; }
+  button.status-main:hover:not(:disabled) { background: #1a1a2e; }
+  button.status-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  button.status-main:disabled { opacity: 0.6; cursor: default; }
+  .row-actions { display: flex; align-items: center; gap: 8px; padding-right: 12px; }
 
   .dot {
     width: 8px;
