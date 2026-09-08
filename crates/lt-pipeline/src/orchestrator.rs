@@ -280,14 +280,13 @@ impl PipelineOrchestrator {
                 }
 
                 // Transition to Processing state
-                {
-                    let mut state = state_arc.lock().await;
-                    *state = PipelineState::Processing;
-                }
-                let _ = event_tx.send(PipelineEvent::StateChanged {
-                    state: PipelineState::Processing,
-                    timestamp_ms: last_timestamp,
-                });
+                publish_state(
+                    &state_arc,
+                    &event_tx,
+                    PipelineState::Processing,
+                    last_timestamp,
+                )
+                .await;
 
                 // On LLM failure the user gets the spoken content back, not the
                 // command prefix that addressed the model.
@@ -335,23 +334,15 @@ impl PipelineOrchestrator {
                             processing_time_ms: start_time.elapsed().as_millis() as u64,
                         });
 
-                        // Transition to Done state
-                        {
-                            let mut state = state_arc.lock().await;
-                            *state = if transcription_failed.load(Ordering::SeqCst) {
-                                PipelineState::Error
-                            } else {
-                                PipelineState::Done
-                            };
-                        }
-                        let _ = event_tx.send(PipelineEvent::StateChanged {
-                            state: if transcription_failed.load(Ordering::SeqCst) {
-                                PipelineState::Error
-                            } else {
-                                PipelineState::Done
-                            },
-                            timestamp_ms: last_timestamp,
-                        });
+                        // Transition to Done state. The audio task can set
+                        // `failed` at any point, so read it once: two reads
+                        // could store one state and announce another.
+                        let terminal = if transcription_failed.load(Ordering::SeqCst) {
+                            PipelineState::Error
+                        } else {
+                            PipelineState::Done
+                        };
+                        publish_state(&state_arc, &event_tx, terminal, last_timestamp).await;
                     }
                     Err(e) => {
                         tracing::error!("LLM processing failed: {}", e);
@@ -382,36 +373,21 @@ impl PipelineOrchestrator {
                         });
 
                         // Transition to Error state
-                        {
-                            let mut state = state_arc.lock().await;
-                            *state = PipelineState::Error;
-                        }
-                        let _ = event_tx.send(PipelineEvent::StateChanged {
-                            state: PipelineState::Error,
-                            timestamp_ms: last_timestamp,
-                        });
+                        publish_state(&state_arc, &event_tx, PipelineState::Error, last_timestamp)
+                            .await;
                     }
                 }
             } else {
                 tracing::info!("No transcription to process");
 
-                // Transition back to Idle
-                {
-                    let mut state = state_arc.lock().await;
-                    *state = if transcription_failed.load(Ordering::SeqCst) {
-                        PipelineState::Error
-                    } else {
-                        PipelineState::Idle
-                    };
-                }
-                let _ = event_tx.send(PipelineEvent::StateChanged {
-                    state: if transcription_failed.load(Ordering::SeqCst) {
-                        PipelineState::Error
-                    } else {
-                        PipelineState::Idle
-                    },
-                    timestamp_ms: last_timestamp,
-                });
+                // Transition back to Idle, reading `failed` once for the same
+                // reason as the successful path above.
+                let terminal = if transcription_failed.load(Ordering::SeqCst) {
+                    PipelineState::Error
+                } else {
+                    PipelineState::Idle
+                };
+                publish_state(&state_arc, &event_tx, terminal, last_timestamp).await;
             }
 
             tracing::debug!("Transcription task finished");
@@ -571,6 +547,23 @@ impl AudioInput {
     }
 }
 
+/// Store a state and announce the same value. Session tasks have no `&self`,
+/// so without this they re-implement `emit_state_change` inline; taking the
+/// state by value keeps the stored state and the emitted event from being
+/// computed separately and drifting apart.
+async fn publish_state(
+    state: &Mutex<PipelineState>,
+    event_tx: &broadcast::Sender<PipelineEvent>,
+    next: PipelineState,
+    timestamp_ms: u64,
+) {
+    *state.lock().await = next;
+    let _ = event_tx.send(PipelineEvent::StateChanged {
+        state: next,
+        timestamp_ms,
+    });
+}
+
 async fn stop_capture(capture: &Mutex<Option<Box<dyn CaptureControl>>>) -> Result<()> {
     if let Some(mut capture) = capture.lock().await.take() {
         capture
@@ -716,6 +709,34 @@ mod tests {
                 if matches!(events.recv().await.unwrap(), PipelineEvent::StateChanged { state, .. } if state == expected) { break; }
             }
         }).await.expect("expected pipeline state");
+    }
+
+    #[tokio::test]
+    async fn publishing_a_state_stores_and_announces_the_same_value() {
+        // The defect this guards against was a terminal state computed twice —
+        // once for the store and once for the event — around an await, so a
+        // concurrent flag change left `get_state` and the UI disagreeing.
+        let state = Mutex::new(PipelineState::Recording);
+        let (tx, mut rx) = broadcast::channel(4);
+
+        for expected in [
+            PipelineState::Processing,
+            PipelineState::Error,
+            PipelineState::Done,
+            PipelineState::Idle,
+        ] {
+            publish_state(&state, &tx, expected, 7).await;
+            assert_eq!(*state.lock().await, expected);
+            let PipelineEvent::StateChanged {
+                state,
+                timestamp_ms,
+            } = rx.recv().await.unwrap()
+            else {
+                panic!("expected a state change")
+            };
+            assert_eq!(state, expected);
+            assert_eq!(timestamp_ms, 7);
+        }
     }
 
     #[tokio::test]
