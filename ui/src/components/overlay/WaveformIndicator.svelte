@@ -75,7 +75,7 @@
     background: linear-gradient(
       to top,
       rgba(52, 211, 153, 0.9),
-      rgba(34, 197, 94, 0.7),
+      color-mix(in srgb, var(--status-green) 70%, transparent),
       rgba(52, 211, 153, 0.6)
     );
     box-shadow:
