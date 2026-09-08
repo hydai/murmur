@@ -1,4 +1,11 @@
 # Changelog
+## 0.2.18 (2026-09-08)
+
+### Fixes
+
+- survive a poisoned lock in the Apple STT bridge
+- scope the ACL to the window that needs each command
+
 ## 0.2.17 (2026-09-08)
 
 ### Fixes

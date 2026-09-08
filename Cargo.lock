@@ -2735,7 +2735,7 @@ dependencies = [
 
 [[package]]
 name = "lt-tauri"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "block2",
  "image",
