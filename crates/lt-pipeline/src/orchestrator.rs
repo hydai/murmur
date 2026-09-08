@@ -503,10 +503,7 @@ impl PipelineOrchestrator {
     }
 
     fn emit_state_change(&self, state: PipelineState) {
-        let timestamp_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let timestamp_ms = lt_core::now_ms();
 
         let _ = self.event_tx.send(PipelineEvent::StateChanged {
             state,

@@ -85,10 +85,7 @@ impl AudioCapture {
         self.level_rx = Some(level_rx);
 
         // Set session start time
-        let start_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let start_time = lt_core::now_ms();
         self.session_start_ms.store(start_time, Ordering::SeqCst);
 
         // Build audio stream based on sample format
@@ -286,11 +283,7 @@ impl AudioCapture {
             };
 
             // Calculate timestamp
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64;
-            let timestamp_ms = now_ms.saturating_sub(start_ms);
+            let timestamp_ms = lt_core::now_ms().saturating_sub(start_ms);
             last_timestamp_ms = timestamp_ms;
 
             // Resample to 16kHz mono
