@@ -3,7 +3,7 @@ use lt_core::error::{MurmurError, Result};
 use lt_core::stt::{AudioChunk, SttProvider, TranscriptionEvent};
 use std::ffi::{CStr, CString};
 use std::ptr;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -210,6 +210,18 @@ pub fn download_model(locale: &str) -> mpsc::Receiver<(f64, bool)> {
 // AppleSttProvider — implements SttProvider trait
 // ---------------------------------------------------------------------------
 
+/// Take a lock without letting one panic disable the provider for good.
+///
+/// A poisoned mutex means some other call panicked while holding it, not that
+/// the pointer or channel behind it is unusable. Unwrapping here would turn a
+/// single failure into a permanent one — every later `start_session` would
+/// panic too — and in `Drop` it would abort the process outright when the lock
+/// was poisoned during an unwind. `lt-tauri`'s diagnostics store takes the same
+/// view of its own log buffer.
+fn guard<T>(lock: &Mutex<T>) -> MutexGuard<'_, T> {
+    lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Apple on-device speech-to-text provider using SpeechTranscriber (macOS 26+).
 pub struct AppleSttProvider {
     locale: String,
@@ -264,13 +276,13 @@ impl SttProvider for AppleSttProvider {
 
         // Create event channels.
         let (event_tx, event_rx) = mpsc::channel::<TranscriptionEvent>(64);
-        *self.event_tx.lock().unwrap() = Some(event_tx.clone());
-        *self.event_rx.lock().unwrap() = Some(event_rx);
+        *guard(&self.event_tx) = Some(event_tx.clone());
+        *guard(&self.event_rx) = Some(event_rx);
 
         // Allocate callback context on the heap.
         let ctx = Box::new(CallbackContext { event_tx });
         let ctx_ptr = Box::into_raw(ctx);
-        *self.callback_ctx.lock().unwrap() = Some(ctx_ptr);
+        *guard(&self.callback_ctx) = Some(ctx_ptr);
 
         // Create the Swift session.
         let session_ptr = unsafe {
@@ -287,20 +299,20 @@ impl SttProvider for AppleSttProvider {
             unsafe {
                 let _ = Box::from_raw(ctx_ptr);
             }
-            *self.callback_ctx.lock().unwrap() = None;
+            *guard(&self.callback_ctx) = None;
             return Err(MurmurError::Stt(
                 "Failed to create Apple STT session. Is macOS 26+ and the speech model installed?"
                     .to_string(),
             ));
         }
 
-        *self.session.lock().unwrap() = session_ptr;
+        *guard(&self.session) = session_ptr;
         info!("Apple STT session started");
         Ok(())
     }
 
     async fn send_audio(&mut self, chunk: AudioChunk) -> Result<()> {
-        let session = *self.session.lock().unwrap();
+        let session = *guard(&self.session);
         if session.is_null() {
             return Err(MurmurError::Stt("Session not started".to_string()));
         }
@@ -324,13 +336,13 @@ impl SttProvider for AppleSttProvider {
         info!("Stopping Apple STT session");
 
         let session = {
-            let mut guard = self.session.lock().unwrap();
-            let s = *guard;
-            *guard = ptr::null_mut();
+            let mut session = guard(&self.session);
+            let s = *session;
+            *session = ptr::null_mut();
             s
         };
 
-        let callback_ctx = self.callback_ctx.lock().unwrap().take().map(|p| p as usize);
+        let callback_ctx = guard(&self.callback_ctx).take().map(|p| p as usize);
         let session = session as usize;
         // Swift finalization waits for callbacks. Keep Tokio workers available
         // to consume those callbacks, and move ownership into the blocking job
@@ -338,16 +350,14 @@ impl SttProvider for AppleSttProvider {
         tokio::task::spawn_blocking(move || destroy_session(session, callback_ctx))
             .await
             .map_err(|e| MurmurError::Stt(format!("Apple STT shutdown failed: {e}")))?;
-        self.event_tx.lock().unwrap().take();
+        guard(&self.event_tx).take();
 
         info!("Apple STT session stopped");
         Ok(())
     }
 
     async fn subscribe_events(&self) -> mpsc::Receiver<TranscriptionEvent> {
-        self.event_rx
-            .lock()
-            .unwrap()
+        guard(&self.event_rx)
             .take()
             .expect("subscribe_events called multiple times or before start_session")
     }
@@ -367,8 +377,8 @@ fn destroy_session(session: usize, callback_ctx: Option<usize>) {
 
 impl Drop for AppleSttProvider {
     fn drop(&mut self) {
-        let session = *self.session.lock().unwrap() as usize;
-        let ctx = self.callback_ctx.lock().unwrap().take().map(|p| p as usize);
+        let session = *guard(&self.session) as usize;
+        let ctx = guard(&self.callback_ctx).take().map(|p| p as usize);
         if session != 0 || ctx.is_some() {
             // Drop may run on a Tokio worker or after its runtime has stopped.
             // A dedicated thread owns the FFI resources until callbacks finish.
@@ -380,6 +390,47 @@ impl Drop for AppleSttProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_poisoned_lock_does_not_disable_the_provider() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        let provider = AppleSttProvider::new("en_US".to_string());
+
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _held = provider.session.lock().expect("lock before poison");
+            panic!("poison the session lock");
+        }));
+        assert!(provider.session.is_poisoned());
+
+        // Reaching the pointer again must still work: one panic elsewhere is
+        // not a reason to refuse every later session.
+        assert!(guard(&provider.session).is_null());
+
+        // A real address, not a fabricated one, and cleared again before drop
+        // so nothing hands it to the bridge.
+        let mut sentinel = 0u8;
+        let marker = std::ptr::from_mut(&mut sentinel) as *mut std::ffi::c_void;
+        *guard(&provider.session) = marker;
+        assert_eq!(*guard(&provider.session), marker);
+        *guard(&provider.session) = ptr::null_mut();
+    }
+
+    #[test]
+    fn dropping_a_provider_with_poisoned_locks_does_not_abort() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        let provider = AppleSttProvider::new("en_US".to_string());
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _held = provider.callback_ctx.lock().expect("lock before poison");
+            panic!("poison the callback context lock");
+        }));
+        assert!(provider.callback_ctx.is_poisoned());
+
+        // Drop runs the FFI teardown; panicking there during an unwind would
+        // abort the process rather than surface an error.
+        drop(provider);
+    }
 
     #[tokio::test]
     async fn download_completion_reclaims_context_and_preserves_terminal_event() {

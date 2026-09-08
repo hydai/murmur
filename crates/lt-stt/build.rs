@@ -64,6 +64,12 @@ fn main() {
 
     // NOTE: rpath for Swift runtime is set in lt-tauri/build.rs (the binary crate).
     // cargo:rustc-link-arg in a library crate does NOT propagate to the final binary.
+    //
+    // Test binaries are their own final link, though, and -tests does reach
+    // them. Without this, any test that actually references the bridge fails to
+    // start with "Library not loaded: @rpath/libswift_Concurrency.dylib", which
+    // is why this module had no tests that construct a provider.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
 
     // Link Swift runtime dylibs from system.
     println!("cargo:rustc-link-lib=dylib=swiftCore");
