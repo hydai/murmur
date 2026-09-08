@@ -144,7 +144,7 @@
 
   <SectionHeader label="UPDATES" />
   {#if updateState.kind === 'idle'}
-    <button class="primary-btn" onclick={checkForUpdates}>Check for Updates</button>
+    <button class="btn btn-fixed btn-primary" onclick={checkForUpdates}>Check for Updates</button>
 
   {:else if updateState.kind === 'checking'}
     <div class="status-card">
@@ -158,7 +158,7 @@
       status="green"
       statusText="Latest"
     />
-    <button class="secondary-btn" onclick={checkForUpdates}>Check Again</button>
+    <button class="btn btn-fixed btn-secondary" onclick={checkForUpdates}>Check Again</button>
 
   {:else if updateState.kind === 'available'}
     <StatusRow
@@ -169,7 +169,7 @@
     {#if updateState.body}
       <div class="release-notes">{updateState.body}</div>
     {/if}
-    <button class="primary-btn" onclick={downloadAndInstall}>Download & Install</button>
+    <button class="btn btn-fixed btn-primary" onclick={downloadAndInstall}>Download & Install</button>
 
   {:else if updateState.kind === 'downloading'}
     <div class="download-section">
@@ -193,7 +193,7 @@
       status="green"
       statusText="Ready"
     />
-    <button class="primary-btn" onclick={restartApp}>Restart Now</button>
+    <button class="btn btn-fixed btn-primary" onclick={restartApp}>Restart Now</button>
 
   {:else if updateState.kind === 'error'}
     <StatusRow
@@ -202,7 +202,7 @@
       status="red"
       statusText="Error"
     />
-    <button class="secondary-btn" onclick={checkForUpdates}>Retry</button>
+    <button class="btn btn-fixed btn-secondary" onclick={checkForUpdates}>Retry</button>
   {/if}
 
   <SectionHeader label="LINKS" />
@@ -348,39 +348,9 @@
     color: var(--text-muted);
   }
 
-  .primary-btn {
-    height: 34px;
-    padding: 0 16px;
-    background: var(--accent);
-    color: var(--text-primary);
-    border: none;
-    border-radius: 8px;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
 
-  .primary-btn:hover {
-    background: var(--accent-hover);
-  }
 
-  .secondary-btn {
-    height: 34px;
-    padding: 0 16px;
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--text-primary);
-    border: none;
-    border-radius: 8px;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
 
-  .secondary-btn:hover {
-    background: rgba(255, 255, 255, 0.15);
-  }
 
   .section-rows {
     display: flex;

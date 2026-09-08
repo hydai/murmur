@@ -133,11 +133,11 @@
       <span class="recording-dot"></span>
       <span class="recording-text">{getDisplayKeys()}</span>
     </div>
-    <button class="secondary-btn" onclick={cancelRecording}>
+    <button class="btn btn-fixed btn-secondary" onclick={cancelRecording}>
       Cancel
     </button>
   {:else}
-    <button class="primary-btn" onclick={startRecording}>
+    <button class="btn btn-fixed btn-primary" onclick={startRecording}>
       Record New Hotkey
     </button>
   {/if}
@@ -227,39 +227,9 @@
     color: #fca5a5;
   }
 
-  .primary-btn {
-    height: 34px;
-    padding: 0 16px;
-    background: var(--accent);
-    color: var(--text-primary);
-    border: none;
-    border-radius: 8px;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
 
-  .primary-btn:hover {
-    background: var(--accent-hover);
-  }
 
-  .secondary-btn {
-    height: 34px;
-    padding: 0 16px;
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--text-primary);
-    border: none;
-    border-radius: 8px;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
 
-  .secondary-btn:hover {
-    background: rgba(255, 255, 255, 0.15);
-  }
 
   .separator {
     height: 1px;

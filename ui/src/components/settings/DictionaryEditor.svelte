@@ -275,8 +275,8 @@
       <Alert {error} />
 
       <div class="modal-actions">
-        <button class="btn-secondary" onclick={closeModals}>Cancel</button>
-        <button class="btn-primary" onclick={handleAdd} disabled={loading}>
+        <button class="btn btn-md btn-secondary" onclick={closeModals}>Cancel</button>
+        <button class="btn btn-md btn-primary" onclick={handleAdd} disabled={loading}>
           {loading ? 'Adding...' : 'Add Entry'}
         </button>
       </div>
@@ -308,8 +308,8 @@
       <Alert {error} />
 
       <div class="modal-actions">
-        <button class="btn-secondary" onclick={closeModals}>Cancel</button>
-        <button class="btn-primary" onclick={handleEdit} disabled={loading}>
+        <button class="btn btn-md btn-secondary" onclick={closeModals}>Cancel</button>
+        <button class="btn btn-md btn-primary" onclick={handleEdit} disabled={loading}>
           {loading ? 'Updating...' : 'Update Entry'}
         </button>
       </div>
@@ -327,8 +327,8 @@
       <Alert {error} />
 
       <div class="modal-actions">
-        <button class="btn-secondary" onclick={closeModals}>Cancel</button>
-        <button class="btn-danger" onclick={handleDelete} disabled={loading}>
+        <button class="btn btn-md btn-secondary" onclick={closeModals}>Cancel</button>
+        <button class="btn btn-md btn-danger" onclick={handleDelete} disabled={loading}>
           {loading ? 'Deleting...' : 'Delete'}
         </button>
       </div>
@@ -556,51 +556,12 @@
     margin-top: 16px;
   }
 
-  .btn-primary, .btn-secondary, .btn-danger {
-    padding: 8px 16px;
-    border-radius: 8px;
-    border: none;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
 
-  .btn-primary {
-    background: var(--accent);
-    color: var(--text-primary);
-  }
 
-  .btn-primary:hover:not(:disabled) {
-    background: var(--accent-hover);
-  }
 
-  .btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
 
-  .btn-secondary {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--text-primary);
-  }
 
-  .btn-secondary:hover {
-    background: rgba(255, 255, 255, 0.15);
-  }
 
-  .btn-danger {
-    background: rgba(239, 68, 68, 0.3);
-    color: #fca5a5;
-    border: 1px solid rgba(239, 68, 68, 0.5);
-  }
 
-  .btn-danger:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.4);
-  }
 
-  .btn-danger:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
 </style>

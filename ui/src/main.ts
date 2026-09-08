@@ -1,5 +1,6 @@
 import './lib/design-tokens.css'
 import './app.css'
+import './lib/buttons.css'
 import { mount } from 'svelte'
 import App from './App.svelte'
 
