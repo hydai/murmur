@@ -89,7 +89,7 @@ describe('recording overlay', () => {
   });
 
   it('resets previous transcript and errors when a hotkey starts another recording', async () => {
-    const { target } = render(FloatingOverlay, { status: 'Ready' });
+    const { target } = render(FloatingOverlay, {});
     await settle();
     emit('pipeline-result', { text: 'Previous recording', processing_time_ms: 10 });
     expect(target.textContent).toContain('Text ready');
@@ -114,7 +114,7 @@ describe('recording overlay', () => {
 
   it('offers to cancel while processing and routes the button through the backend toggle', async () => {
     mocks.invoke.mockResolvedValue(undefined);
-    const { target } = render(FloatingOverlay, { status: 'Ready' });
+    const { target } = render(FloatingOverlay, {});
     await settle();
     emit('pipeline-state', { state: 'recording' });
     emit('recording-state', { is_recording: true });
@@ -130,7 +130,7 @@ describe('recording overlay', () => {
   });
 
   it('clears the processing indicator from the result alone', async () => {
-    const { target } = render(FloatingOverlay, { status: 'Ready' });
+    const { target } = render(FloatingOverlay, {});
     await settle();
     emit('pipeline-state', { state: 'processing' });
     emit('recording-state', { is_recording: false });
@@ -143,7 +143,7 @@ describe('recording overlay', () => {
   });
 
   it('does not subscribe to events the backend never emits', async () => {
-    render(FloatingOverlay, { status: 'Ready' });
+    render(FloatingOverlay, {});
     await settle();
     for (const name of ['processing-status', 'transcription-error', 'transcription-processed']) {
       expect(listeners.has(name), `${name} has no emitter in the Rust side`).toBe(false);
@@ -151,7 +151,7 @@ describe('recording overlay', () => {
   });
 
   it('uses native dragging for the window surface and excludes its controls', async () => {
-    const { target } = render(FloatingOverlay, { status: 'Ready' });
+    const { target } = render(FloatingOverlay, {});
     target.querySelector('.app-title')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
     expect(mocks.startDragging).toHaveBeenCalledTimes(1);
     target.querySelector('.record-button')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));

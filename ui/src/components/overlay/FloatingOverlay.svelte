@@ -7,12 +7,6 @@
   import WaveformIndicator from './WaveformIndicator.svelte';
   import TranscriptionView from './TranscriptionView.svelte';
 
-  interface Props {
-    status: string;
-  }
-
-  let { status }: Props = $props();
-
   // State
   let isRecording = $state(false);
   let audioLevel = $state({ rms: 0, voiceActive: false, timestamp_ms: 0 });

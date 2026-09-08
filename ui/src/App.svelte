@@ -1,25 +1,11 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { safeInvoke as invoke } from './lib/tauri';
   import FloatingOverlay from './components/overlay/FloatingOverlay.svelte';
   import SettingsPanel from './components/settings/SettingsPanel.svelte';
   import HistoryPanel from './components/history/HistoryPanel.svelte';
 
   const params = new URLSearchParams(window.location.search);
   const view = params.get('view');
-
-  let status = $state('Initializing...');
-
-  onMount(async () => {
-    if (view === 'settings' || view === 'history') return;
-    try {
-      status = await invoke<string>('get_status');
-    } catch (err) {
-      console.error('Failed to get status:', err);
-      status = 'Error';
-    }
-  });
 
   async function closeSettingsWindow() {
     try {
@@ -35,5 +21,5 @@
 {:else if view === 'history'}
   <HistoryPanel />
 {:else}
-  <FloatingOverlay {status} />
+  <FloatingOverlay />
 {/if}

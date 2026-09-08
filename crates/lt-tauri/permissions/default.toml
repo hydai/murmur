@@ -4,7 +4,6 @@
 identifier = "allow-all-commands"
 description = "Allow all custom app commands"
 commands.allow = [
-    "get_status",
     "start_pipeline",
     "stop_pipeline",
     "toggle_recording",
