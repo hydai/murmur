@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Alert from './ui/Alert.svelte';
   import { useLifecycle } from '../../lib/lifecycle';
   import { onMount } from 'svelte';
   import { writeText } from '@tauri-apps/plugin-clipboard-manager';
@@ -72,12 +73,7 @@
 
 <PageHeader title="Diagnostics" description="Review recent warnings and errors for troubleshooting" />
 
-{#if error}
-  <div class="alert alert-error">{error}</div>
-{/if}
-{#if success}
-  <div class="alert alert-success">{success}</div>
-{/if}
+<Alert {error} {success} />
 
 <div class="section">
   <SectionHeader label="RECENT WARNINGS & ERRORS" />
@@ -222,22 +218,6 @@
     white-space: pre-wrap;
   }
 
-  .alert {
-    padding: 10px 12px;
-    border-radius: 8px;
-    margin-bottom: 12px;
-    font-size: 13px;
-  }
 
-  .alert-error {
-    background: rgba(239, 68, 68, 0.1);
-    color: var(--status-red);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-  }
 
-  .alert-success {
-    background: rgba(34, 197, 94, 0.1);
-    color: var(--status-green);
-    border: 1px solid rgba(34, 197, 94, 0.3);
-  }
 </style>

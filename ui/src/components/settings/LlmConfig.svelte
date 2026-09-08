@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Alert from './ui/Alert.svelte';
   import { useLifecycle } from '../../lib/lifecycle';
   import { trapFocus } from '../../lib/focus';
   import { safeInvoke as invoke } from '../../lib/tauri';
@@ -279,12 +280,7 @@
 <div class="page">
   <PageHeader title="LLM Processor" description="Configure language model for text processing" />
 
-  {#if error}
-    <div class="alert alert-error">{error}</div>
-  {/if}
-  {#if success}
-    <div class="alert alert-success">{success}</div>
-  {/if}
+  <Alert {error} {success} />
 
   <!-- LOCAL CLI -->
   {#if cliProcessors.length > 0}
@@ -436,23 +432,8 @@
     gap: 12px;
   }
 
-  .alert {
-    padding: 10px 14px;
-    border-radius: 8px;
-    font-size: 12px;
-  }
 
-  .alert-error {
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.4);
-    color: #fca5a5;
-  }
 
-  .alert-success {
-    background: rgba(34, 197, 94, 0.15);
-    border: 1px solid rgba(34, 197, 94, 0.4);
-    color: #86efac;
-  }
 
   .section {
     display: flex;

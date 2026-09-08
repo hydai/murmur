@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Alert from '../settings/ui/Alert.svelte';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { trapFocus } from '../../lib/focus';
   import { writeText } from '@tauri-apps/plugin-clipboard-manager';
@@ -155,13 +156,7 @@
     {/if}
   </div>
 
-  {#if error}
-    <div class="alert alert-error">{error}</div>
-  {/if}
-
-  {#if success}
-    <div class="alert alert-success">{success}</div>
-  {/if}
+  <Alert {error} {success} />
 
   <div class="search-box">
     <input
@@ -271,24 +266,8 @@
     color: #fff;
   }
 
-  .alert {
-    padding: 12px 16px;
-    margin-bottom: 16px;
-    border-radius: 8px;
-    font-size: 14px;
-  }
 
-  .alert-error {
-    background: rgba(239, 68, 68, 0.2);
-    border: 1px solid rgba(239, 68, 68, 0.5);
-    color: #fca5a5;
-  }
 
-  .alert-success {
-    background: rgba(34, 197, 94, 0.2);
-    border: 1px solid rgba(34, 197, 94, 0.5);
-    color: #86efac;
-  }
 
   .search-box {
     margin-bottom: 20px;

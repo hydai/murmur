@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Alert from './ui/Alert.svelte';
   import { useLifecycle } from '../../lib/lifecycle';
   import { onMount } from 'svelte';
   import { safeInvoke as invoke } from '../../lib/tauri';
@@ -120,12 +121,7 @@
     description="Edit the Markdown prompts sent to the LLM. Changes take effect on the next recording."
   />
 
-  {#if error}
-    <div class="alert alert-error">{error}</div>
-  {/if}
-  {#if success}
-    <div class="alert alert-success">{success}</div>
-  {/if}
+  <Alert {error} {success} />
 
   <div class="section">
     <SectionHeader label="PROMPT" />
@@ -150,13 +146,11 @@
       {/each}
     </div>
 
-    {#if missingPlaceholders.length > 0}
-      <div class="alert alert-warning">
-        Missing required placeholder(s): {missingPlaceholders.join(', ')}. Saving is allowed but
-        the LLM call may produce incorrect output because the input text will not be substituted
-        into the prompt.
-      </div>
-    {/if}
+    <Alert
+      warning={missingPlaceholders.length > 0
+        ? `Missing required placeholder(s): ${missingPlaceholders.join(', ')}. Saving is allowed but the LLM call may produce incorrect output because the input text will not be substituted into the prompt.`
+        : ''}
+    />
 
     <textarea
       class="prompt-textarea"
@@ -194,29 +188,9 @@
     gap: 12px;
   }
 
-  .alert {
-    padding: 10px 14px;
-    border-radius: 8px;
-    font-size: 12px;
-  }
 
-  .alert-error {
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.4);
-    color: #fca5a5;
-  }
 
-  .alert-success {
-    background: rgba(34, 197, 94, 0.15);
-    border: 1px solid rgba(34, 197, 94, 0.4);
-    color: #86efac;
-  }
 
-  .alert-warning {
-    background: rgba(234, 179, 8, 0.12);
-    border: 1px solid rgba(234, 179, 8, 0.4);
-    color: #fde68a;
-  }
 
   .section {
     display: flex;
