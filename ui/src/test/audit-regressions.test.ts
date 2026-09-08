@@ -109,6 +109,23 @@ describe('recording overlay', () => {
     expect(target.textContent).not.toContain('Shortening...');
   });
 
+  it('offers to cancel while processing and routes the button through the backend toggle', async () => {
+    mocks.invoke.mockResolvedValue(undefined);
+    const { target } = render(FloatingOverlay, { status: 'Ready' });
+    await settle();
+    emit('pipeline-state', { state: 'recording' });
+    emit('recording-state', { is_recording: true });
+    emit('pipeline-state', { state: 'processing' });
+    emit('recording-state', { is_recording: false });
+    button(target, 'Cancel').click();
+    await settle();
+    expect(mocks.invoke).toHaveBeenCalledWith('toggle_recording');
+    emit('pipeline-state', { state: 'idle' });
+    await settle();
+    expect(target.textContent).toContain('Cancelled');
+    expect(target.textContent).not.toContain('Processing...');
+  });
+
   it('uses native dragging for the window surface and excludes its controls', async () => {
     const { target } = render(FloatingOverlay, { status: 'Ready' });
     target.querySelector('.app-title')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));

@@ -71,6 +71,12 @@ impl PipelineOrchestrator {
         *self.state.lock().await
     }
 
+    /// Whether the microphone is still open. The state alone cannot tell a
+    /// live recording from a session that is finishing after `stop()`.
+    pub async fn is_capturing(&self) -> bool {
+        self.audio_capture.lock().await.is_some()
+    }
+
     /// Get reference to the dictionary for updates
     pub fn get_dictionary(&self) -> Arc<Mutex<PersonalDictionary>> {
         self.dictionary.clone()
@@ -779,6 +785,30 @@ mod tests {
         }
         assert_eq!(*first.0.lock().unwrap(), ["first recording"]);
         assert_eq!(*second.0.lock().unwrap(), ["second recording"]);
+    }
+
+    #[tokio::test]
+    async fn is_capturing_tracks_the_live_capture_rather_than_the_state() {
+        let release = Arc::new(Notify::new());
+        let (p, _) = pipeline(Arc::default(), Arc::new(TestLlm(Some(release.clone()))));
+        let mut events = p.subscribe_events();
+        assert!(!p.is_capturing().await);
+        let (stt, tx) = TestStt::new(false);
+        p.start(stt).await.unwrap();
+        assert!(p.is_capturing().await);
+        tx.send(TranscriptionEvent::Committed {
+            text: "still processing".into(),
+            timestamp_ms: 1,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+        p.stop().await.unwrap();
+        wait_state(&mut events, PipelineState::Processing).await;
+        assert!(!p.is_capturing().await);
+        assert_eq!(p.get_state().await, PipelineState::Processing);
+        p.reset().await.unwrap();
+        assert!(!p.is_capturing().await);
     }
 
     #[tokio::test]

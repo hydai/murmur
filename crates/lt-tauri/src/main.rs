@@ -4,6 +4,7 @@
 mod diagnostics;
 mod events;
 mod permissions;
+mod recording;
 mod shortcuts;
 mod sound;
 mod storage;
@@ -60,15 +61,7 @@ fn register_recording_shortcut(app: &tauri::AppHandle, shortcut: Shortcut) -> Re
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 let state = app.state::<AppState>();
-                let current = state.pipeline.lock().await.get_state().await;
-                let result = if matches!(
-                    current,
-                    PipelineState::Recording | PipelineState::Transcribing
-                ) {
-                    stop_pipeline(app.clone(), state).await
-                } else {
-                    start_pipeline(app.clone(), state).await
-                };
+                let result = toggle_recording(app.clone(), state).await;
                 if let Err(message) = result {
                     tracing::warn!("Shortcut action failed: {message}");
                     let _ = app.emit(
@@ -978,6 +971,32 @@ async fn stop_pipeline(
     Ok(())
 }
 
+/// Shared by the hotkey, the tray, and the overlay button.
+#[tauri::command]
+async fn toggle_recording(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let action = {
+        let pipeline = state.pipeline.lock().await;
+        recording::toggle_action(pipeline.get_state().await, pipeline.is_capturing().await)
+    };
+    match action {
+        recording::ToggleAction::Start => start_pipeline(app, state).await,
+        recording::ToggleAction::Stop => stop_pipeline(app, state).await,
+        recording::ToggleAction::Cancel => {
+            tracing::info!("Cancelling pipeline");
+            state
+                .pipeline
+                .lock()
+                .await
+                .reset()
+                .await
+                .map_err(|e| format!("Failed to cancel pipeline: {e}"))
+        }
+    }
+}
+
 #[tauri::command]
 async fn is_recording(state: tauri::State<'_, AppState>) -> Result<bool, String> {
     let pipeline = state.pipeline.lock().await;
@@ -1503,6 +1522,7 @@ fn main() {
             get_status,
             start_pipeline,
             stop_pipeline,
+            toggle_recording,
             is_recording,
             get_pipeline_state,
             get_config,
@@ -1593,19 +1613,10 @@ fn main() {
                         "toggle_recording" => {
                             tauri::async_runtime::spawn(async move {
                                 let state = app_handle.state::<AppState>();
-                                let is_currently_recording = {
-                                    let pipeline = state.pipeline.lock().await;
-                                    let current_state = pipeline.get_state().await;
-                                    matches!(
-                                        current_state,
-                                        PipelineState::Recording | PipelineState::Transcribing
-                                    )
-                                };
-
-                                if is_currently_recording {
-                                    let _ = stop_pipeline(app_handle.clone(), state).await;
-                                } else {
-                                    let _ = start_pipeline(app_handle.clone(), state).await;
+                                if let Err(message) =
+                                    toggle_recording(app_handle.clone(), state).await
+                                {
+                                    tracing::warn!("Tray action failed: {message}");
                                 }
                             });
                         }

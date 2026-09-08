@@ -110,6 +110,7 @@ cargo tauri build
 - States: Idle → Recording → Transcribing → Processing → Done / Error
 - Reference: `crates/lt-pipeline/src/state.rs`
 - Startup failure rolls back to Error. Terminal STT events stop capture before final processing; `reset()` cancels and joins session tasks before returning to Idle.
+- Hotkey, tray, and the overlay button all call `toggle_recording`, which picks Start / Stop / Cancel from `recording::toggle_action(state, is_capturing)`; Cancel runs `reset()`, so a session that is finishing or processing can always be abandoned.
 - Create the event forwarder once in app setup, never once per recording. Reset accumulated event data when Recording begins.
 - OpenAI, Groq, and Custom STT share the bounded HTTP worker in `crates/lt-stt/src/http.rs`.
 
