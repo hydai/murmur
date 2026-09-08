@@ -16,12 +16,6 @@ impl ClipboardOutput {
     }
 }
 
-impl Default for ClipboardOutput {
-    fn default() -> Self {
-        Self::new().expect("Failed to initialize clipboard")
-    }
-}
-
 #[async_trait]
 impl OutputSink for ClipboardOutput {
     async fn output_text(&self, text: &str) -> Result<()> {

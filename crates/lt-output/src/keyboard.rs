@@ -38,12 +38,6 @@ impl KeyboardOutput {
     }
 }
 
-impl Default for KeyboardOutput {
-    fn default() -> Self {
-        Self
-    }
-}
-
 #[async_trait]
 impl OutputSink for KeyboardOutput {
     async fn output_text(&self, text: &str) -> Result<()> {
