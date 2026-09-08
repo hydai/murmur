@@ -79,7 +79,7 @@
     try {
       // Listen for audio level events
       await lifecycle.listen('audio-level', (event) => {
-        const payload = event.payload as { rms: number; voice_active: boolean; timestamp_ms: number };
+        const payload = event.payload;
         audioLevel = {
           rms: payload.rms,
           voiceActive: payload.voice_active,
@@ -89,25 +89,25 @@
 
       // Listen for recording state changes
       await lifecycle.listen('recording-state', (event) => {
-        const payload = event.payload as { is_recording: boolean };
+        const payload = event.payload;
         isRecording = payload.is_recording;
       });
 
       // Listen for audio errors
       await lifecycle.listen('audio-error', (event) => {
-        const payload = event.payload as { message: string };
+        const payload = event.payload;
         errorMessage = payload.message;
         isRecording = false;
       });
 
       // Listen for transcription events
       await lifecycle.listen('transcription-partial', (event) => {
-        const payload = event.payload as { text: string };
+        const payload = event.payload;
         partialText = payload.text;
       });
 
       await lifecycle.listen('transcription-committed', (event) => {
-        const payload = event.payload as { text: string };
+        const payload = event.payload;
         // Append to committed text
         if (committedText) {
           committedText += ' ' + payload.text;
@@ -120,7 +120,7 @@
 
       // Listen for pipeline state changes
       await lifecycle.listen('pipeline-state', (event) => {
-        const payload = event.payload as { state: string; timestamp_ms: number };
+        const payload = event.payload;
         if (payload.state === 'recording' && pipelineState !== 'recording') {
           resetRecordingView();
         }
@@ -141,7 +141,7 @@
 
       // Final text remains available even if delivery to the selected output fails.
       await lifecycle.listen('pipeline-result', (event) => {
-        const payload = event.payload as { text: string; processing_time_ms: number };
+        const payload = event.payload;
         committedText = payload.text;
         // Do not wait for the terminal pipeline-state to clear the spinner.
         isProcessing = false;
@@ -159,7 +159,7 @@
 
       // Listen for pipeline errors
       await lifecycle.listen('pipeline-error', (event) => {
-        const payload = event.payload as { message: string; recoverable: boolean };
+        const payload = event.payload;
         errorMessage = payload.message;
         if (!payload.recoverable) {
           isRecording = false;
@@ -168,7 +168,7 @@
 
       // Listen for command detection
       await lifecycle.listen('command-detected', (event) => {
-        const payload = event.payload as { command_name: string | null; timestamp_ms: number };
+        const payload = event.payload;
         detectedCommand = payload.command_name;
         console.log('Command detected:', payload.command_name);
       });

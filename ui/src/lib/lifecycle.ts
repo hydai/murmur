@@ -1,5 +1,6 @@
 import { onDestroy } from 'svelte';
-import { listen, type EventCallback, type EventName } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
+import type { AppEventName, AppEvents } from './events';
 
 /** Own subscriptions and delayed work for the lifetime of a component. */
 export function useLifecycle() {
@@ -22,9 +23,17 @@ export function useLifecycle() {
 
   return {
     get disposed() { return disposed; },
-    async listen<T>(event: EventName, callback: EventCallback<T>) {
+    /**
+     * Subscribe for the component's lifetime. Constrained to the event
+     * contract, so a name the backend never emits, or a payload field that was
+     * renamed, is a compile error rather than a silent no-op.
+     */
+    async listen<K extends AppEventName>(
+      event: K,
+      callback: (event: { payload: AppEvents[K] }) => void,
+    ) {
       if (disposed) return;
-      const unlisten = await listen<T>(event, (payload) => {
+      const unlisten = await listen<AppEvents[K]>(event, (payload) => {
         if (!disposed) callback(payload);
       });
       // IPC can finish after the component has already been destroyed.
