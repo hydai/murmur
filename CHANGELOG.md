@@ -1,4 +1,21 @@
 # Changelog
+## 0.2.17 (2026-09-08)
+
+### Fixes
+
+- reject unconfigured LLM providers instead of substituting defaults
+- default every AppConfig field so a partial config.toml still loads
+- compute each terminal state once so the store and the event agree
+- keep the prompt editor's save confirmation visible
+- stop the prompt selector from discarding unsaved edits
+- load ElevenLabs languages when the key is entered during onboarding
+- copy diagnostics in the order the panel displays them
+- reap the sound playback children
+- create config.toml on first launch so settings open only once
+- drop the overlay listeners and the duplicate event with no counterpart
+- remove the dead status plumbing
+- drop write-only state, an unused binding and stale suppressions
+
 ## 0.2.16 (2026-09-08)
 
 ### Fixes
