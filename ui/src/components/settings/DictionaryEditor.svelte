@@ -1,6 +1,7 @@
 <script lang="ts">
   import Alert from './ui/Alert.svelte';
   import { useLifecycle } from '../../lib/lifecycle';
+  import { createStatus } from '../../lib/status.svelte';
   import { trapFocus } from '../../lib/focus';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount } from 'svelte';
@@ -10,6 +11,7 @@
   import ActionRow from './ui/ActionRow.svelte';
 
   const lifecycle = useLifecycle();
+  const status = createStatus(lifecycle);
 
   interface DictEntry {
     term: string;
@@ -29,9 +31,6 @@
     aliases: '',
     description: ''
   });
-  let loading = $state(false);
-  let error = $state('');
-  let success = $state('');
 
   onMount(async () => {
     await loadDictionary();
@@ -41,14 +40,11 @@
   $effect(filterEntries);
 
   async function loadDictionary() {
-    try {
+    await status.run('Failed to load dictionary', async () => {
       const dict = await invoke<{ entries: DictEntry[] }>('get_dictionary');
       entries = dict.entries || [];
       filterEntries();
-    } catch (err) {
-      error = `Failed to load dictionary: ${err}`;
-      console.error(error);
-    }
+    });
   }
 
   function filterEntries() {
@@ -69,7 +65,7 @@
     formData = { term: '', aliases: '', description: '' };
     currentEntry = null;
     showAddModal = true;
-    error = '';
+    status.reset();
   }
 
   function openEditModal(entry: DictEntry) {
@@ -80,13 +76,13 @@
       description: entry.description || ''
     };
     showEditModal = true;
-    error = '';
+    status.reset();
   }
 
   function openDeleteModal(entry: DictEntry) {
     currentEntry = entry;
     showDeleteModal = true;
-    error = '';
+    status.reset();
   }
 
   function closeModals() {
@@ -94,113 +90,74 @@
     showEditModal = false;
     showDeleteModal = false;
     currentEntry = null;
-    error = '';
+  }
+
+  /** The shape both add and update send. */
+  function entryParams() {
+    return {
+      term: formData.term.trim(),
+      aliases: formData.aliases
+        .split(',')
+        .map((alias: string) => alias.trim())
+        .filter((alias: string) => alias.length > 0),
+      description: formData.description.trim() || null,
+    };
   }
 
   async function handleAdd() {
     if (!formData.term.trim()) {
-      error = 'Term cannot be empty';
+      status.fail('Term cannot be empty');
       return;
     }
 
-    try {
-      loading = true;
-      error = '';
-      success = '';
-
-      const aliases = formData.aliases
-        .split(',')
-        .map((a: string) => a.trim())
-        .filter((a: string) => a.length > 0);
-
-      await invoke('add_dictionary_entry', {
-        params: {
-          term: formData.term.trim(),
-          aliases,
-          description: formData.description.trim() || null
-        }
-      });
-
-      success = `Added "${formData.term}"`;
+    const term = formData.term;
+    await status.run('Failed to add entry', async () => {
+      await invoke('add_dictionary_entry', { params: entryParams() });
       await loadDictionary();
       closeModals();
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to add entry: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+      status.confirm(`Added "${term}"`);
+    });
   }
 
   async function handleEdit() {
     if (!formData.term.trim()) {
-      error = 'Term cannot be empty';
+      status.fail('Term cannot be empty');
       return;
     }
-
     if (!currentEntry) return;
 
-    try {
-      loading = true;
-      error = '';
-      success = '';
-
-      const aliases = formData.aliases
-        .split(',')
-        .map((a: string) => a.trim())
-        .filter((a: string) => a.length > 0);
-
+    const { term: oldTerm } = currentEntry;
+    const term = formData.term;
+    await status.run('Failed to update entry', async () => {
       await invoke('update_dictionary_entry', {
-        params: {
-          old_term: currentEntry.term,
-          term: formData.term.trim(),
-          aliases,
-          description: formData.description.trim() || null
-        }
+        params: { old_term: oldTerm, ...entryParams() },
       });
-
-      success = `Updated "${formData.term}"`;
       await loadDictionary();
       closeModals();
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to update entry: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+      status.confirm(`Updated "${term}"`);
+    });
   }
 
   async function handleDelete() {
     if (!currentEntry) return;
 
-    try {
-      loading = true;
-      error = '';
-      success = '';
-
-      await invoke('delete_dictionary_entry', {
-        term: currentEntry.term
-      });
-
-      success = `Deleted "${currentEntry.term}"`;
+    const { term } = currentEntry;
+    await status.run('Failed to delete entry', async () => {
+      await invoke('delete_dictionary_entry', { term });
       await loadDictionary();
       closeModals();
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to delete entry: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+      status.confirm(`Deleted "${term}"`);
+    });
   }
 </script>
 
 <div class="page">
   <PageHeader title="Dictionary" description="Manage custom words and phrase corrections" />
 
-  <Alert error={showAddModal || showEditModal || showDeleteModal ? '' : error} {success} />
+  <Alert
+    error={showAddModal || showEditModal || showDeleteModal ? '' : status.error}
+    success={status.success}
+  />
 
   <!-- SEARCH -->
   <div class="search-row">
@@ -272,12 +229,12 @@
         <textarea id="description" bind:value={formData.description} placeholder="Optional notes about this term" rows="3"></textarea>
       </div>
 
-      <Alert {error} />
+      <Alert error={status.error} />
 
       <div class="modal-actions">
         <button class="btn btn-md btn-secondary" onclick={closeModals}>Cancel</button>
-        <button class="btn btn-md btn-primary" onclick={handleAdd} disabled={loading}>
-          {loading ? 'Adding...' : 'Add Entry'}
+        <button class="btn btn-md btn-primary" onclick={handleAdd} disabled={status.busy}>
+          {status.busy ? 'Adding...' : 'Add Entry'}
         </button>
       </div>
     </div>
@@ -305,12 +262,12 @@
         <textarea id="edit-description" bind:value={formData.description} placeholder="Optional notes about this term" rows="3"></textarea>
       </div>
 
-      <Alert {error} />
+      <Alert error={status.error} />
 
       <div class="modal-actions">
         <button class="btn btn-md btn-secondary" onclick={closeModals}>Cancel</button>
-        <button class="btn btn-md btn-primary" onclick={handleEdit} disabled={loading}>
-          {loading ? 'Updating...' : 'Update Entry'}
+        <button class="btn btn-md btn-primary" onclick={handleEdit} disabled={status.busy}>
+          {status.busy ? 'Updating...' : 'Update Entry'}
         </button>
       </div>
     </div>
@@ -324,12 +281,12 @@
       <h3 id="dictionary-delete-title">Delete Entry</h3>
       <p>Are you sure you want to delete "{currentEntry?.term}"?</p>
 
-      <Alert {error} />
+      <Alert error={status.error} />
 
       <div class="modal-actions">
         <button class="btn btn-md btn-secondary" onclick={closeModals}>Cancel</button>
-        <button class="btn btn-md btn-danger" onclick={handleDelete} disabled={loading}>
-          {loading ? 'Deleting...' : 'Delete'}
+        <button class="btn btn-md btn-danger" onclick={handleDelete} disabled={status.busy}>
+          {status.busy ? 'Deleting...' : 'Delete'}
         </button>
       </div>
     </div>

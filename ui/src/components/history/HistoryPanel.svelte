@@ -5,6 +5,7 @@
   import { writeText } from '@tauri-apps/plugin-clipboard-manager';
   import { onMount } from 'svelte';
   import { useLifecycle } from '../../lib/lifecycle';
+  import { createStatus } from '../../lib/status.svelte';
 
   interface HistoryEntry {
     id: string;
@@ -18,8 +19,6 @@
   let entries: HistoryEntry[] = $state([]);
   let searchQuery = $state('');
   let loading = $state(false);
-  let error = $state('');
-  let success = $state('');
   let showClearModal = $state(false);
   let expandedId: string | null = $state(null);
   let visibleLimit = $state(50);
@@ -29,6 +28,10 @@
 
   const MAX_ENTRIES = 500;
   const lifecycle = useLifecycle();
+  // Only the banners come from the shared helper: `loading` here also guards a
+  // debounced, cancellable request, which status.run's unconditional reset
+  // would break.
+  const status = createStatus(lifecycle);
   let requestId = 0;
 
   onMount(async () => {
@@ -39,7 +42,7 @@
     const request = ++requestId;
     const query = searchQuery.trim();
     loading = true;
-    error = '';
+    status.reset();
     try {
       const result = query
         ? await invoke<HistoryEntry[]>('search_history', { query })
@@ -51,8 +54,7 @@
       hasMore = !query && entries.length === limit && limit < MAX_ENTRIES;
     } catch (err) {
       if (lifecycle.disposed || request !== requestId) return;
-      error = `Failed to load history: ${err}`;
-      console.error(error);
+      status.fail(`Failed to load history: ${err}`);
     } finally {
       if (!lifecycle.disposed && request === requestId) loading = false;
     }
@@ -73,10 +75,9 @@
   async function copyText(text: string) {
     try {
       await writeText(text);
-      success = 'Copied to clipboard';
-      lifecycle.timeout(() => { success = ''; }, 2000, 'success');
+      status.confirm('Copied to clipboard', 2000);
     } catch (err) {
-      error = `Failed to copy: ${err}`;
+      status.fail(`Failed to copy: ${err}`);
     }
   }
 
@@ -91,11 +92,9 @@
       entries = entries.filter(entry => entry.id !== id);
       if (expandedId === id) expandedId = null;
       await loadHistory(visibleLimit);
-      success = 'Entry deleted';
-      lifecycle.timeout(() => { success = ''; }, 2000, 'success');
+      status.confirm('Entry deleted', 2000);
     } catch (err) {
-      error = `Failed to delete: ${err}`;
-      console.error(error);
+      status.fail(`Failed to delete: ${err}`);
     } finally {
       mutating = false;
       loading = false;
@@ -116,11 +115,9 @@
       hasMore = false;
       expandedId = null;
       showClearModal = false;
-      success = 'History cleared';
-      lifecycle.timeout(() => { success = ''; }, 2000, 'success');
+      status.confirm('History cleared', 2000);
     } catch (err) {
-      error = `Failed to clear history: ${err}`;
-      console.error(error);
+      status.fail(`Failed to clear history: ${err}`);
     } finally {
       mutating = false;
       loading = false;
@@ -156,7 +153,7 @@
     {/if}
   </div>
 
-  <Alert {error} {success} />
+  <Alert error={status.error} success={status.success} />
 
   <div class="search-box">
     <input

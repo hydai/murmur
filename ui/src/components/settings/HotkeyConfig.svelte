@@ -1,39 +1,34 @@
 <script lang="ts">
   import Alert from './ui/Alert.svelte';
   import { useLifecycle } from '../../lib/lifecycle';
+  import { createStatus } from '../../lib/status.svelte';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount } from 'svelte';
   import PageHeader from './ui/PageHeader.svelte';
   import SectionHeader from './ui/SectionHeader.svelte';
 
   const lifecycle = useLifecycle();
+  const status = createStatus(lifecycle);
 
   let currentHotkey = $state('Ctrl+`');
   let isRecording = $state(false);
   let recordedKeys = $state<string[]>([]);
-  let loading = $state(false);
-  let error = $state('');
-  let success = $state('');
 
   onMount(async () => {
     await loadConfig();
   });
 
   async function loadConfig(): Promise<void> {
-    try {
+    await status.run('Failed to load config', async () => {
       const config = await invoke<{ hotkey: string }>('get_config');
       currentHotkey = config.hotkey;
-    } catch (err: unknown) {
-      error = `Failed to load config: ${err}`;
-      console.error(error);
-    }
+    });
   }
 
   function startRecording(): void {
     isRecording = true;
     recordedKeys = [];
-    error = '';
-    success = '';
+    status.reset();
   }
 
   function cancelRecording(): void {
@@ -82,31 +77,20 @@
                        hotkey.includes('Alt') || hotkey.includes('Shift');
 
     if (!hasModifier) {
-      error = 'Hotkey must include at least one modifier key (Cmd, Ctrl, Alt, or Shift)';
+      status.fail('Hotkey must include at least one modifier key (Cmd, Ctrl, Alt, or Shift)', 4000);
       isRecording = false;
       recordedKeys = [];
-      lifecycle.timeout(() => { error = ''; }, 4000, 'error');
       return;
     }
 
-    try {
-      loading = true;
-      error = '';
-
+    await status.run('Failed to set hotkey', async () => {
       await invoke('set_hotkey', { hotkey });
       currentHotkey = hotkey;
-      isRecording = false;
-      recordedKeys = [];
-      success = `Hotkey updated to: ${hotkey}`;
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err: unknown) {
-      error = `Failed to set hotkey: ${err}`;
-      console.error(error);
-      isRecording = false;
-      recordedKeys = [];
-    } finally {
-      loading = false;
-    }
+      status.confirm(`Hotkey updated to: ${hotkey}`);
+    });
+    // Whether it took or not, the capture is over.
+    isRecording = false;
+    recordedKeys = [];
   }
 
   function getDisplayKeys(): string {
@@ -122,7 +106,7 @@
 <div class="page">
   <PageHeader title="Hotkey" description="Configure keyboard shortcuts for recording" />
 
-  <Alert {error} {success} />
+  <Alert error={status.error} success={status.success} />
 
   <SectionHeader label="CURRENT SHORTCUT" />
   <div class="hotkey-display">{currentHotkey}</div>
@@ -154,7 +138,7 @@
     </ul>
   </div>
 
-  {#if loading}
+  {#if status.busy}
     <div class="loading">Updating hotkey...</div>
   {/if}
 </div>

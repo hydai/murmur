@@ -1,6 +1,7 @@
 <script lang="ts">
   import Alert from './ui/Alert.svelte';
   import { useLifecycle } from '../../lib/lifecycle';
+  import { createStatus } from '../../lib/status.svelte';
   import { onMount } from 'svelte';
   import { writeText } from '@tauri-apps/plugin-clipboard-manager';
   import { safeInvoke as invoke } from '../../lib/tauri';
@@ -13,11 +14,9 @@
   } from './diagnostics';
 
   const lifecycle = useLifecycle();
+  const status = createStatus(lifecycle);
 
   let logs = $state<DiagnosticLogEntry[]>([]);
-  let loading = $state(false);
-  let error = $state('');
-  let success = $state('');
 
   let newestFirstLogs = $derived([...logs].reverse());
 
@@ -26,65 +25,43 @@
   });
 
   async function loadLogs() {
-    try {
-      loading = true;
-      error = '';
+    await status.run('Failed to load diagnostics', async () => {
       logs = await invoke<DiagnosticLogEntry[]>('get_diagnostic_logs');
-    } catch (err) {
-      error = `Failed to load diagnostics: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+    });
   }
 
   async function clearLogs() {
-    try {
-      loading = true;
-      error = '';
-      success = '';
+    await status.run('Failed to clear diagnostics', async () => {
       await invoke('clear_diagnostic_logs');
       logs = [];
-      success = 'Logs cleared';
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to clear diagnostics: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+      status.confirm('Logs cleared');
+    });
   }
 
   async function copyLogs() {
-    try {
-      error = '';
-      success = '';
+    await status.run('Failed to copy diagnostics', async () => {
       // Export in the order the panel shows, so the entry the user just
       // read at the top is the first line they paste.
       await writeText(formatDiagnosticLogsForClipboard(newestFirstLogs));
-      success = 'Diagnostics copied';
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to copy diagnostics: ${err}`;
-      console.error(error);
-    }
+      status.confirm('Diagnostics copied');
+    });
   }
 </script>
 
 <PageHeader title="Diagnostics" description="Review recent warnings and errors for troubleshooting" />
 
-<Alert {error} {success} />
+<Alert error={status.error} success={status.success} />
 
 <div class="section">
   <SectionHeader label="RECENT WARNINGS & ERRORS" />
   <div class="toolbar">
-    <button class="tool-btn" onclick={loadLogs} disabled={loading}>
-      {loading ? 'Refreshing...' : 'Refresh'}
+    <button class="tool-btn" onclick={loadLogs} disabled={status.busy}>
+      {status.busy ? 'Refreshing...' : 'Refresh'}
     </button>
-    <button class="tool-btn" onclick={copyLogs} disabled={loading || logs.length === 0}>
+    <button class="tool-btn" onclick={copyLogs} disabled={status.busy || logs.length === 0}>
       Copy
     </button>
-    <button class="tool-btn danger" onclick={clearLogs} disabled={loading || logs.length === 0}>
+    <button class="tool-btn danger" onclick={clearLogs} disabled={status.busy || logs.length === 0}>
       Clear
     </button>
   </div>

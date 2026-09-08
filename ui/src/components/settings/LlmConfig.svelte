@@ -1,6 +1,7 @@
 <script lang="ts">
   import Alert from './ui/Alert.svelte';
   import { useLifecycle } from '../../lib/lifecycle';
+  import { createStatus } from '../../lib/status.svelte';
   import { trapFocus } from '../../lib/focus';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount } from 'svelte';
@@ -10,6 +11,7 @@
   import ActionRow from './ui/ActionRow.svelte';
 
   const lifecycle = useLifecycle();
+  const status = createStatus(lifecycle);
 
   interface LlmProcessorInfo {
     name: string;
@@ -26,10 +28,8 @@
   let currentProcessor = $state('');
   let currentModel = $state('');
   let defaultModel = $state('');
-  let loading = $state(false);
+  // The model row saves independently of the rest of the page.
   let modelLoading = $state(false);
-  let error = $state('');
-  let success = $state('');
 
   let showApiKeyModal = $state(false);
   let selectedProvider = $state<LlmProcessorInfo | null>(null);
@@ -53,12 +53,9 @@
   });
 
   async function loadProcessors() {
-    try {
+    await status.run('Failed to load LLM processors', async () => {
       processors = await invoke<LlmProcessorInfo[]>('get_llm_processors');
-    } catch (err) {
-      error = `Failed to load LLM processors: ${err}`;
-      console.error(error);
-    }
+    });
   }
 
   async function loadConfig() {
@@ -80,8 +77,7 @@
       }
       updateDefaultModel();
     } catch (err) {
-      error = `Failed to load config: ${err}`;
-      console.error(error);
+      status.fail(`Failed to load config: ${err}`);
     }
   }
 
@@ -95,8 +91,7 @@
     if (!processor) return;
 
     if (processor.provider_type === 'cli' && !processor.available) {
-      error = `${processor.name} is not installed. Please install it first.`;
-      lifecycle.timeout(() => { error = ''; }, 5000, 'error');
+      status.fail(`${processor.name} is not installed. Please install it first.`, 5000);
       return;
     }
 
@@ -109,27 +104,16 @@
     }
 
     if (processor.provider_type === 'local' && !processor.available) {
-      error = `${processor.name} is not available on this system.`;
-      lifecycle.timeout(() => { error = ''; }, 5000, 'error');
+      status.fail(`${processor.name} is not available on this system.`, 5000);
       return;
     }
 
-    try {
-      loading = true;
-      error = '';
-      success = '';
-
+    await status.run('Failed to switch processor', async () => {
       await invoke('set_llm_processor', { processor: processorId });
       currentProcessor = processorId;
       updateDefaultModel();
-      success = `Switched to ${processor.name}`;
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to switch processor: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+      status.confirm(`Switched to ${processor.name}`);
+    });
   }
 
   function editApiKey(processor: LlmProcessorInfo) {
@@ -141,42 +125,29 @@
 
   async function saveApiKey() {
     if (!apiKeyInput.trim()) {
-      error = 'API key cannot be empty';
+      status.fail('API key cannot be empty');
       return;
     }
 
     if (!selectedProvider || !selectedProvider.api_key_name) return;
 
-    try {
-      loading = true;
-      error = '';
-      success = '';
-
+    const provider = selectedProvider;
+    const updating = editingExistingKey;
+    await status.run('Failed to save API key', async () => {
       await invoke('save_api_key', {
-        provider: selectedProvider.api_key_name,
+        provider: provider.api_key_name,
         apiKey: apiKeyInput
       });
+      await invoke('set_llm_processor', { processor: provider.id });
 
-      await invoke('set_llm_processor', {
-        processor: selectedProvider.id
-      });
-
-      currentProcessor = selectedProvider.id;
+      currentProcessor = provider.id;
       updateDefaultModel();
-      success = editingExistingKey
-        ? `Updated API key for ${selectedProvider.name}`
-        : `Configured and activated ${selectedProvider.name}`;
-
       showApiKeyModal = false;
       await loadProcessors();
-
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to save API key: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+      status.confirm(updating
+        ? `Updated API key for ${provider.name}`
+        : `Configured and activated ${provider.name}`);
+    });
   }
 
   function closeModal() {
@@ -184,65 +155,45 @@
     apiKeyInput = '';
     showApiKey = false;
     editingExistingKey = false;
-    error = '';
+    status.reset();
   }
 
   async function saveModel() {
-    try {
-      modelLoading = true;
-      error = '';
-      success = '';
-
+    modelLoading = true;
+    await status.run('Failed to set model', async () => {
       await invoke('set_llm_model', { model: currentModel });
-      success = currentModel
+      status.confirm(currentModel
         ? `Model set to ${currentModel}`
-        : `Reset to default model (${defaultModel})`;
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to set model: ${err}`;
-      console.error(error);
-    } finally {
-      modelLoading = false;
-    }
+        : `Reset to default model (${defaultModel})`);
+    });
+    modelLoading = false;
   }
 
   async function saveCustomEndpoint() {
     if (!customBaseUrl.trim()) {
-      error = 'Base URL is required for custom endpoint';
+      status.fail('Base URL is required for custom endpoint');
       return;
     }
 
-    try {
-      loading = true;
-      error = '';
-      success = '';
-
+    await status.run('Failed to save custom endpoint', async () => {
       await invoke('set_custom_llm_endpoint', {
         baseUrl: customBaseUrl,
         displayName: customDisplayName || null,
       });
-
       if (customApiKey.trim()) {
         await invoke('save_api_key', {
           provider: 'custom_llm',
           apiKey: customApiKey
         });
       }
-
       await invoke('set_llm_processor', { processor: 'custom_api' });
       currentProcessor = 'custom_api';
 
       await loadProcessors();
       updateDefaultModel();
-      success = `Custom endpoint activated: ${customDisplayName || customBaseUrl}`;
       customApiKey = '';
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to save custom endpoint: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+      status.confirm(`Custom endpoint activated: ${customDisplayName || customBaseUrl}`);
+    });
   }
 
   function getStatus(processor: LlmProcessorInfo): 'green' | 'yellow' | 'red' | 'none' {
@@ -280,7 +231,7 @@
 <div class="page">
   <PageHeader title="LLM Processor" description="Configure language model for text processing" />
 
-  <Alert {error} {success} />
+  <Alert error={status.error} success={status.success} />
 
   <!-- LOCAL CLI -->
   {#if cliProcessors.length > 0}
@@ -368,8 +319,8 @@
           <label for="custom-display-name">Display Name <span class="optional">(optional)</span></label>
           <input id="custom-display-name" type="text" bind:value={customDisplayName} placeholder="e.g., Local Ollama" />
         </div>
-        <button class="btn btn-block btn-primary" onclick={saveCustomEndpoint} disabled={loading || !customBaseUrl.trim()}>
-          {loading ? 'Saving...' : 'Save & Activate'}
+        <button class="btn btn-block btn-primary" onclick={saveCustomEndpoint} disabled={status.busy || !customBaseUrl.trim()}>
+          {status.busy ? 'Saving...' : 'Save & Activate'}
         </button>
       </div>
     {/if}
@@ -417,8 +368,8 @@
 
       <div class="modal-actions">
         <button class="btn btn-md btn-secondary" onclick={closeModal}>Cancel</button>
-        <button class="btn btn-md btn-primary" onclick={saveApiKey} disabled={loading}>
-          {loading ? 'Saving...' : editingExistingKey ? 'Update Key' : 'Save & Activate'}
+        <button class="btn btn-md btn-primary" onclick={saveApiKey} disabled={status.busy}>
+          {status.busy ? 'Saving...' : editingExistingKey ? 'Update Key' : 'Save & Activate'}
         </button>
       </div>
     </div>

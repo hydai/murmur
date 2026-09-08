@@ -1,12 +1,14 @@
 <script lang="ts">
   import Alert from './ui/Alert.svelte';
   import { useLifecycle } from '../../lib/lifecycle';
+  import { createStatus } from '../../lib/status.svelte';
   import { onMount } from 'svelte';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import PageHeader from './ui/PageHeader.svelte';
   import SectionHeader from './ui/SectionHeader.svelte';
 
   const lifecycle = useLifecycle();
+  const status = createStatus(lifecycle);
 
   interface PromptInfo {
     name: string;
@@ -24,9 +26,6 @@
   let editorContent = $state<string>('');
   // Unsaved edits, kept per prompt so switching the selector never loses work.
   let drafts = $state<Record<string, string>>({});
-  let loading = $state(false);
-  let error = $state('');
-  let success = $state('');
 
   let current = $derived<PromptInfo | undefined>(prompts.find((p) => p.name === selectedName));
   let missingPlaceholders = $derived<string[]>(
@@ -38,13 +37,10 @@
   onMount(loadPrompts);
 
   async function loadPrompts() {
-    try {
+    await status.run('Failed to load prompts', async () => {
       prompts = await invoke<PromptInfo[]>('get_prompts');
       syncEditor();
-    } catch (err) {
-      error = `Failed to load prompts: ${err}`;
-      console.error(error);
-    }
+    });
   }
 
   function syncEditor() {
@@ -63,55 +59,32 @@
     selectedName = next;
     // Reloading after a save must keep the banner, so the reset lives with the
     // selection change rather than inside syncEditor.
-    error = '';
-    success = '';
+    status.reset();
     syncEditor();
   }
 
   async function save() {
     if (isEmpty) {
-      error = 'Prompt cannot be empty. Type something or click "Reset to default".';
+      status.fail('Prompt cannot be empty. Type something or click "Reset to default".');
       return;
     }
-    try {
-      loading = true;
-      error = '';
-      success = '';
+    await status.run('Failed to save', async () => {
       await invoke('set_prompt', {
         params: { name: selectedName, content: editorContent },
       });
-      success = `Saved "${current?.title ?? selectedName}"`;
       delete drafts[selectedName];
       await loadPrompts();
-      lifecycle.timeout(() => {
-        success = '';
-      }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to save: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+      status.confirm(`Saved "${current?.title ?? selectedName}"`);
+    });
   }
 
   async function reset() {
-    try {
-      loading = true;
-      error = '';
-      success = '';
+    await status.run('Failed to reset', async () => {
       await invoke('reset_prompt', { params: { name: selectedName } });
-      success = `Reset "${current?.title ?? selectedName}" to default`;
       delete drafts[selectedName];
       await loadPrompts();
-      lifecycle.timeout(() => {
-        success = '';
-      }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to reset: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+      status.confirm(`Reset "${current?.title ?? selectedName}" to default`);
+    });
   }
 </script>
 
@@ -121,7 +94,7 @@
     description="Edit the Markdown prompts sent to the LLM. Changes take effect on the next recording."
   />
 
-  <Alert {error} {success} />
+  <Alert error={status.error} success={status.success} />
 
   <div class="section">
     <SectionHeader label="PROMPT" />
@@ -164,7 +137,7 @@
       <button
         class="btn btn-md btn-secondary"
         onclick={reset}
-        disabled={loading || !current.is_override}
+        disabled={status.busy || !current.is_override}
         title={current.is_override ? 'Delete the override and revert to the built-in default' : 'No override to reset'}
       >
         Reset to default
@@ -173,9 +146,9 @@
       <button
         class="btn btn-md btn-primary"
         onclick={save}
-        disabled={loading || !isDirty || isEmpty}
+        disabled={status.busy || !isDirty || isEmpty}
       >
-        {loading ? 'Saving...' : 'Save'}
+        {status.busy ? 'Saving...' : 'Save'}
       </button>
     </div>
   {/if}
