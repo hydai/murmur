@@ -102,11 +102,6 @@ async fn update_shortcut(
 }
 
 #[tauri::command]
-fn get_status() -> String {
-    "Ready".to_string()
-}
-
-#[tauri::command]
 async fn get_config(state: tauri::State<'_, AppState>) -> Result<AppConfig, String> {
     // Secrets never reach the webview; providers report `configured` instead.
     Ok(state.store.config.read().await?.redacted())
@@ -1501,7 +1496,6 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
-            get_status,
             start_pipeline,
             stop_pipeline,
             toggle_recording,
