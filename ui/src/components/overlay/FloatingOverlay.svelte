@@ -127,25 +127,6 @@
         partialText = '';
       });
 
-      await lifecycle.listen('transcription-error', (event) => {
-        const payload = event.payload as { message: string };
-        errorMessage = payload.message;
-      });
-
-      // Listen for processing status events
-      await lifecycle.listen('processing-status', (event) => {
-        const payload = event.payload as { status: string };
-        isProcessing = payload.status === 'processing';
-      });
-
-      // Listen for processed transcription
-      await lifecycle.listen('transcription-processed', (event) => {
-        const payload = event.payload as { text: string; processing_time_ms: number };
-        processedText = payload.text;
-        committedText = payload.text; // Update committed text with processed version
-        isProcessing = false;
-      });
-
       // Listen for pipeline state changes
       await lifecycle.listen('pipeline-state', (event) => {
         const payload = event.payload as { state: string; timestamp_ms: number };
@@ -173,6 +154,8 @@
         const payload = event.payload as { text: string; processing_time_ms: number };
         processedText = payload.text;
         committedText = payload.text;
+        // Do not wait for the terminal pipeline-state to clear the spinner.
+        isProcessing = false;
 
         // Report text availability without claiming clipboard delivery.
         showResultIndicator = true;

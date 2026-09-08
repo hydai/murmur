@@ -181,15 +181,6 @@ pub(crate) fn spawn(
                         },
                     );
 
-                    // Emit as transcription-processed for compatibility
-                    let _ = app_clone.emit(
-                        "transcription-processed",
-                        serde_json::json!({
-                            "text": text,
-                            "processing_time_ms": processing_time_ms
-                        }),
-                    );
-
                     let raw = std::mem::take(&mut raw_transcription);
                     let entry = lt_core::HistoryEntry::new(
                         text,
