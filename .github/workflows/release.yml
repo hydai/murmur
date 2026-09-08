@@ -24,7 +24,7 @@ jobs:
         run: npm ci
 
       - name: Install Tauri CLI
-        run: cargo install tauri-cli
+        run: cargo install tauri-cli --version "^2.11" --locked
 
       - name: Build arm64 binary
         run: cargo tauri build --target aarch64-apple-darwin
