@@ -245,9 +245,8 @@ mod tests {
 
     #[test]
     fn test_roundtrip_file() {
-        let dir = std::env::temp_dir().join("murmur_test_history");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("history.json");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
 
         let mut history = TranscriptionHistory::new();
         history.add_entry(make_entry("1000", "saved text"));
@@ -256,7 +255,5 @@ mod tests {
         let loaded = TranscriptionHistory::load_from_file(&path).unwrap();
         assert_eq!(loaded.entries.len(), 1);
         assert_eq!(loaded.entries[0].final_text, "saved text");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
