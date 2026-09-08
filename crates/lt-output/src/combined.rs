@@ -8,20 +8,20 @@ use crate::keyboard::KeyboardOutput;
 /// Combined output sink that routes to clipboard, keyboard, or both
 pub struct CombinedOutput {
     mode: OutputMode,
-    clipboard: Option<ClipboardOutput>,
-    keyboard: Option<KeyboardOutput>,
+    clipboard: Option<Box<dyn OutputSink>>,
+    keyboard: Option<Box<dyn OutputSink>>,
 }
 
 impl CombinedOutput {
     /// Create a new combined output sink with the specified mode
     pub fn new(mode: OutputMode) -> Result<Self> {
-        let clipboard = match mode {
-            OutputMode::Clipboard | OutputMode::Both => Some(ClipboardOutput::new()?),
+        let clipboard: Option<Box<dyn OutputSink>> = match mode {
+            OutputMode::Clipboard | OutputMode::Both => Some(Box::new(ClipboardOutput::new()?)),
             OutputMode::Keyboard => None,
         };
 
-        let keyboard = match mode {
-            OutputMode::Keyboard | OutputMode::Both => Some(KeyboardOutput::new()?),
+        let keyboard: Option<Box<dyn OutputSink>> = match mode {
+            OutputMode::Keyboard | OutputMode::Both => Some(Box::new(KeyboardOutput::new()?)),
             OutputMode::Clipboard => None,
         };
 
@@ -30,6 +30,19 @@ impl CombinedOutput {
             clipboard,
             keyboard,
         })
+    }
+
+    #[cfg(test)]
+    fn from_sinks(
+        mode: OutputMode,
+        clipboard: Option<Box<dyn OutputSink>>,
+        keyboard: Option<Box<dyn OutputSink>>,
+    ) -> Self {
+        Self {
+            mode,
+            clipboard,
+            keyboard,
+        }
     }
 
     /// Get the current output mode
@@ -43,17 +56,26 @@ impl OutputSink for CombinedOutput {
     async fn output_text(&self, text: &str) -> Result<()> {
         tracing::debug!("Outputting text via {:?} mode", self.mode);
 
-        // Output to clipboard if enabled
+        // Each destination is attempted independently: in Both mode a failed
+        // clipboard write must not swallow the typed delivery, and vice versa.
+        let mut failures = Vec::new();
         if let Some(clipboard) = &self.clipboard {
-            clipboard.output_text(text).await?;
+            if let Err(error) = clipboard.output_text(text).await {
+                tracing::error!("Clipboard output failed: {error}");
+                failures.push(format!("clipboard: {error}"));
+            }
         }
-
-        // Output via keyboard if enabled
         if let Some(keyboard) = &self.keyboard {
-            keyboard.output_text(text).await?;
+            if let Err(error) = keyboard.output_text(text).await {
+                tracing::error!("Keyboard output failed: {error}");
+                failures.push(format!("keyboard: {error}"));
+            }
         }
-
-        Ok(())
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(lt_core::error::MurmurError::Output(failures.join("; ")))
+        }
     }
 }
 
@@ -89,6 +111,39 @@ mod tests {
         assert_eq!(output.mode(), OutputMode::Both);
         assert!(output.clipboard.is_some());
         assert!(output.keyboard.is_some());
+    }
+
+    struct RecordingSink(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+    #[async_trait]
+    impl OutputSink for RecordingSink {
+        async fn output_text(&self, text: &str) -> Result<()> {
+            self.0.lock().unwrap().push(text.to_string());
+            Ok(())
+        }
+    }
+
+    struct FailingSink;
+    #[async_trait]
+    impl OutputSink for FailingSink {
+        async fn output_text(&self, _: &str) -> Result<()> {
+            Err(lt_core::error::MurmurError::Output(
+                "pasteboard unavailable".into(),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn both_mode_still_types_when_the_clipboard_fails() {
+        let typed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let output = CombinedOutput::from_sinks(
+            OutputMode::Both,
+            Some(Box::new(FailingSink)),
+            Some(Box::new(RecordingSink(typed.clone()))),
+        );
+        let error = output.output_text("hello").await.unwrap_err().to_string();
+        assert!(error.contains("clipboard"), "{error}");
+        assert!(error.contains("pasteboard unavailable"), "{error}");
+        assert_eq!(*typed.lock().unwrap(), ["hello"]);
     }
 
     #[tokio::test]
