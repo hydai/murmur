@@ -16,7 +16,9 @@ use tokio::task::JoinHandle;
 
 use crate::commands::detect_command;
 use crate::state::{PipelineEvent, PipelineState};
-use crate::text_normalization::normalize_final_output;
+use crate::text_normalization::finalize_output;
+use lt_core::config::ChineseConversion;
+use lt_core::llm::ProcessingTask;
 
 /// Pipeline orchestrator coordinating the full flow
 pub struct PipelineOrchestrator {
@@ -26,6 +28,7 @@ pub struct PipelineOrchestrator {
     cancel_tx: Mutex<Option<watch::Sender<bool>>>,
     llm_processor: Arc<RwLock<Arc<dyn LlmProcessor>>>,
     output_sink: Arc<RwLock<Arc<dyn OutputSink>>>,
+    chinese_conversion: Arc<RwLock<ChineseConversion>>,
     dictionary: Arc<Mutex<PersonalDictionary>>,
     state: Arc<Mutex<PipelineState>>,
     event_tx: broadcast::Sender<PipelineEvent>,
@@ -51,6 +54,7 @@ impl PipelineOrchestrator {
             cancel_tx: Mutex::new(None),
             llm_processor: Arc::new(RwLock::new(llm_processor)),
             output_sink: Arc::new(RwLock::new(output_sink)),
+            chinese_conversion: Arc::new(RwLock::new(ChineseConversion::default())),
             dictionary,
             state: Arc::new(Mutex::new(PipelineState::Idle)),
             event_tx,
@@ -71,6 +75,12 @@ impl PipelineOrchestrator {
         *self.state.lock().await
     }
 
+    /// Whether the microphone is still open. The state alone cannot tell a
+    /// live recording from a session that is finishing after `stop()`.
+    pub async fn is_capturing(&self) -> bool {
+        self.audio_capture.lock().await.is_some()
+    }
+
     /// Get reference to the dictionary for updates
     pub fn get_dictionary(&self) -> Arc<Mutex<PersonalDictionary>> {
         self.dictionary.clone()
@@ -86,6 +96,11 @@ impl PipelineOrchestrator {
     /// Hot-swap the output destination for the next recording.
     pub async fn set_output_sink(&self, sink: Arc<dyn OutputSink>) {
         *self.output_sink.write().await = sink;
+    }
+
+    /// Hot-swap the Chinese conversion for the next recording.
+    pub async fn set_chinese_conversion(&self, conversion: ChineseConversion) {
+        *self.chinese_conversion.write().await = conversion;
     }
 
     /// Start the pipeline with the provided STT provider.
@@ -145,6 +160,7 @@ impl PipelineOrchestrator {
         // uses a snapshot; hot-swaps take effect on the next recording.
         let llm_processor = self.llm_processor.read().await.clone();
         let output_sink = self.output_sink.read().await.clone();
+        let chinese_conversion = *self.chinese_conversion.read().await;
         let dictionary = self.dictionary.clone();
         let state_arc = self.state.clone();
         let capture_arc = self.audio_capture.clone();
@@ -274,6 +290,12 @@ impl PipelineOrchestrator {
                 });
 
                 let task = detection.task;
+                let translate_target = match &task {
+                    ProcessingTask::Translate {
+                        target_language, ..
+                    } => Some(target_language.clone()),
+                    _ => None,
+                };
 
                 tracing::info!(
                     "Starting LLM post-processing: input_len={} chars",
@@ -285,7 +307,11 @@ impl PipelineOrchestrator {
 
                 match llm_processor.process(task).await {
                     Ok(output) => {
-                        let final_text = normalize_final_output(&output.text);
+                        let final_text = finalize_output(
+                            &output.text,
+                            chinese_conversion,
+                            translate_target.as_deref(),
+                        );
                         tracing::info!(
                             "LLM processing successful (took {}ms, output_len={} chars)",
                             output.processing_time_ms,
@@ -328,7 +354,11 @@ impl PipelineOrchestrator {
                     }
                     Err(e) => {
                         tracing::error!("LLM processing failed: {}", e);
-                        let fallback_text = normalize_final_output(&full_transcription);
+                        let fallback_text = finalize_output(
+                            &full_transcription,
+                            chinese_conversion,
+                            translate_target.as_deref(),
+                        );
 
                         // Emit error but try to output raw transcription
                         let _ = event_tx.send(PipelineEvent::Error {
@@ -779,6 +809,58 @@ mod tests {
         }
         assert_eq!(*first.0.lock().unwrap(), ["first recording"]);
         assert_eq!(*second.0.lock().unwrap(), ["second recording"]);
+    }
+
+    #[tokio::test]
+    async fn is_capturing_tracks_the_live_capture_rather_than_the_state() {
+        let release = Arc::new(Notify::new());
+        let (p, _) = pipeline(Arc::default(), Arc::new(TestLlm(Some(release.clone()))));
+        let mut events = p.subscribe_events();
+        assert!(!p.is_capturing().await);
+        let (stt, tx) = TestStt::new(false);
+        p.start(stt).await.unwrap();
+        assert!(p.is_capturing().await);
+        tx.send(TranscriptionEvent::Committed {
+            text: "still processing".into(),
+            timestamp_ms: 1,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+        p.stop().await.unwrap();
+        wait_state(&mut events, PipelineState::Processing).await;
+        assert!(!p.is_capturing().await);
+        assert_eq!(p.get_state().await, PipelineState::Processing);
+        p.reset().await.unwrap();
+        assert!(!p.is_capturing().await);
+    }
+
+    #[tokio::test]
+    async fn chinese_conversion_setting_is_applied_to_the_final_output() {
+        let output = Arc::new(TestOutput::default());
+        let (p, _) = pipeline(output.clone(), Arc::new(TestLlm(None)));
+        let mut events = p.subscribe_events();
+        for (conversion, expected) in [
+            (ChineseConversion::None, "软件会把数据复制到服务器。"),
+            (ChineseConversion::Traditional, "軟體會把資料複製到伺服器。"),
+        ] {
+            p.set_chinese_conversion(conversion).await;
+            let (stt, tx) = TestStt::new(false);
+            p.start(stt).await.unwrap();
+            tx.send(TranscriptionEvent::Committed {
+                text: "软件会把数据复制到服务器。".into(),
+                timestamp_ms: 1,
+            })
+            .await
+            .unwrap();
+            drop(tx);
+            p.stop().await.unwrap();
+            wait_state(&mut events, PipelineState::Done).await;
+            assert_eq!(
+                output.0.lock().unwrap().last().map(String::as_str),
+                Some(expected)
+            );
+        }
     }
 
     #[tokio::test]

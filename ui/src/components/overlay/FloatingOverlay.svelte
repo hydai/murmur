@@ -24,6 +24,7 @@
   let pipelineState = $state('idle');
   let showResultIndicator = $state(false);
   let detectedCommand = $state<string | null>(null);
+  let cancelled = $state(false);
 
   const lifecycle = useLifecycle();
   let overlayVisible = $state(true);
@@ -48,16 +49,16 @@
     isProcessing = false;
     showResultIndicator = false;
     detectedCommand = null;
+    cancelled = false;
+    lifecycle.cancelTimeout('cancelled');
     overlayVisible = true;
   }
 
   async function toggleRecording() {
     try {
-      if (isRecording) {
-        await invoke('stop_pipeline');
-      } else {
-        await invoke('start_pipeline');
-      }
+      // The backend decides between start, stop, and cancel from the live
+      // session state, exactly as the hotkey and tray do.
+      await invoke('toggle_recording');
     } catch (error) {
       console.error('Failed to toggle recording:', error);
       errorMessage = String(error);
@@ -151,6 +152,14 @@
         if (payload.state === 'recording' && pipelineState !== 'recording') {
           resetRecordingView();
         }
+        if (payload.state === 'idle' && isProcessing) {
+          // A cancelled session returns to Idle without a result.
+          committedText = '';
+          partialText = '';
+          processedText = '';
+          cancelled = true;
+          lifecycle.timeout(() => { cancelled = false; }, 2000, 'cancelled');
+        }
         pipelineState = payload.state;
 
         // Update processing flag based on pipeline state
@@ -234,6 +243,8 @@
               {/if}
             {:else if isRecording}
               {partialText || committedText ? 'Transcribing' : 'Recording'}
+            {:else if cancelled}
+              Cancelled
             {:else if committedText}
               Done
             {:else}
@@ -279,7 +290,7 @@
       {/if}
 
       <button class="record-button" class:recording={isRecording} onclick={toggleRecording}>
-        {isRecording ? '⏸ Stop Recording' : '⏺ Start Recording'}
+        {isRecording ? '⏸ Stop Recording' : isProcessing ? '✕ Cancel' : '⏺ Start Recording'}
       </button>
     </div>
   {/if}

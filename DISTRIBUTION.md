@@ -22,7 +22,7 @@ This document covers the build, packaging, and distribution process for Murmur o
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "10.15",
+      "minimumSystemVersion": "26.0",
       "infoPlist": "Info.plist"
     }
   }

@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use lt_core::{AppConfig, HistoryEntry, MurmurError, PersonalDictionary, TranscriptionHistory};
@@ -106,6 +106,7 @@ impl<T: FileData> FileStore<T> {
 pub(crate) struct HistoryStore {
     file: FileStore<TranscriptionHistory>,
     generation: Arc<AtomicU64>,
+    enabled: Arc<AtomicBool>,
 }
 
 impl HistoryStore {
@@ -113,7 +114,13 @@ impl HistoryStore {
         Self {
             file: FileStore::new(path),
             generation: Arc::new(AtomicU64::new(0)),
+            enabled: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    /// Mirrors `AppConfig::save_history`; appends are dropped while disabled.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::SeqCst);
     }
 
     pub async fn read(&self) -> Result<TranscriptionHistory, String> {
@@ -132,8 +139,12 @@ impl HistoryStore {
         self.generation.load(Ordering::SeqCst)
     }
 
-    /// Appends unless the history was cleared after `generation` was taken.
+    /// Appends unless history is disabled or was cleared after `generation`
+    /// was taken.
     pub async fn append(&self, entry: HistoryEntry, generation: u64) -> Result<(), String> {
+        if !self.enabled.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         let current = self.generation.clone();
         self.file
             .update(move |history| {
@@ -178,10 +189,20 @@ pub(crate) struct AppStore {
 
 impl AppStore {
     pub fn new(directory: PathBuf) -> Self {
+        let config = directory.join("config.toml");
+        let dictionary = directory.join("dictionary.json");
+        let history = directory.join("history.json");
+        // Atomic replacement writes owner-only files; documents written by
+        // earlier releases may still be world-readable.
+        for path in [&config, &dictionary, &history] {
+            if let Err(error) = lt_core::persistence::restrict_to_owner(path) {
+                tracing::warn!("Failed to restrict {}: {error}", path.display());
+            }
+        }
         Self {
-            config: FileStore::new(directory.join("config.toml")),
-            dictionary: FileStore::new(directory.join("dictionary.json")),
-            history: HistoryStore::new(directory.join("history.json")),
+            config: FileStore::new(config),
+            dictionary: FileStore::new(dictionary),
+            history: HistoryStore::new(history),
         }
     }
 }
@@ -398,5 +419,53 @@ mod tests {
             .map(|entry| entry.final_text.clone())
             .collect();
         assert_eq!(texts, ["late", "kept"]);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn opening_the_store_restricts_legacy_files_to_the_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["config.toml", "history.json", "dictionary.json"] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let _store = AppStore::new(dir.path().to_owned());
+        for name in ["config.toml", "history.json", "dictionary.json"] {
+            let mode = std::fs::metadata(dir.path().join(name))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600, "{name} mode was {mode:o}");
+        }
+    }
+
+    #[tokio::test]
+    async fn appends_are_skipped_while_history_is_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = AppStore::new(dir.path().to_owned());
+        store.history.set_enabled(false);
+        store
+            .history
+            .append(
+                lt_core::HistoryEntry::new("private".into(), None, 0, None),
+                store.history.generation(),
+            )
+            .await
+            .unwrap();
+        assert!(store.history.read().await.unwrap().entries.is_empty());
+
+        store.history.set_enabled(true);
+        store
+            .history
+            .append(
+                lt_core::HistoryEntry::new("kept".into(), None, 0, None),
+                store.history.generation(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(store.history.read().await.unwrap().entries.len(), 1);
     }
 }

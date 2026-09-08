@@ -4,6 +4,7 @@
 mod diagnostics;
 mod events;
 mod permissions;
+mod recording;
 mod shortcuts;
 mod sound;
 mod storage;
@@ -60,15 +61,7 @@ fn register_recording_shortcut(app: &tauri::AppHandle, shortcut: Shortcut) -> Re
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 let state = app.state::<AppState>();
-                let current = state.pipeline.lock().await.get_state().await;
-                let result = if matches!(
-                    current,
-                    PipelineState::Recording | PipelineState::Transcribing
-                ) {
-                    stop_pipeline(app.clone(), state).await
-                } else {
-                    start_pipeline(app.clone(), state).await
-                };
+                let result = toggle_recording(app.clone(), state).await;
                 if let Err(message) = result {
                     tracing::warn!("Shortcut action failed: {message}");
                     let _ = app.emit(
@@ -115,7 +108,8 @@ fn get_status() -> String {
 
 #[tauri::command]
 async fn get_config(state: tauri::State<'_, AppState>) -> Result<AppConfig, String> {
-    state.store.config.read().await
+    // Secrets never reach the webview; providers report `configured` instead.
+    Ok(state.store.config.read().await?.redacted())
 }
 
 #[tauri::command]
@@ -131,7 +125,8 @@ async fn save_config(
     update_shortcut(app, updates, &old, &new, async move {
         store
             .update(move |current| {
-                *current = config;
+                // The caller only ever holds a redacted copy.
+                current.apply_redacted(config);
                 Ok(())
             })
             .await
@@ -809,6 +804,41 @@ async fn set_output_mode(mode: String, state: tauri::State<'_, AppState>) -> Res
 }
 
 #[tauri::command]
+async fn set_chinese_conversion(
+    mode: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let conversion = match mode.to_lowercase().as_str() {
+        "traditional" => lt_core::config::ChineseConversion::Traditional,
+        "none" => lt_core::config::ChineseConversion::None,
+        _ => return Err(format!("Unknown Chinese conversion mode: {mode}")),
+    };
+    state
+        .store
+        .config
+        .update(move |config| {
+            config.chinese_conversion = conversion;
+            Ok(())
+        })
+        .await
+        .map(|_| ())
+}
+
+#[tauri::command]
+async fn set_save_history(enabled: bool, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state
+        .store
+        .config
+        .update(move |config| {
+            config.save_history = enabled;
+            Ok(())
+        })
+        .await?;
+    state.store.history.set_enabled(enabled);
+    Ok(())
+}
+
+#[tauri::command]
 async fn set_hotkey(
     hotkey: String,
     app: tauri::AppHandle,
@@ -932,6 +962,9 @@ async fn start_pipeline(
     let output = CombinedOutput::new(config.output_mode)
         .map_err(|error| format!("Failed to initialize output: {error}"))?;
     pipeline.set_output_sink(Arc::new(output)).await;
+    pipeline
+        .set_chinese_conversion(config.chinese_conversion)
+        .await;
     *pipeline.get_dictionary().lock().await = state.store.dictionary.read().await?;
 
     // Start the pipeline
@@ -960,6 +993,32 @@ async fn stop_pipeline(
 
     tracing::info!("Pipeline stopped successfully");
     Ok(())
+}
+
+/// Shared by the hotkey, the tray, and the overlay button.
+#[tauri::command]
+async fn toggle_recording(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let action = {
+        let pipeline = state.pipeline.lock().await;
+        recording::toggle_action(pipeline.get_state().await, pipeline.is_capturing().await)
+    };
+    match action {
+        recording::ToggleAction::Start => start_pipeline(app, state).await,
+        recording::ToggleAction::Stop => stop_pipeline(app, state).await,
+        recording::ToggleAction::Cancel => {
+            tracing::info!("Cancelling pipeline");
+            state
+                .pipeline
+                .lock()
+                .await
+                .reset()
+                .await
+                .map_err(|e| format!("Failed to cancel pipeline: {e}"))
+        }
+    }
 }
 
 #[tauri::command]
@@ -1475,6 +1534,7 @@ fn main() {
         hotkey_updates: Arc::new(Mutex::new(())),
         prompts,
     };
+    app_state.store.history.set_enabled(config.save_history);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -1486,6 +1546,7 @@ fn main() {
             get_status,
             start_pipeline,
             stop_pipeline,
+            toggle_recording,
             is_recording,
             get_pipeline_state,
             get_config,
@@ -1501,6 +1562,8 @@ fn main() {
             set_custom_llm_endpoint,
             set_custom_stt_endpoint,
             set_output_mode,
+            set_save_history,
+            set_chinese_conversion,
             set_hotkey,
             get_dictionary,
             add_dictionary_entry,
@@ -1575,19 +1638,10 @@ fn main() {
                         "toggle_recording" => {
                             tauri::async_runtime::spawn(async move {
                                 let state = app_handle.state::<AppState>();
-                                let is_currently_recording = {
-                                    let pipeline = state.pipeline.lock().await;
-                                    let current_state = pipeline.get_state().await;
-                                    matches!(
-                                        current_state,
-                                        PipelineState::Recording | PipelineState::Transcribing
-                                    )
-                                };
-
-                                if is_currently_recording {
-                                    let _ = stop_pipeline(app_handle.clone(), state).await;
-                                } else {
-                                    let _ = start_pipeline(app_handle.clone(), state).await;
+                                if let Err(message) =
+                                    toggle_recording(app_handle.clone(), state).await
+                                {
+                                    tracing::warn!("Tray action failed: {message}");
                                 }
                             });
                         }

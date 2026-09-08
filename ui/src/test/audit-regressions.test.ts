@@ -7,6 +7,7 @@ import AboutSection from '../components/settings/AboutSection.svelte';
 import ProviderConfig from '../components/settings/ProviderConfig.svelte';
 import HistoryPanel from '../components/history/HistoryPanel.svelte';
 import DictionaryEditor from '../components/settings/DictionaryEditor.svelte';
+import OutputConfig from '../components/settings/OutputConfig.svelte';
 import StatusRowHarness from './StatusRowHarness.svelte';
 
 const mocks = vi.hoisted(() => ({
@@ -106,6 +107,23 @@ describe('recording overlay', () => {
     emit('recording-state', { is_recording: false });
     expect(target.textContent).toContain('Processing...');
     expect(target.textContent).not.toContain('Shortening...');
+  });
+
+  it('offers to cancel while processing and routes the button through the backend toggle', async () => {
+    mocks.invoke.mockResolvedValue(undefined);
+    const { target } = render(FloatingOverlay, { status: 'Ready' });
+    await settle();
+    emit('pipeline-state', { state: 'recording' });
+    emit('recording-state', { is_recording: true });
+    emit('pipeline-state', { state: 'processing' });
+    emit('recording-state', { is_recording: false });
+    button(target, 'Cancel').click();
+    await settle();
+    expect(mocks.invoke).toHaveBeenCalledWith('toggle_recording');
+    emit('pipeline-state', { state: 'idle' });
+    await settle();
+    expect(target.textContent).toContain('Cancelled');
+    expect(target.textContent).not.toContain('Processing...');
   });
 
   it('uses native dragging for the window surface and excludes its controls', async () => {
@@ -333,5 +351,36 @@ describe('provider page initialization', () => {
     const { target } = render(ProviderConfig, {});
     await settle();
     expect(target.textContent).toContain('OpenAI Whisper');
+  });
+});
+
+describe('history opt-out', () => {
+  it('shows the saved-history state and toggles it through the backend', async () => {
+    mocks.invoke.mockImplementation(async command => command === 'get_config'
+      ? { output_mode: 'clipboard', save_history: true }
+      : undefined);
+    const { target } = render(OutputConfig, {});
+    await settle();
+    const row = button(target, 'Save transcription history');
+    expect(row.textContent).toContain('On');
+    row.click();
+    await settle();
+    expect(mocks.invoke).toHaveBeenCalledWith('set_save_history', { enabled: false });
+    expect(button(target, 'Save transcription history').textContent).toContain('Off');
+  });
+});
+
+describe('chinese conversion setting', () => {
+  it('shows the active conversion and switches it through the backend', async () => {
+    mocks.invoke.mockImplementation(async command => command === 'get_config'
+      ? { output_mode: 'clipboard', save_history: true, chinese_conversion: 'traditional' }
+      : undefined);
+    const { target } = render(OutputConfig, {});
+    await settle();
+    expect(button(target, 'Traditional Chinese (Taiwan)').textContent).toContain('Active');
+    button(target, 'No conversion').click();
+    await settle();
+    expect(mocks.invoke).toHaveBeenCalledWith('set_chinese_conversion', { mode: 'none' });
+    expect(button(target, 'No conversion').textContent).toContain('Active');
   });
 });

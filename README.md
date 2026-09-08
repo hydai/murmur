@@ -72,6 +72,8 @@ murmur/
 
 ## Installation
 
+Murmur requires macOS 26 (Tahoe) or later on Apple Silicon: the bundled Apple Speech and Foundation Models bridges link against frameworks that only exist there.
+
 ### Homebrew (recommended)
 
 ```bash

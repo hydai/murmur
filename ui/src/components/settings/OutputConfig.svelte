@@ -9,6 +9,13 @@
   const lifecycle = useLifecycle();
 
   let currentOutputMode = $state('clipboard');
+  let saveHistory = $state(true);
+  let chineseConversion = $state('traditional');
+
+  const chineseConversions = [
+    { id: 'traditional', name: 'Traditional Chinese (Taiwan)' },
+    { id: 'none', name: 'No conversion' },
+  ];
   let loading = $state(false);
   let error = $state('');
   let success = $state('');
@@ -40,8 +47,10 @@
 
   async function loadConfig(): Promise<void> {
     try {
-      const config = await invoke<{ output_mode: string }>('get_config');
+      const config = await invoke<{ output_mode: string; save_history: boolean; chinese_conversion?: string }>('get_config');
       currentOutputMode = config.output_mode.toLowerCase();
+      saveHistory = config.save_history !== false;
+      chineseConversion = (config.chinese_conversion || 'traditional').toLowerCase();
     } catch (err: unknown) {
       error = `Failed to load config: ${err}`;
       console.error(error);
@@ -62,6 +71,42 @@
       lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err: unknown) {
       error = `Failed to set output mode: ${err}`;
+      console.error(error);
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function selectChineseConversion(mode: string): Promise<void> {
+    try {
+      loading = true;
+      error = '';
+      success = '';
+      await invoke('set_chinese_conversion', { mode });
+      chineseConversion = mode;
+      const name = chineseConversions.find((c) => c.id === mode)?.name || mode;
+      success = `Chinese output set to: ${name}`;
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
+    } catch (err: unknown) {
+      error = `Failed to set Chinese conversion: ${err}`;
+      console.error(error);
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function toggleSaveHistory(): Promise<void> {
+    const enabled = !saveHistory;
+    try {
+      loading = true;
+      error = '';
+      success = '';
+      await invoke('set_save_history', { enabled });
+      saveHistory = enabled;
+      success = enabled ? 'New transcriptions will be saved to history' : 'New transcriptions will not be saved';
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
+    } catch (err: unknown) {
+      error = `Failed to update history setting: ${err}`;
       console.error(error);
     } finally {
       loading = false;
@@ -91,6 +136,28 @@
         onclick={() => selectOutputMode(mode.id)}
       />
     {/each}
+  </div>
+
+  <SectionHeader label="CHINESE OUTPUT" />
+  <div class="section-rows">
+    {#each chineseConversions as conversion}
+      <StatusRow
+        label={conversion.name}
+        status={chineseConversion === conversion.id ? 'green' : 'none'}
+        statusText={chineseConversion === conversion.id ? 'Active' : ''}
+        onclick={() => selectChineseConversion(conversion.id)}
+      />
+    {/each}
+  </div>
+
+  <SectionHeader label="HISTORY" />
+  <div class="section-rows">
+    <StatusRow
+      label="Save transcription history"
+      status={saveHistory ? 'green' : 'none'}
+      statusText={saveHistory ? 'On' : 'Off'}
+      onclick={toggleSaveHistory}
+    />
   </div>
 
   {#if loading}

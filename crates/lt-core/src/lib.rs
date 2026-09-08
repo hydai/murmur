@@ -8,7 +8,7 @@ pub mod persistence;
 pub mod redact;
 pub mod stt;
 
-pub use config::{AppConfig, LlmProcessorType, SttProviderType, UiPreferences};
+pub use config::{AppConfig, ChineseConversion, LlmProcessorType, SttProviderType, UiPreferences};
 pub use dictionary::{DictionaryEntry, PersonalDictionary};
 pub use error::MurmurError;
 pub use history::{HistoryEntry, TranscriptionHistory};

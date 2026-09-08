@@ -87,6 +87,17 @@ impl Default for UiPreferences {
     }
 }
 
+/// How Chinese text in the final output is converted before delivery.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ChineseConversion {
+    /// Convert Simplified Chinese to Traditional Chinese with Taiwan phrasing.
+    #[default]
+    Traditional,
+    /// Deliver the text as transcribed.
+    None,
+}
+
 /// Application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -127,6 +138,18 @@ pub struct AppConfig {
     /// HTTP STT provider configuration (for custom_stt)
     #[serde(default)]
     pub http_stt_config: HttpSttConfig,
+
+    /// Whether finished transcriptions are written to history.json
+    #[serde(default = "default_save_history")]
+    pub save_history: bool,
+
+    /// Chinese conversion applied to the final output
+    #[serde(default)]
+    pub chinese_conversion: ChineseConversion,
+}
+
+fn default_save_history() -> bool {
+    true
 }
 
 fn default_apple_stt_locale() -> String {
@@ -151,6 +174,8 @@ impl Default for AppConfig {
             elevenlabs_language: default_elevenlabs_language(),
             http_llm_config: HttpLlmConfig::default(),
             http_stt_config: HttpSttConfig::default(),
+            save_history: default_save_history(),
+            chinese_conversion: ChineseConversion::default(),
         }
     }
 }
@@ -176,6 +201,21 @@ impl AppConfig {
     }
 
     /// Save config to TOML file
+    /// Copy for the webview: every setting except secrets.
+    pub fn redacted(&self) -> Self {
+        let mut copy = self.clone();
+        copy.api_keys.clear();
+        copy
+    }
+
+    /// Replace the settings with a redacted copy while keeping the stored
+    /// secrets, so a round-tripped config can never erase or inject API keys.
+    pub fn apply_redacted(&mut self, incoming: AppConfig) {
+        let secrets = std::mem::take(&mut self.api_keys);
+        *self = incoming;
+        self.api_keys = secrets;
+    }
+
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let content = toml::to_string_pretty(self)
             .map_err(|e| MurmurError::Config(format!("Failed to serialize config: {}", e)))?;
@@ -187,5 +227,78 @@ impl AppConfig {
 
         crate::persistence::atomic_write(path, content)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_with_secret() -> AppConfig {
+        AppConfig {
+            hotkey: "Ctrl+Shift+Space".into(),
+            api_keys: HashMap::from([("openai".to_string(), "sk-secret".to_string())]),
+            ..AppConfig::default()
+        }
+    }
+
+    #[test]
+    fn redacted_config_drops_api_keys_only() {
+        let config = config_with_secret();
+        let redacted = config.redacted();
+        assert!(redacted.api_keys.is_empty());
+        assert_eq!(redacted.hotkey, config.hotkey);
+        assert_eq!(redacted.stt_provider, config.stt_provider);
+        assert_eq!(redacted.output_mode, config.output_mode);
+    }
+
+    #[test]
+    fn applying_a_redacted_config_keeps_stored_api_keys() {
+        let mut stored = config_with_secret();
+        let mut incoming = stored.redacted();
+        incoming.hotkey = "Ctrl+Alt+M".into();
+        incoming
+            .api_keys
+            .insert("groq".into(), "must-not-be-written".into());
+        stored.apply_redacted(incoming);
+        assert_eq!(stored.hotkey, "Ctrl+Alt+M");
+        assert_eq!(
+            stored.api_keys.get("openai").map(String::as_str),
+            Some("sk-secret")
+        );
+        assert!(!stored.api_keys.contains_key("groq"));
+    }
+
+    #[test]
+    fn save_history_defaults_to_true_for_existing_config_files() {
+        let written = toml::to_string(&AppConfig::default()).unwrap();
+        let legacy: String = written
+            .lines()
+            .filter(|line| !line.starts_with("save_history"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!legacy.contains("save_history"));
+        let parsed: AppConfig = toml::from_str(&legacy).unwrap();
+        assert!(parsed.save_history);
+    }
+
+    #[test]
+    fn chinese_conversion_defaults_to_traditional_for_existing_config_files() {
+        assert_eq!(
+            AppConfig::default().chinese_conversion,
+            ChineseConversion::Traditional
+        );
+        let written = toml::to_string(&AppConfig::default()).unwrap();
+        let legacy: String = written
+            .lines()
+            .filter(|line| !line.starts_with("chinese_conversion"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let parsed: AppConfig = toml::from_str(&legacy).unwrap();
+        assert_eq!(parsed.chinese_conversion, ChineseConversion::Traditional);
+        // Top-level keys must precede the tables in the written document.
+        let none: AppConfig =
+            toml::from_str(&format!("chinese_conversion = \"none\"\n{legacy}")).unwrap();
+        assert_eq!(none.chinese_conversion, ChineseConversion::None);
     }
 }
