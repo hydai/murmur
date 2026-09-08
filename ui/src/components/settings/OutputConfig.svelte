@@ -9,6 +9,7 @@
   const lifecycle = useLifecycle();
 
   let currentOutputMode = $state('clipboard');
+  let saveHistory = $state(true);
   let loading = $state(false);
   let error = $state('');
   let success = $state('');
@@ -40,8 +41,9 @@
 
   async function loadConfig(): Promise<void> {
     try {
-      const config = await invoke<{ output_mode: string }>('get_config');
+      const config = await invoke<{ output_mode: string; save_history: boolean }>('get_config');
       currentOutputMode = config.output_mode.toLowerCase();
+      saveHistory = config.save_history !== false;
     } catch (err: unknown) {
       error = `Failed to load config: ${err}`;
       console.error(error);
@@ -62,6 +64,24 @@
       lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err: unknown) {
       error = `Failed to set output mode: ${err}`;
+      console.error(error);
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function toggleSaveHistory(): Promise<void> {
+    const enabled = !saveHistory;
+    try {
+      loading = true;
+      error = '';
+      success = '';
+      await invoke('set_save_history', { enabled });
+      saveHistory = enabled;
+      success = enabled ? 'New transcriptions will be saved to history' : 'New transcriptions will not be saved';
+      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
+    } catch (err: unknown) {
+      error = `Failed to update history setting: ${err}`;
       console.error(error);
     } finally {
       loading = false;
@@ -91,6 +111,16 @@
         onclick={() => selectOutputMode(mode.id)}
       />
     {/each}
+  </div>
+
+  <SectionHeader label="HISTORY" />
+  <div class="section-rows">
+    <StatusRow
+      label="Save transcription history"
+      status={saveHistory ? 'green' : 'none'}
+      statusText={saveHistory ? 'On' : 'Off'}
+      onclick={toggleSaveHistory}
+    />
   </div>
 
   {#if loading}

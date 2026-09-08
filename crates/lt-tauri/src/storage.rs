@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use lt_core::{AppConfig, HistoryEntry, MurmurError, PersonalDictionary, TranscriptionHistory};
@@ -106,6 +106,7 @@ impl<T: FileData> FileStore<T> {
 pub(crate) struct HistoryStore {
     file: FileStore<TranscriptionHistory>,
     generation: Arc<AtomicU64>,
+    enabled: Arc<AtomicBool>,
 }
 
 impl HistoryStore {
@@ -113,7 +114,13 @@ impl HistoryStore {
         Self {
             file: FileStore::new(path),
             generation: Arc::new(AtomicU64::new(0)),
+            enabled: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    /// Mirrors `AppConfig::save_history`; appends are dropped while disabled.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::SeqCst);
     }
 
     pub async fn read(&self) -> Result<TranscriptionHistory, String> {
@@ -132,8 +139,12 @@ impl HistoryStore {
         self.generation.load(Ordering::SeqCst)
     }
 
-    /// Appends unless the history was cleared after `generation` was taken.
+    /// Appends unless history is disabled or was cleared after `generation`
+    /// was taken.
     pub async fn append(&self, entry: HistoryEntry, generation: u64) -> Result<(), String> {
+        if !self.enabled.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         let current = self.generation.clone();
         self.file
             .update(move |history| {
@@ -429,5 +440,32 @@ mod tests {
                 & 0o777;
             assert_eq!(mode, 0o600, "{name} mode was {mode:o}");
         }
+    }
+
+    #[tokio::test]
+    async fn appends_are_skipped_while_history_is_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = AppStore::new(dir.path().to_owned());
+        store.history.set_enabled(false);
+        store
+            .history
+            .append(
+                lt_core::HistoryEntry::new("private".into(), None, 0, None),
+                store.history.generation(),
+            )
+            .await
+            .unwrap();
+        assert!(store.history.read().await.unwrap().entries.is_empty());
+
+        store.history.set_enabled(true);
+        store
+            .history
+            .append(
+                lt_core::HistoryEntry::new("kept".into(), None, 0, None),
+                store.history.generation(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(store.history.read().await.unwrap().entries.len(), 1);
     }
 }

@@ -27,6 +27,10 @@ output_mode = "clipboard"
 # Format: "Modifier+Key" (e.g., "Cmd+Shift+L", "Ctrl+Alt+T")
 hotkey = "Ctrl+`"
 
+# Transcription History
+# Set to false to stop writing finished transcriptions to history.json
+save_history = true
+
 # API Keys
 # Store your API keys here or use environment variables
 [api_keys]

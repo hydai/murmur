@@ -811,6 +811,20 @@ async fn set_output_mode(mode: String, state: tauri::State<'_, AppState>) -> Res
 }
 
 #[tauri::command]
+async fn set_save_history(enabled: bool, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state
+        .store
+        .config
+        .update(move |config| {
+            config.save_history = enabled;
+            Ok(())
+        })
+        .await?;
+    state.store.history.set_enabled(enabled);
+    Ok(())
+}
+
+#[tauri::command]
 async fn set_hotkey(
     hotkey: String,
     app: tauri::AppHandle,
@@ -1477,6 +1491,7 @@ fn main() {
         hotkey_updates: Arc::new(Mutex::new(())),
         prompts,
     };
+    app_state.store.history.set_enabled(config.save_history);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -1503,6 +1518,7 @@ fn main() {
             set_custom_llm_endpoint,
             set_custom_stt_endpoint,
             set_output_mode,
+            set_save_history,
             set_hotkey,
             get_dictionary,
             add_dictionary_entry,

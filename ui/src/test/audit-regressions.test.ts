@@ -7,6 +7,7 @@ import AboutSection from '../components/settings/AboutSection.svelte';
 import ProviderConfig from '../components/settings/ProviderConfig.svelte';
 import HistoryPanel from '../components/history/HistoryPanel.svelte';
 import DictionaryEditor from '../components/settings/DictionaryEditor.svelte';
+import OutputConfig from '../components/settings/OutputConfig.svelte';
 import StatusRowHarness from './StatusRowHarness.svelte';
 
 const mocks = vi.hoisted(() => ({
@@ -333,5 +334,21 @@ describe('provider page initialization', () => {
     const { target } = render(ProviderConfig, {});
     await settle();
     expect(target.textContent).toContain('OpenAI Whisper');
+  });
+});
+
+describe('history opt-out', () => {
+  it('shows the saved-history state and toggles it through the backend', async () => {
+    mocks.invoke.mockImplementation(async command => command === 'get_config'
+      ? { output_mode: 'clipboard', save_history: true }
+      : undefined);
+    const { target } = render(OutputConfig, {});
+    await settle();
+    const row = button(target, 'Save transcription history');
+    expect(row.textContent).toContain('On');
+    row.click();
+    await settle();
+    expect(mocks.invoke).toHaveBeenCalledWith('set_save_history', { enabled: false });
+    expect(button(target, 'Save transcription history').textContent).toContain('Off');
   });
 });

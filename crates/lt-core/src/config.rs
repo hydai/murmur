@@ -127,6 +127,14 @@ pub struct AppConfig {
     /// HTTP STT provider configuration (for custom_stt)
     #[serde(default)]
     pub http_stt_config: HttpSttConfig,
+
+    /// Whether finished transcriptions are written to history.json
+    #[serde(default = "default_save_history")]
+    pub save_history: bool,
+}
+
+fn default_save_history() -> bool {
+    true
 }
 
 fn default_apple_stt_locale() -> String {
@@ -151,6 +159,7 @@ impl Default for AppConfig {
             elevenlabs_language: default_elevenlabs_language(),
             http_llm_config: HttpLlmConfig::default(),
             http_stt_config: HttpSttConfig::default(),
+            save_history: default_save_history(),
         }
     }
 }
@@ -242,5 +251,18 @@ mod tests {
             Some("sk-secret")
         );
         assert!(!stored.api_keys.contains_key("groq"));
+    }
+
+    #[test]
+    fn save_history_defaults_to_true_for_existing_config_files() {
+        let written = toml::to_string(&AppConfig::default()).unwrap();
+        let legacy: String = written
+            .lines()
+            .filter(|line| !line.starts_with("save_history"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!legacy.contains("save_history"));
+        let parsed: AppConfig = toml::from_str(&legacy).unwrap();
+        assert!(parsed.save_history);
     }
 }

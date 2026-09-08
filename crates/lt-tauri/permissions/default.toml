@@ -23,6 +23,7 @@ commands.allow = [
     "set_custom_llm_endpoint",
     "set_custom_stt_endpoint",
     "set_output_mode",
+    "set_save_history",
     "set_hotkey",
     "get_dictionary",
     "add_dictionary_entry",
