@@ -171,6 +171,12 @@ impl ElevenLabsProvider {
                     info!("WebSocket connected to ElevenLabs");
                     return Ok(ws_stream);
                 }
+                Ok(Err(error)) if !is_retryable(&error) => {
+                    error!("ElevenLabs rejected the WebSocket handshake: {error}");
+                    return Err(MurmurError::Stt(format!(
+                        "ElevenLabs rejected the WebSocket handshake ({error}); check the API key and language settings"
+                    )));
+                }
                 failure => {
                     let e = match failure {
                         Ok(Err(e)) => e.to_string(),
@@ -450,6 +456,21 @@ async fn finish_receiver(task: &mut tokio::task::JoinHandle<()>, deadline: Durat
     }
 }
 
+/// Only transport failures are worth retrying. A handshake the server rejects
+/// with an HTTP status (bad key, forbidden, unknown language) or a malformed
+/// request will not change on the next attempt.
+fn is_retryable(error: &tokio_tungstenite::tungstenite::Error) -> bool {
+    use tokio_tungstenite::tungstenite::Error;
+    match error {
+        Error::Http(response) => {
+            let status = response.status();
+            status.is_server_error() || matches!(status.as_u16(), 408 | 429)
+        }
+        Error::Url(_) | Error::HttpFormat(_) => false,
+        _ => true,
+    }
+}
+
 impl Drop for ElevenLabsProvider {
     fn drop(&mut self) {
         if let Ok(mut guard) = self.ws_task.try_lock() {
@@ -476,6 +497,67 @@ mod shutdown_tests {
         assert!(rx.recv().await.is_none());
     }
     use crate::test_support::{captured_logs, logs_text};
+
+    #[test]
+    fn only_transport_and_server_side_failures_are_retryable() {
+        use tokio_tungstenite::tungstenite::{http::Response, Error};
+        let http = |status: u16| {
+            Error::Http(Box::new(
+                Response::builder().status(status).body(None).unwrap(),
+            ))
+        };
+        assert!(!is_retryable(&http(401)));
+        assert!(!is_retryable(&http(403)));
+        assert!(!is_retryable(&http(404)));
+        assert!(is_retryable(&http(429)));
+        assert!(is_retryable(&http(503)));
+        assert!(is_retryable(&Error::Io(std::io::Error::other(
+            "connection reset"
+        ))));
+    }
+
+    #[tokio::test]
+    async fn rejected_handshake_fails_immediately_without_retrying() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let server_attempts = attempts.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                server_attempts.fetch_add(1, Ordering::SeqCst);
+                let mut request = [0u8; 4096];
+                let _ = stream.read(&mut request).await;
+                let _ = stream
+                    .write_all(
+                        b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .await;
+                let _ = stream.shutdown().await;
+            }
+        });
+        let mut provider = ElevenLabsProvider::new("bad-key".into());
+        provider.test_url = Some(format!("ws://{address}").parse().unwrap());
+        let started = std::time::Instant::now();
+        let result =
+            tokio::time::timeout(Duration::from_millis(1500), provider.start_session()).await;
+        server.abort();
+        let error = result
+            .expect("a rejected handshake must not wait for retries")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            started.elapsed() < Duration::from_millis(900),
+            "took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert!(error.contains("401"), "{error}");
+    }
 
     #[tokio::test]
     async fn websocket_payloads_never_reach_the_logs() {
