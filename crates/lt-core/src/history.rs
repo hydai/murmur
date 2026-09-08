@@ -43,10 +43,7 @@ impl HistoryEntry {
             id: uuid::Uuid::new_v4().to_string(),
             final_text,
             raw_text,
-            timestamp_ms: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64,
+            timestamp_ms: crate::now_ms(),
             processing_time_ms,
             command_name,
         }

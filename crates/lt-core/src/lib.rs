@@ -7,6 +7,7 @@ pub mod output;
 pub mod persistence;
 pub mod redact;
 pub mod stt;
+pub mod time;
 
 pub use config::{AppConfig, ChineseConversion, LlmProcessorType, SttProviderType, UiPreferences};
 pub use dictionary::{DictionaryEntry, PersonalDictionary};
@@ -15,3 +16,4 @@ pub use history::{HistoryEntry, TranscriptionHistory};
 pub use llm::{LlmProcessor, ProcessingOutput, ProcessingTask};
 pub use output::{OutputMode, OutputSink};
 pub use stt::{AudioChunk, SttProvider, TranscriptionEvent};
+pub use time::now_ms;

@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use lt_core::now_ms;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::layer::Context;
@@ -180,13 +180,6 @@ pub fn shared_diagnostic_log_store() -> Arc<DiagnosticLogStore> {
     DIAGNOSTIC_LOG_STORE
         .get_or_init(|| Arc::new(DiagnosticLogStore::new(MAX_DIAGNOSTIC_LOG_ENTRIES)))
         .clone()
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or_default()
 }
 
 fn trim_debug_string(value: &str) -> &str {
