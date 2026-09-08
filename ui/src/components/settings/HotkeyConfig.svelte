@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Alert from './ui/Alert.svelte';
   import { useLifecycle } from '../../lib/lifecycle';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount } from 'svelte';
@@ -121,13 +122,7 @@
 <div class="page">
   <PageHeader title="Hotkey" description="Configure keyboard shortcuts for recording" />
 
-  {#if error}
-    <div class="alert alert-error">{error}</div>
-  {/if}
-
-  {#if success}
-    <div class="alert alert-success">{success}</div>
-  {/if}
+  <Alert {error} {success} />
 
   <SectionHeader label="CURRENT SHORTCUT" />
   <div class="hotkey-display">{currentHotkey}</div>
@@ -171,21 +166,8 @@
     gap: 12px;
   }
 
-  .alert {
-    padding: 10px 14px;
-    border-radius: 8px;
-    font-size: 12px;
-  }
 
-  .alert-error {
-    background: rgba(239, 68, 68, 0.15);
-    color: #fca5a5;
-  }
 
-  .alert-success {
-    background: rgba(34, 197, 94, 0.15);
-    color: #86efac;
-  }
 
   .hotkey-display {
     padding: 12px 14px;

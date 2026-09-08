@@ -18,6 +18,10 @@
   --status-green: #22C55E;
   --status-red: #EF4444;
   --status-yellow: #EAB308;
+  /* Readable on the translucent status backgrounds. */
+  --status-green-text: #86EFAC;
+  --status-red-text: #FCA5A5;
+  --status-yellow-text: #FDE68A;
 
   /* Text */
   --text-primary: #FFFFFF;
