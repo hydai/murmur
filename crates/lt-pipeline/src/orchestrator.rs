@@ -175,7 +175,7 @@ impl PipelineOrchestrator {
             while let Some(event) = event_rx.recv().await {
                 match &event {
                     TranscriptionEvent::Partial { text, timestamp_ms } => {
-                        tracing::debug!("Partial transcript: {}", text);
+                        tracing::debug!(chars = text.chars().count(), "Partial transcript");
                         let _ = event_tx.send(PipelineEvent::PartialTranscription {
                             text: text.clone(),
                             timestamp_ms: *timestamp_ms,
@@ -200,7 +200,7 @@ impl PipelineOrchestrator {
                         }
                     }
                     TranscriptionEvent::Committed { text, timestamp_ms } => {
-                        tracing::info!("Committed transcript: {}", text);
+                        tracing::info!(chars = text.chars().count(), "Committed transcript");
                         let _ = event_tx.send(PipelineEvent::CommittedTranscription {
                             text: text.clone(),
                             timestamp_ms: *timestamp_ms,
@@ -301,7 +301,6 @@ impl PipelineOrchestrator {
                     "Starting LLM post-processing: input_len={} chars",
                     full_transcription.chars().count()
                 );
-                tracing::debug!("LLM input text: {:?}", &full_transcription);
 
                 let start_time = std::time::Instant::now();
 
@@ -317,7 +316,6 @@ impl PipelineOrchestrator {
                             output.processing_time_ms,
                             final_text.chars().count()
                         );
-                        tracing::debug!("LLM output text: {:?}", &final_text);
 
                         // Output to clipboard/keyboard
                         if let Err(e) = output_sink.output_text(&final_text).await {
@@ -861,6 +859,76 @@ mod tests {
                 Some(expected)
             );
         }
+    }
+
+    struct SharedWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for SharedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Every test in this binary shares one capturing subscriber.
+    fn captured_logs() -> Arc<std::sync::Mutex<Vec<u8>>> {
+        static LOGS: std::sync::OnceLock<Arc<std::sync::Mutex<Vec<u8>>>> =
+            std::sync::OnceLock::new();
+        LOGS.get_or_init(|| {
+            let buffer = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let writer = buffer.clone();
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::TRACE)
+                .with_ansi(false)
+                .with_writer(move || SharedWriter(writer.clone()))
+                .finish();
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("no other global subscriber in the test binary");
+            buffer
+        })
+        .clone()
+    }
+
+    fn logs_text(logs: &Arc<std::sync::Mutex<Vec<u8>>>) -> String {
+        String::from_utf8_lossy(&logs.lock().unwrap()).into_owned()
+    }
+
+    #[tokio::test]
+    async fn transcript_content_never_reaches_the_logs() {
+        let logs = captured_logs();
+        let output = Arc::new(TestOutput::default());
+        let (p, _) = pipeline(output.clone(), Arc::new(TestLlm(None)));
+        let mut events = p.subscribe_events();
+        let (stt, tx) = TestStt::new(false);
+        p.start(stt).await.unwrap();
+        tx.send(TranscriptionEvent::Partial {
+            text: "partial-zebra-quartz".into(),
+            timestamp_ms: 1,
+        })
+        .await
+        .unwrap();
+        tx.send(TranscriptionEvent::Committed {
+            text: "committed-zebra-quartz".into(),
+            timestamp_ms: 2,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+        p.stop().await.unwrap();
+        wait_state(&mut events, PipelineState::Done).await;
+        assert_eq!(*output.0.lock().unwrap(), ["committed-zebra-quartz"]);
+
+        let text = logs_text(&logs);
+        assert!(
+            text.contains("Committed transcript"),
+            "logs were not captured:\n{text}"
+        );
+        assert!(
+            !text.contains("zebra-quartz"),
+            "transcript leaked into logs:\n{text}"
+        );
     }
 
     #[tokio::test]

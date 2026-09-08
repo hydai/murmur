@@ -20,4 +20,5 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 
 [dev-dependencies]
+tracing-subscriber = "0.3.23"
 tokio = { version = "1.53.1", features = ["rt-multi-thread"] }

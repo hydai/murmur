@@ -114,6 +114,10 @@ cargo tauri build
 - Create the event forwarder once in app setup, never once per recording. Reset accumulated event data when Recording begins.
 - OpenAI, Groq, and Custom STT share the bounded HTTP worker in `crates/lt-stt/src/http.rs`.
 
+### Logging
+- Never log transcript, prompt, or provider payload content at any level; log sizes (`chars = ...`, `bytes = ...`) instead. Diagnostics keep WARN/ERROR and stdout keeps everything, so content in a log line is user data on disk or in a terminal.
+- `main.rs` installs a default `lt_*=debug` filter; `RUST_LOG` overrides it.
+
 ### Persistence and Tests
 - Read and mutate config, history, and dictionary through the shared `AppStore`; do not add independent read-modify-write sequences in IPC commands.
 - `get_config` returns `AppConfig::redacted()` (no `api_keys`) and `save_config` applies the copy with `apply_redacted`, so keys only change through `save_api_key`. Data files are owner-only (0600); `AppStore::new` tightens files written by earlier releases.

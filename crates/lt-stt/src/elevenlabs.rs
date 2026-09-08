@@ -236,7 +236,8 @@ impl SttProvider for ElevenLabsProvider {
                 while let Some(msg) = ws_read.next().await {
                     match msg {
                         Ok(Message::Text(text)) => {
-                            debug!("Received message: {}", text);
+                            // Payloads carry transcripts; log only their size.
+                            debug!(bytes = text.len(), "Received message");
 
                             match serde_json::from_str::<ElevenLabsResponse>(&text) {
                                 Ok(response) => match response {
@@ -275,7 +276,7 @@ impl SttProvider for ElevenLabsProvider {
                                     }
                                 },
                                 Err(e) => {
-                                    warn!("Failed to parse message: {} - {}", e, text);
+                                    warn!(bytes = text.len(), "Failed to parse message: {}", e);
                                 }
                             }
                         }
@@ -474,6 +475,70 @@ mod shutdown_tests {
         assert!(task.is_finished());
         assert!(rx.recv().await.is_none());
     }
+    use crate::test_support::{captured_logs, logs_text};
+
+    #[tokio::test]
+    async fn websocket_payloads_never_reach_the_logs() {
+        let logs = captured_logs();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut websocket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            websocket
+                .send(Message::Text(
+                    r#"{"unexpected":"garbage-zebra-quartz"}"#.into(),
+                ))
+                .await
+                .unwrap();
+            websocket
+                .send(Message::Text(
+                    r#"{"message_type":"committed_transcript","text":"spoken-zebra-quartz"}"#
+                        .into(),
+                ))
+                .await
+                .unwrap();
+            // Keep the socket open until the client closes it.
+            while let Some(Ok(message)) = websocket.next().await {
+                if message.is_close() {
+                    break;
+                }
+            }
+        });
+        let mut provider = ElevenLabsProvider::new("test".into());
+        provider.test_url = Some(format!("ws://{address}").parse().unwrap());
+        provider.start_session().await.unwrap();
+        let mut events = provider.subscribe_events().await;
+        let committed = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match events.recv().await {
+                    Some(TranscriptionEvent::Committed { text, .. }) => break text,
+                    Some(_) => continue,
+                    None => panic!("event channel closed before the transcript arrived"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(committed, "spoken-zebra-quartz");
+        drop(events);
+        tokio::time::timeout(Duration::from_secs(2), provider.stop_session())
+            .await
+            .unwrap()
+            .unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(2), server).await;
+
+        let captured = logs_text(&logs);
+        assert!(
+            captured.contains("Failed to parse message"),
+            "logs were not captured:\n{captured}"
+        );
+        assert!(
+            !captured.contains("zebra-quartz"),
+            "payload leaked into logs:\n{captured}"
+        );
+    }
+
     #[tokio::test]
     async fn closing_consumer_discards_buffered_audio_and_joins_websocket() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

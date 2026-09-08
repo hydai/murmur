@@ -16,3 +16,6 @@ pub use openai::OpenAIProvider;
 pub use apple::AppleSttProvider;
 
 mod http;
+
+#[cfg(test)]
+mod test_support;
