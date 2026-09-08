@@ -230,7 +230,7 @@
           {/if}
         </div>
       {:else}
-        {#each filteredEntries as entry}
+        {#each filteredEntries as entry (entry.term)}
           <div class="entry-row">
             <div class="entry-info">
               <span class="entry-term">{entry.term}</span>

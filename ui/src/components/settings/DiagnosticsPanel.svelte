@@ -99,7 +99,8 @@
     </div>
   {:else}
     <div class="log-list">
-      {#each newestFirstLogs as log}
+      <!-- Entries carry no id and the list is replaced wholesale. -->
+      {#each newestFirstLogs as log, i (i)}
         <div class="log-row">
           <div class="log-meta">
             <span class:warn={log.level === 'warn'} class:error-level={log.level === 'error'} class="level">

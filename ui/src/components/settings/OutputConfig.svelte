@@ -127,7 +127,7 @@
 
   <SectionHeader label="OUTPUT METHOD" />
   <div class="section-rows">
-    {#each outputModes as mode}
+    {#each outputModes as mode (mode.id)}
       <StatusRow
         label={mode.name}
         value={mode.id}
@@ -140,7 +140,7 @@
 
   <SectionHeader label="CHINESE OUTPUT" />
   <div class="section-rows">
-    {#each chineseConversions as conversion}
+    {#each chineseConversions as conversion (conversion.id)}
       <StatusRow
         label={conversion.name}
         status={chineseConversion === conversion.id ? 'green' : 'none'}

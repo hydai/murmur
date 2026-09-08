@@ -4,7 +4,5 @@
 </script>
 
 <StatusRow label="Cloud provider" onclick={select}>
-  {#snippet children()}
-    <button type="button" onclick={edit}>Edit key</button>
-  {/snippet}
+  <button type="button" onclick={edit}>Edit key</button>
 </StatusRow>

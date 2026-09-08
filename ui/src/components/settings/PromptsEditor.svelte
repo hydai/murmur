@@ -134,7 +134,7 @@
       value={selectedName}
       onchange={(event) => selectPrompt(event.currentTarget.value)}
     >
-      {#each prompts as p}
+      {#each prompts as p (p.name)}
         <option value={p.name}>{p.title}{p.is_override ? ' *' : ''}</option>
       {/each}
     </select>
@@ -145,7 +145,7 @@
 
     <div class="meta-row">
       <span class="task-chip">Task: {current.task_variant}</span>
-      {#each current.required_placeholders as ph}
+      {#each current.required_placeholders as ph (ph)}
         <span class="ph-chip" class:missing={missingPlaceholders.includes(ph)}>{ph}</span>
       {/each}
     </div>
