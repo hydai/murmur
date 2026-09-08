@@ -268,6 +268,11 @@
       });
 
       currentProvider = selectedProvider.id;
+      // Activating here has to load the same per-provider extras selectProvider
+      // does, or the language selector stays hidden until Settings is reopened.
+      if (currentProvider === 'elevenlabs') {
+        await loadElevenLabsLanguages();
+      }
       success = editingExistingKey
         ? `Updated API key for ${selectedProvider.name}`
         : `Configured and activated ${selectedProvider.name}`;

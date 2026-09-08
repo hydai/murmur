@@ -9,10 +9,11 @@ import HistoryPanel from '../components/history/HistoryPanel.svelte';
 import DictionaryEditor from '../components/settings/DictionaryEditor.svelte';
 import OutputConfig from '../components/settings/OutputConfig.svelte';
 import PromptsEditor from '../components/settings/PromptsEditor.svelte';
+import DiagnosticsPanel from '../components/settings/DiagnosticsPanel.svelte';
 import StatusRowHarness from './StatusRowHarness.svelte';
 
 const mocks = vi.hoisted(() => ({
-  invoke: vi.fn(), listen: vi.fn(), check: vi.fn(), startDragging: vi.fn(),
+  invoke: vi.fn(), listen: vi.fn(), check: vi.fn(), startDragging: vi.fn(), writeText: vi.fn(),
 }));
 vi.mock('../lib/tauri', () => ({ safeInvoke: mocks.invoke }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }));
@@ -20,7 +21,7 @@ vi.mock('@tauri-apps/api/app', () => ({ getVersion: async () => '1.0.0' }));
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ startDragging: mocks.startDragging }) }));
 vi.mock('@tauri-apps/plugin-updater', () => ({ check: mocks.check }));
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: vi.fn() }));
-vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ writeText: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ writeText: mocks.writeText }));
 
 let mounted: ReturnType<typeof mount>[] = [];
 let listeners: Map<string, (event: { payload: unknown }) => void>;
@@ -68,6 +69,7 @@ beforeEach(() => {
     return () => listeners.delete(name);
   });
   mocks.startDragging.mockResolvedValue(undefined);
+  mocks.writeText.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(async () => {
@@ -481,5 +483,65 @@ describe('prompt editor', () => {
     select.dispatchEvent(new Event('change', { bubbles: true }));
     await settle();
     expect(target.querySelector('.alert-success')).toBeNull();
+  });
+});
+
+describe('elevenlabs onboarding', () => {
+  it('loads the language list when the key is entered from the modal', async () => {
+    const providers = (configured: boolean) => [
+      { id: 'elevenlabs', name: 'ElevenLabs Scribe', configured, provider_type: 'streaming', requires_api_key: true, model_status: null },
+      { id: 'openai', name: 'OpenAI Whisper', configured: true, provider_type: 'batch', requires_api_key: true, model_status: null },
+    ];
+    let keySaved = false;
+    mocks.invoke.mockImplementation(async (command: string) => {
+      switch (command) {
+        case 'get_stt_providers': return providers(keySaved);
+        // Onboarding starts on another provider, so initialize() does not
+        // preload the ElevenLabs languages.
+        case 'get_config': return { stt_provider: 'openai', elevenlabs_language: 'auto' };
+        case 'get_elevenlabs_languages': return [['auto', 'Auto'], ['eng', 'English']];
+        case 'save_api_key': keySaved = true; return undefined;
+        default: return undefined;
+      }
+    });
+
+    const { target } = render(ProviderConfig, {});
+    await settle();
+    expect(mocks.invoke).not.toHaveBeenCalledWith('get_elevenlabs_languages');
+
+    button(target, 'ElevenLabs Scribe').click();
+    await settle();
+    const input = target.querySelector('input[type="password"]') as HTMLInputElement;
+    input.value = 'key';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+    button(target, 'Save').click();
+    await settle();
+
+    expect(mocks.invoke).toHaveBeenCalledWith('get_elevenlabs_languages');
+    expect(target.querySelector('.locale-selector, select')).not.toBeNull();
+  });
+});
+
+describe('diagnostics export', () => {
+  it('copies the log in the order the panel displays it', async () => {
+    mocks.invoke.mockImplementation(async (command: string) => command === 'get_diagnostic_logs'
+      ? [
+          { timestamp_ms: 1_000, level: 'warn', target: 'lt_stt', message: 'oldest' },
+          { timestamp_ms: 2_000, level: 'error', target: 'lt_pipeline', message: 'newest' },
+        ]
+      : undefined);
+
+    const { target } = render(DiagnosticsPanel, {});
+    await settle();
+
+    const rows = [...target.querySelectorAll('.log-row')].map(row => row.textContent ?? '');
+    expect(rows[0]).toContain('newest');
+
+    button(target, 'Copy').click();
+    await settle();
+
+    const copied = mocks.writeText.mock.calls[0][0] as string;
+    expect(copied.indexOf('newest')).toBeLessThan(copied.indexOf('oldest'));
   });
 });
