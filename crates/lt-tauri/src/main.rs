@@ -115,7 +115,8 @@ fn get_status() -> String {
 
 #[tauri::command]
 async fn get_config(state: tauri::State<'_, AppState>) -> Result<AppConfig, String> {
-    state.store.config.read().await
+    // Secrets never reach the webview; providers report `configured` instead.
+    Ok(state.store.config.read().await?.redacted())
 }
 
 #[tauri::command]
@@ -131,7 +132,8 @@ async fn save_config(
     update_shortcut(app, updates, &old, &new, async move {
         store
             .update(move |current| {
-                *current = config;
+                // The caller only ever holds a redacted copy.
+                current.apply_redacted(config);
                 Ok(())
             })
             .await

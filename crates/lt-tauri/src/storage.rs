@@ -178,10 +178,20 @@ pub(crate) struct AppStore {
 
 impl AppStore {
     pub fn new(directory: PathBuf) -> Self {
+        let config = directory.join("config.toml");
+        let dictionary = directory.join("dictionary.json");
+        let history = directory.join("history.json");
+        // Atomic replacement writes owner-only files; documents written by
+        // earlier releases may still be world-readable.
+        for path in [&config, &dictionary, &history] {
+            if let Err(error) = lt_core::persistence::restrict_to_owner(path) {
+                tracing::warn!("Failed to restrict {}: {error}", path.display());
+            }
+        }
         Self {
-            config: FileStore::new(directory.join("config.toml")),
-            dictionary: FileStore::new(directory.join("dictionary.json")),
-            history: HistoryStore::new(directory.join("history.json")),
+            config: FileStore::new(config),
+            dictionary: FileStore::new(dictionary),
+            history: HistoryStore::new(history),
         }
     }
 }
@@ -398,5 +408,26 @@ mod tests {
             .map(|entry| entry.final_text.clone())
             .collect();
         assert_eq!(texts, ["late", "kept"]);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn opening_the_store_restricts_legacy_files_to_the_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["config.toml", "history.json", "dictionary.json"] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let _store = AppStore::new(dir.path().to_owned());
+        for name in ["config.toml", "history.json", "dictionary.json"] {
+            let mode = std::fs::metadata(dir.path().join(name))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600, "{name} mode was {mode:o}");
+        }
     }
 }

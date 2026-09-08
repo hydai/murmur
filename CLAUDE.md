@@ -115,6 +115,7 @@ cargo tauri build
 
 ### Persistence and Tests
 - Read and mutate config, history, and dictionary through the shared `AppStore`; do not add independent read-modify-write sequences in IPC commands.
+- `get_config` returns `AppConfig::redacted()` (no `api_keys`) and `save_config` applies the copy with `apply_redacted`, so keys only change through `save_api_key`. Data files are owner-only (0600); `AppStore::new` tightens files written by earlier releases.
 - File replacements use `lt_core::persistence::atomic_write`. Corrupt or unreadable files must not silently become empty documents.
 - Prompt disk and memory updates share an owned write guard, including when the command caller is cancelled.
 - Desktop-mutating tests and tests requiring installed CLI tools are opt-in (`#[ignore]`); normal tests use fake providers/processes and local HTTP servers.

@@ -176,6 +176,21 @@ impl AppConfig {
     }
 
     /// Save config to TOML file
+    /// Copy for the webview: every setting except secrets.
+    pub fn redacted(&self) -> Self {
+        let mut copy = self.clone();
+        copy.api_keys.clear();
+        copy
+    }
+
+    /// Replace the settings with a redacted copy while keeping the stored
+    /// secrets, so a round-tripped config can never erase or inject API keys.
+    pub fn apply_redacted(&mut self, incoming: AppConfig) {
+        let secrets = std::mem::take(&mut self.api_keys);
+        *self = incoming;
+        self.api_keys = secrets;
+    }
+
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let content = toml::to_string_pretty(self)
             .map_err(|e| MurmurError::Config(format!("Failed to serialize config: {}", e)))?;
@@ -187,5 +202,45 @@ impl AppConfig {
 
         crate::persistence::atomic_write(path, content)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_with_secret() -> AppConfig {
+        AppConfig {
+            hotkey: "Ctrl+Shift+Space".into(),
+            api_keys: HashMap::from([("openai".to_string(), "sk-secret".to_string())]),
+            ..AppConfig::default()
+        }
+    }
+
+    #[test]
+    fn redacted_config_drops_api_keys_only() {
+        let config = config_with_secret();
+        let redacted = config.redacted();
+        assert!(redacted.api_keys.is_empty());
+        assert_eq!(redacted.hotkey, config.hotkey);
+        assert_eq!(redacted.stt_provider, config.stt_provider);
+        assert_eq!(redacted.output_mode, config.output_mode);
+    }
+
+    #[test]
+    fn applying_a_redacted_config_keeps_stored_api_keys() {
+        let mut stored = config_with_secret();
+        let mut incoming = stored.redacted();
+        incoming.hotkey = "Ctrl+Alt+M".into();
+        incoming
+            .api_keys
+            .insert("groq".into(), "must-not-be-written".into());
+        stored.apply_redacted(incoming);
+        assert_eq!(stored.hotkey, "Ctrl+Alt+M");
+        assert_eq!(
+            stored.api_keys.get("openai").map(String::as_str),
+            Some("sk-secret")
+        );
+        assert!(!stored.api_keys.contains_key("groq"));
     }
 }
