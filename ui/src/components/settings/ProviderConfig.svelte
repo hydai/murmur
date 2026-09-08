@@ -1,6 +1,7 @@
 <script lang="ts">
   import Alert from './ui/Alert.svelte';
   import { useLifecycle } from '../../lib/lifecycle';
+  import { createStatus } from '../../lib/status.svelte';
   import { trapFocus } from '../../lib/focus';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount } from 'svelte';
@@ -11,6 +12,7 @@
   import { groupSttProviders, type Provider } from './providerGroups';
 
   const lifecycle = useLifecycle();
+  const status = createStatus(lifecycle);
 
   let providers = $state<Provider[]>([]);
   let currentProvider = $state('');
@@ -18,9 +20,6 @@
   let selectedProvider = $state<Provider | null>(null);
   let apiKeyInput = $state('');
   let showApiKey = $state(false);
-  let loading = $state(false);
-  let error = $state('');
-  let success = $state('');
   let editingExistingKey = $state(false);
 
   // Apple STT locale state
@@ -51,7 +50,7 @@
   let customProvider = $derived(providerGroups.customProvider);
 
   onMount(() => {
-    void initialize().catch((err) => { error = `Failed to initialize providers: ${err}`; });
+    void initialize().catch((err) => { status.fail(`Failed to initialize providers: ${err}`); });
   });
 
   async function initialize() {
@@ -110,8 +109,7 @@
       const result = await invoke<Provider[]>('get_stt_providers');
       providers = result;
     } catch (err) {
-      error = `Failed to load providers: ${err}`;
-      console.error(error);
+      status.fail(`Failed to load providers: ${err}`);
     }
   }
 
@@ -139,77 +137,43 @@
         showCustomSttSection = true;
       }
     } catch (err) {
-      error = `Failed to load config: ${err}`;
-      console.error(error);
+      status.fail(`Failed to load config: ${err}`);
     }
+  }
+
+  /** Switch the pipeline over and load whatever extras the provider needs. */
+  async function activate(provider: Provider) {
+    await status.run('Failed to switch provider', async () => {
+      await invoke('set_stt_provider', { provider: provider.id });
+      currentProvider = provider.id;
+      if (provider.id === 'apple_stt') {
+        await loadAppleSttLocales();
+      }
+      if (provider.id === 'elevenlabs') {
+        await loadElevenLabsLanguages();
+      }
+      status.confirm(`Switched to ${provider.name}`);
+    });
   }
 
   async function selectProvider(providerId: string) {
     const provider = providers.find(p => p.id === providerId);
     if (!provider) return;
 
-    if (providerId === 'custom_stt') {
-      if (!provider.configured) {
-        showCustomSttSection = true;
-        return;
-      }
-
-      try {
-        loading = true;
-        error = '';
-        success = '';
-
-        await invoke('set_stt_provider', { provider: providerId });
-        currentProvider = providerId;
-
-        success = `Switched to ${provider.name}`;
-        lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-      } catch (err) {
-        error = `Failed to switch provider: ${err}`;
-        console.error(error);
-      } finally {
-        loading = false;
-      }
+    // An unconfigured provider needs its form before it can be activated.
+    if (providerId === 'custom_stt' && !provider.configured) {
+      showCustomSttSection = true;
       return;
     }
-
-    if (!provider.requires_api_key) {
-      if (provider.model_status === 'not_installed') {
-        error = 'Speech model not installed. Click "Download Model" first.';
-        return;
-      }
-      if (provider.model_status === 'unavailable') {
-        error = 'This provider requires macOS 26 or later.';
-        return;
-      }
-
-      try {
-        loading = true;
-        error = '';
-        success = '';
-
-        await invoke('set_stt_provider', { provider: providerId });
-        currentProvider = providerId;
-
-        if (providerId === 'apple_stt') {
-          await loadAppleSttLocales();
-        }
-        if (providerId === 'elevenlabs') {
-          await loadElevenLabsLanguages();
-        }
-
-        success = `Switched to ${provider.name}`;
-        lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-      } catch (err) {
-        error = `Failed to switch provider: ${err}`;
-        console.error(error);
-      } finally {
-        loading = false;
-      }
+    if (provider.model_status === 'not_installed') {
+      status.fail('Speech model not installed. Click "Download Model" first.');
       return;
     }
-
-    if (!provider.configured) {
+    if (provider.model_status === 'unavailable') {
+      status.fail('This provider requires macOS 26 or later.');
+      return;
+    }
+    if (provider.requires_api_key && !provider.configured) {
       selectedProvider = provider;
       showApiKeyModal = true;
       editingExistingKey = false;
@@ -217,26 +181,7 @@
       return;
     }
 
-    try {
-      loading = true;
-      error = '';
-      success = '';
-
-      await invoke('set_stt_provider', { provider: providerId });
-      currentProvider = providerId;
-
-      if (providerId === 'elevenlabs') {
-        await loadElevenLabsLanguages();
-      }
-
-      success = `Switched to ${provider.name}`;
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to switch provider: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+    await activate(provider);
   }
 
   function editApiKey(provider: Provider) {
@@ -248,46 +193,28 @@
 
   async function saveApiKey() {
     if (!apiKeyInput.trim()) {
-      error = 'API key cannot be empty';
+      status.fail('API key cannot be empty');
       return;
     }
-
     if (!selectedProvider) return;
 
-    try {
-      loading = true;
-      error = '';
-      success = '';
-
-      await invoke('save_api_key', {
-        provider: selectedProvider.id,
-        apiKey: apiKeyInput
-      });
-
-      await invoke('set_stt_provider', {
-        provider: selectedProvider.id
-      });
-
-      currentProvider = selectedProvider.id;
-      // Activating here has to load the same per-provider extras selectProvider
-      // does, or the language selector stays hidden until Settings is reopened.
-      if (currentProvider === 'elevenlabs') {
+    const provider = selectedProvider;
+    const updating = editingExistingKey;
+    await status.run('Failed to save API key', async () => {
+      await invoke('save_api_key', { provider: provider.id, apiKey: apiKeyInput });
+      // Activating shares activate()'s per-provider loads, or the language
+      // selector stays hidden until Settings is reopened.
+      await invoke('set_stt_provider', { provider: provider.id });
+      currentProvider = provider.id;
+      if (provider.id === 'elevenlabs') {
         await loadElevenLabsLanguages();
       }
-      success = editingExistingKey
-        ? `Updated API key for ${selectedProvider.name}`
-        : `Configured and activated ${selectedProvider.name}`;
-
       showApiKeyModal = false;
       await loadProviders();
-
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to save API key: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+      status.confirm(updating
+        ? `Updated API key for ${provider.name}`
+        : `Configured and activated ${provider.name}`);
+    });
   }
 
   function closeModal() {
@@ -295,7 +222,7 @@
     apiKeyInput = '';
     showApiKey = false;
     editingExistingKey = false;
-    error = '';
+    status.reset();
   }
 
   function toggleApiKeyVisibility() {
@@ -338,15 +265,14 @@
       modelDownloading = true;
       modelDownloadProgress = 0;
       downloadStartTime = Date.now();
-      error = '';
+      status.reset();
 
       await invoke('download_apple_stt_model', { locale: appleSttLocale });
     } catch (err) {
       downloadStatus = 'error';
       downloadError = `${err}`;
       modelDownloading = false;
-      error = `Failed to start model download: ${err}`;
-      console.error(error);
+      status.fail(`Failed to start model download: ${err}`);
     }
   }
 
@@ -363,15 +289,11 @@
     const language = target.value;
     elevenlabsLanguage = language;
 
-    try {
+    await status.run('Failed to set language', async () => {
       await invoke('set_elevenlabs_language', { language });
       const displayName = elevenlabsLanguages.find(([code]) => code === language)?.[1] ?? language;
-      success = `Language set to ${displayName}`;
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to set language: ${err}`;
-      console.error(error);
-    }
+      status.confirm(`Language set to ${displayName}`);
+    });
   }
 
   async function saveCustomSttEndpoint() {
@@ -382,15 +304,11 @@
     const apiKey = customSttApiKey.trim();
 
     if (!baseUrl) {
-      error = 'Base URL is required for custom STT endpoint';
+      status.fail('Base URL is required for custom STT endpoint');
       return;
     }
 
-    try {
-      loading = true;
-      error = '';
-      success = '';
-
+    await status.run('Failed to save custom STT endpoint', async () => {
       await invoke('set_custom_stt_endpoint', {
         baseUrl,
         displayName: displayName || null,
@@ -413,15 +331,9 @@
       customSttLanguage = language;
 
       await loadProviders();
-      success = `Custom STT endpoint activated: ${displayName || baseUrl}`;
       customSttApiKey = '';
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to save custom STT endpoint: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+      status.confirm(`Custom STT endpoint activated: ${displayName || baseUrl}`);
+    });
   }
 
   async function loadAppleSttLocales() {
@@ -437,22 +349,18 @@
     const locale = target.value;
     appleSttLocale = locale;
 
-    try {
+    await status.run('Failed to set locale', async () => {
       await invoke('set_apple_stt_locale', { locale });
       await loadProviders();
-      success = `Language set to ${locale === 'auto' ? 'Auto-detect' : locale}`;
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err) {
-      error = `Failed to set locale: ${err}`;
-      console.error(error);
-    }
+      status.confirm(`Language set to ${locale === 'auto' ? 'Auto-detect' : locale}`);
+    });
   }
 </script>
 
 <div class="provider-page">
   <PageHeader title="STT Providers" description="Configure speech-to-text engines for voice input" />
 
-  <Alert {error} {success} />
+  <Alert error={status.error} success={status.success} />
 
   <!-- LOCAL ON-DEVICE -->
   {#if localProviders.length > 0}
@@ -607,8 +515,8 @@
           <label for="custom-stt-display-name">Display Name <span class="optional">(optional)</span></label>
           <input id="custom-stt-display-name" type="text" bind:value={customSttDisplayName} placeholder="e.g., Local Whisper" />
         </div>
-        <button class="btn btn-block btn-primary" onclick={saveCustomSttEndpoint} disabled={loading || !customSttBaseUrl.trim()}>
-          {loading ? 'Saving...' : 'Save & Activate'}
+        <button class="btn btn-block btn-primary" onclick={saveCustomSttEndpoint} disabled={status.busy || !customSttBaseUrl.trim()}>
+          {status.busy ? 'Saving...' : 'Save & Activate'}
         </button>
       </div>
     {/if}
@@ -637,8 +545,8 @@
 
       <div class="modal-actions">
         <button class="btn btn-md btn-secondary" onclick={closeModal}>Cancel</button>
-        <button class="btn btn-md btn-primary" onclick={saveApiKey} disabled={loading}>
-          {loading ? 'Saving...' : editingExistingKey ? 'Update Key' : 'Save & Activate'}
+        <button class="btn btn-md btn-primary" onclick={saveApiKey} disabled={status.busy}>
+          {status.busy ? 'Saving...' : editingExistingKey ? 'Update Key' : 'Save & Activate'}
         </button>
       </div>
     </div>

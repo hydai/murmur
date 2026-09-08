@@ -1,6 +1,7 @@
 <script lang="ts">
   import Alert from './ui/Alert.svelte';
   import { useLifecycle } from '../../lib/lifecycle';
+  import { createStatus } from '../../lib/status.svelte';
   import { safeInvoke as invoke } from '../../lib/tauri';
   import { onMount } from 'svelte';
   import PageHeader from './ui/PageHeader.svelte';
@@ -8,6 +9,7 @@
   import StatusRow from './ui/StatusRow.svelte';
 
   const lifecycle = useLifecycle();
+  const status = createStatus(lifecycle);
 
   let currentOutputMode = $state('clipboard');
   let saveHistory = $state(true);
@@ -17,9 +19,6 @@
     { id: 'traditional', name: 'Traditional Chinese (Taiwan)' },
     { id: 'none', name: 'No conversion' },
   ];
-  let loading = $state(false);
-  let error = $state('');
-  let success = $state('');
 
   const outputModes = [
     {
@@ -47,78 +46,48 @@
   });
 
   async function loadConfig(): Promise<void> {
-    try {
+    await status.run('Failed to load config', async () => {
       const config = await invoke<{ output_mode: string; save_history: boolean; chinese_conversion?: string }>('get_config');
       currentOutputMode = config.output_mode.toLowerCase();
       saveHistory = config.save_history !== false;
       chineseConversion = (config.chinese_conversion || 'traditional').toLowerCase();
-    } catch (err: unknown) {
-      error = `Failed to load config: ${err}`;
-      console.error(error);
-    }
+    });
   }
 
   async function selectOutputMode(modeId: string): Promise<void> {
-    try {
-      loading = true;
-      error = '';
-      success = '';
-
+    await status.run('Failed to set output mode', async () => {
       await invoke('set_output_mode', { mode: modeId });
       currentOutputMode = modeId;
-
       const modeName = outputModes.find((m: typeof outputModes[number]) => m.id === modeId)?.name || modeId;
-      success = `Output mode set to: ${modeName}`;
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err: unknown) {
-      error = `Failed to set output mode: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+      status.confirm(`Output mode set to: ${modeName}`);
+    });
   }
 
   async function selectChineseConversion(mode: string): Promise<void> {
-    try {
-      loading = true;
-      error = '';
-      success = '';
+    await status.run('Failed to set Chinese conversion', async () => {
       await invoke('set_chinese_conversion', { mode });
       chineseConversion = mode;
       const name = chineseConversions.find((c) => c.id === mode)?.name || mode;
-      success = `Chinese output set to: ${name}`;
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err: unknown) {
-      error = `Failed to set Chinese conversion: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+      status.confirm(`Chinese output set to: ${name}`);
+    });
   }
 
   async function toggleSaveHistory(): Promise<void> {
     const enabled = !saveHistory;
-    try {
-      loading = true;
-      error = '';
-      success = '';
+    await status.run('Failed to update history setting', async () => {
       await invoke('set_save_history', { enabled });
       saveHistory = enabled;
-      success = enabled ? 'New transcriptions will be saved to history' : 'New transcriptions will not be saved';
-      lifecycle.timeout(() => { success = ''; }, 3000, 'success');
-    } catch (err: unknown) {
-      error = `Failed to update history setting: ${err}`;
-      console.error(error);
-    } finally {
-      loading = false;
-    }
+      status.confirm(enabled
+        ? 'New transcriptions will be saved to history'
+        : 'New transcriptions will not be saved');
+    });
   }
 </script>
 
 <div class="page">
   <PageHeader title="Output Mode" description="Choose how transcribed text is delivered" />
 
-  <Alert {error} {success} />
+  <Alert error={status.error} success={status.success} />
 
   <SectionHeader label="OUTPUT METHOD" />
   <div class="section-rows">
@@ -155,7 +124,7 @@
     />
   </div>
 
-  {#if loading}
+  {#if status.busy}
     <div class="loading">Updating...</div>
   {/if}
 </div>
