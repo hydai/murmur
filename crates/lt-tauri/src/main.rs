@@ -553,7 +553,6 @@ async fn get_llm_processors(
     let openai_configured = config.api_keys.contains_key("openai");
     let anthropic_configured = config.api_keys.contains_key("anthropic");
     let google_ai_configured = config.api_keys.contains_key("google_ai");
-    let custom_configured = config.api_keys.contains_key("custom_llm");
 
     processors.push(LlmProcessorInfo {
         name: "OpenAI API".to_string(),
@@ -590,30 +589,52 @@ async fn get_llm_processors(
         .http_llm_config
         .custom_display_name
         .unwrap_or_else(|| "Custom Endpoint".to_string());
+    // The base URL is what makes the endpoint usable; a local server needs no
+    // key. This mirrors `custom_stt`, which reports the same way.
+    let custom_endpoint_set = config.http_llm_config.custom_base_url.is_some();
     processors.push(LlmProcessorInfo {
         name: custom_name,
         id: "custom_api".to_string(),
-        available: custom_configured && config.http_llm_config.custom_base_url.is_some(),
+        available: custom_endpoint_set,
         default_model: lt_llm::http_api::OPENAI_DEFAULT_MODEL.to_string(),
         provider_type: "custom".to_string(),
-        requires_api_key: true,
-        configured: custom_configured,
+        requires_api_key: false,
+        configured: custom_endpoint_set,
         api_key_name: Some("custom_llm".to_string()),
     });
 
     Ok(processors)
 }
 
+/// Read a required API key, rejecting blanks so a missing key fails with an
+/// actionable message instead of a provider-side 401.
+fn require_api_key(config: &AppConfig, provider: &str, label: &str) -> Result<String, String> {
+    config
+        .api_keys
+        .get(provider)
+        .map(|key| key.trim())
+        .filter(|key| !key.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            format!("{label} API key not configured. Please add your API key in Settings")
+        })
+}
+
 /// Create an LLM processor from its config type and optional model override.
 /// Shared between startup and recording configuration. Each recording receives
 /// an independent prompt snapshot so edits apply to the next recording.
+///
+/// Missing required configuration is an error rather than a silent default: an
+/// empty key would reach the provider as `Authorization: Bearer `, and a custom
+/// endpoint without a base URL would post the transcript to whatever happens to
+/// be listening on a fallback address.
 fn create_llm_processor(
     processor_type: &LlmProcessorType,
     model: Option<String>,
     config: &AppConfig,
     prompts: &PromptManager,
-) -> Arc<dyn LlmProcessor> {
-    match processor_type {
+) -> Result<Arc<dyn LlmProcessor>, String> {
+    Ok(match processor_type {
         LlmProcessorType::Gemini => {
             tracing::info!("Using Gemini CLI as LLM processor");
             Arc::new(GeminiProcessor::with_model_and_prompts(
@@ -649,7 +670,7 @@ fn create_llm_processor(
             }
         }
         LlmProcessorType::OpenAiApi => {
-            let api_key = config.api_keys.get("openai").cloned().unwrap_or_default();
+            let api_key = require_api_key(config, "openai", "OpenAI")?;
             tracing::info!("Using OpenAI API as LLM processor");
             Arc::new(HttpLlmProcessor::openai_with_prompts(
                 api_key,
@@ -658,11 +679,7 @@ fn create_llm_processor(
             ))
         }
         LlmProcessorType::ClaudeApi => {
-            let api_key = config
-                .api_keys
-                .get("anthropic")
-                .cloned()
-                .unwrap_or_default();
+            let api_key = require_api_key(config, "anthropic", "Claude")?;
             tracing::info!("Using Claude API as LLM processor");
             Arc::new(HttpLlmProcessor::claude_with_prompts(
                 api_key,
@@ -671,11 +688,7 @@ fn create_llm_processor(
             ))
         }
         LlmProcessorType::GeminiApi => {
-            let api_key = config
-                .api_keys
-                .get("google_ai")
-                .cloned()
-                .unwrap_or_default();
+            let api_key = require_api_key(config, "google_ai", "Gemini")?;
             tracing::info!("Using Gemini API as LLM processor");
             Arc::new(HttpLlmProcessor::gemini_api_with_prompts(
                 api_key,
@@ -684,6 +697,7 @@ fn create_llm_processor(
             ))
         }
         LlmProcessorType::CustomApi => {
+            // A local server needs no auth, so only the base URL is required.
             let api_key = config
                 .api_keys
                 .get("custom_llm")
@@ -693,7 +707,10 @@ fn create_llm_processor(
                 .http_llm_config
                 .custom_base_url
                 .clone()
-                .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
+                .ok_or_else(|| {
+                    "Custom LLM endpoint not configured. Please set a base URL in Settings"
+                        .to_string()
+                })?;
             tracing::info!("Using custom endpoint as LLM processor");
             Arc::new(HttpLlmProcessor::custom_with_prompts(
                 base_url,
@@ -702,7 +719,7 @@ fn create_llm_processor(
                 prompts.clone(),
             ))
         }
-    }
+    })
 }
 
 #[tauri::command]
@@ -957,7 +974,7 @@ async fn start_pipeline(
             config.llm_model.clone(),
             &config,
             &prompts,
-        ))
+        )?)
         .await;
     let output = CombinedOutput::new(config.output_mode)
         .map_err(|error| format!("Failed to initialize output: {error}"))?;
@@ -1469,13 +1486,22 @@ fn main() {
         PromptManager::from_set(set)
     };
 
-    // Initialize LLM processor based on config
+    // Initialize LLM processor based on config. An unconfigured selection is
+    // only reported here; `start_pipeline` rebuilds it and surfaces the error
+    // to the user before each recording.
     let llm_processor = create_llm_processor(
         &config.llm_processor,
         config.llm_model.clone(),
         &config,
         &prompts,
-    );
+    )
+    .unwrap_or_else(|error| {
+        tracing::warn!("{error}; falling back to the default LLM processor");
+        Arc::new(GeminiProcessor::with_model_and_prompts(
+            config.llm_model.clone(),
+            prompts.clone(),
+        ))
+    });
 
     // Load dictionary (or create empty if not exists)
     let dictionary = {
@@ -1794,4 +1820,85 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_with(processor: LlmProcessorType) -> AppConfig {
+        AppConfig {
+            llm_processor: processor,
+            ..AppConfig::default()
+        }
+    }
+
+    #[test]
+    fn http_processors_report_a_missing_api_key_instead_of_sending_an_empty_one() {
+        for (processor, label) in [
+            (LlmProcessorType::OpenAiApi, "OpenAI"),
+            (LlmProcessorType::ClaudeApi, "Claude"),
+            (LlmProcessorType::GeminiApi, "Gemini"),
+        ] {
+            let config = config_with(processor);
+            let error = create_llm_processor(&processor, None, &config, &PromptManager::new())
+                .err()
+                .expect("an unconfigured provider must not build");
+            assert!(error.starts_with(label), "{error}");
+            assert!(error.contains("API key not configured"), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_blank_api_key_counts_as_missing() {
+        let mut config = config_with(LlmProcessorType::OpenAiApi);
+        config.api_keys.insert("openai".into(), "   ".into());
+        assert!(create_llm_processor(
+            &LlmProcessorType::OpenAiApi,
+            None,
+            &config,
+            &PromptManager::new()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn a_custom_endpoint_without_a_base_url_is_rejected_rather_than_defaulted() {
+        // A fabricated fallback address would post the transcript to whatever
+        // happens to be listening there.
+        let config = config_with(LlmProcessorType::CustomApi);
+        let error = create_llm_processor(
+            &LlmProcessorType::CustomApi,
+            None,
+            &config,
+            &PromptManager::new(),
+        )
+        .err()
+        .expect("a custom endpoint without a base URL must not build");
+        assert!(error.contains("base URL"), "{error}");
+    }
+
+    #[test]
+    fn a_custom_endpoint_needs_no_api_key() {
+        let mut config = config_with(LlmProcessorType::CustomApi);
+        config.http_llm_config.custom_base_url = Some("http://127.0.0.1:1234/v1".into());
+        assert!(create_llm_processor(
+            &LlmProcessorType::CustomApi,
+            None,
+            &config,
+            &PromptManager::new()
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn cli_processors_need_no_configuration() {
+        for processor in [LlmProcessorType::Gemini, LlmProcessorType::Copilot] {
+            let config = config_with(processor);
+            assert!(
+                create_llm_processor(&processor, None, &config, &PromptManager::new()).is_ok(),
+                "{processor:?} must build without configuration"
+            );
+        }
+    }
 }
