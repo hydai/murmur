@@ -3,6 +3,7 @@
   import { trapFocus } from '../../lib/focus';
   import { useLifecycle } from '../../lib/lifecycle';
   import { getVersion } from '@tauri-apps/api/app';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { Mic, Cpu, Keyboard, Type, BookOpen, FileCode, Bug, Info } from 'lucide-svelte';
   import ProviderConfig from './ProviderConfig.svelte';
   import DictionaryEditor from './DictionaryEditor.svelte';
@@ -13,7 +14,19 @@
   import DiagnosticsPanel from './DiagnosticsPanel.svelte';
   import AboutSection from './AboutSection.svelte';
 
-  let { visible, onClose }: { visible: boolean; onClose: () => void } = $props();
+  /// Closing the settings window is the settings window's own concern; the
+  /// router that mounts it serves all three windows and should not carry a
+  /// capability only this one needs.
+  async function closeWindow() {
+    try {
+      await getCurrentWindow().close();
+    } catch (error) {
+      console.warn('Failed to close settings window:', error);
+    }
+  }
+
+  let { visible, onClose = closeWindow }: { visible: boolean; onClose?: () => void } =
+    $props();
 
   const searchParams =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
