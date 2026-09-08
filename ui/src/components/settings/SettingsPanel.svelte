@@ -118,7 +118,6 @@
   {:else}
     <!-- Inline overlay mode -->
     <div class="settings-overlay" onclick={onClose} onkeydown={(e) => e.key === 'Escape' && onClose()} role="presentation">
-      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <div class="settings-dialog" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') onClose(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-label="Settings">
         <div class="body">
           <nav class="sidebar">

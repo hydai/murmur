@@ -36,11 +36,8 @@
     await loadDictionary();
   });
 
-  $effect(() => {
-    // Re-filter whenever searchQuery changes
-    searchQuery;
-    filterEntries();
-  });
+  // filterEntries reads searchQuery and entries, so $effect tracks both.
+  $effect(filterEntries);
 
   async function loadDictionary() {
     try {
@@ -260,9 +257,7 @@
 
 <!-- Add Modal -->
 {#if showAddModal}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal-overlay" onclick={closeModals} onkeydown={(e) => e.key === 'Escape' && closeModals()} role="presentation">
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') closeModals(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dictionary-add-title">
       <h3 id="dictionary-add-title">Add Dictionary Entry</h3>
 
@@ -297,9 +292,7 @@
 
 <!-- Edit Modal -->
 {#if showEditModal}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal-overlay" onclick={closeModals} onkeydown={(e) => e.key === 'Escape' && closeModals()} role="presentation">
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') closeModals(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dictionary-edit-title">
       <h3 id="dictionary-edit-title">Edit Dictionary Entry</h3>
 
@@ -334,9 +327,7 @@
 
 <!-- Delete Confirmation Modal -->
 {#if showDeleteModal}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal-overlay" onclick={closeModals} onkeydown={(e) => e.key === 'Escape' && closeModals()} role="presentation">
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div class="modal modal-small" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') closeModals(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dictionary-delete-title">
       <h3 id="dictionary-delete-title">Delete Entry</h3>
       <p>Are you sure you want to delete "{currentEntry?.term}"?</p>
