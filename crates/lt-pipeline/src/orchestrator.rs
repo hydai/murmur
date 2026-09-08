@@ -289,6 +289,9 @@ impl PipelineOrchestrator {
                     timestamp_ms: last_timestamp,
                 });
 
+                // On LLM failure the user gets the spoken content back, not the
+                // command prefix that addressed the model.
+                let fallback_content = detection.content.clone();
                 let task = detection.task;
                 let translate_target = match &task {
                     ProcessingTask::Translate {
@@ -353,7 +356,7 @@ impl PipelineOrchestrator {
                     Err(e) => {
                         tracing::error!("LLM processing failed: {}", e);
                         let fallback_text = finalize_output(
-                            &full_transcription,
+                            &fallback_content,
                             chinese_conversion,
                             translate_target.as_deref(),
                         );
@@ -686,7 +689,7 @@ mod tests {
 
     fn pipeline(
         output: Arc<TestOutput>,
-        llm: Arc<TestLlm>,
+        llm: Arc<dyn LlmProcessor>,
     ) -> (PipelineOrchestrator, Arc<AtomicBool>) {
         let running = Arc::new(AtomicBool::new(false));
         let status = running.clone();
@@ -929,6 +932,36 @@ mod tests {
             !text.contains("zebra-quartz"),
             "transcript leaked into logs:\n{text}"
         );
+    }
+
+    struct FailingLlm;
+    #[async_trait]
+    impl LlmProcessor for FailingLlm {
+        async fn process(&self, _: ProcessingTask) -> Result<ProcessingOutput> {
+            Err(MurmurError::Llm("provider down".into()))
+        }
+        async fn health_check(&self) -> Result<bool> {
+            Ok(false)
+        }
+    }
+
+    #[tokio::test]
+    async fn llm_failure_falls_back_to_the_content_without_the_command_prefix() {
+        let output = Arc::new(TestOutput::default());
+        let (p, _) = pipeline(output.clone(), Arc::new(FailingLlm));
+        let mut events = p.subscribe_events();
+        let (stt, tx) = TestStt::new(false);
+        p.start(stt).await.unwrap();
+        tx.send(TranscriptionEvent::Committed {
+            text: "shorten this: hello world".into(),
+            timestamp_ms: 1,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+        p.stop().await.unwrap();
+        wait_state(&mut events, PipelineState::Error).await;
+        assert_eq!(*output.0.lock().unwrap(), ["hello world"]);
     }
 
     #[tokio::test]
