@@ -20,6 +20,14 @@ use crate::text_normalization::finalize_output;
 use lt_core::config::ChineseConversion;
 use lt_core::llm::ProcessingTask;
 
+/// Provider handshake budget before a recording is abandoned.
+const STT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+/// Per-chunk delivery budget.
+const STT_SEND_TIMEOUT: Duration = Duration::from_secs(30);
+/// Long enough for a full HTTP backlog (4 queued + in-flight + final buffer)
+/// to drain at 30 seconds per request.
+const STT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(180);
+
 /// Pipeline orchestrator coordinating the full flow
 pub struct PipelineOrchestrator {
     audio_capture: Arc<Mutex<Option<Box<dyn CaptureControl>>>>,
@@ -127,16 +135,17 @@ impl PipelineOrchestrator {
         self.emit_state_change(PipelineState::Recording);
 
         let mut stt = stt_provider;
-        let startup = tokio::time::timeout(Duration::from_secs(30), stt.start_session()).await;
+        let startup = tokio::time::timeout(STT_STARTUP_TIMEOUT, stt.start_session()).await;
         let startup =
             startup.unwrap_or_else(|_| Err(MurmurError::Stt("STT startup timed out".into())));
         if let Err(error) = startup {
             self.fail_start(&error).await;
             return Err(error);
         }
+
         let AudioInput {
             capture,
-            chunks: mut chunk_rx,
+            chunks,
             levels,
         } = match (self.capture_factory)() {
             Ok(input) => input,
@@ -149,315 +158,44 @@ impl PipelineOrchestrator {
             }
         };
         *self.audio_capture.lock().await = Some(capture);
-        let (cancel_tx, mut cancel_rx) = watch::channel(false);
+
+        let (cancel_tx, cancel_rx) = watch::channel(false);
         *self.cancel_tx.lock().await = Some(cancel_tx.clone());
-        let failed = Arc::new(AtomicBool::new(false));
+        let stt_events = stt.subscribe_events().await;
+        let session = self.session_snapshot().await;
 
-        // Subscribe to transcription events
-        let mut event_rx = stt.subscribe_events().await;
-        let event_tx = self.event_tx.clone();
-        // Clone the processor under a read lock so the current recording
-        // uses a snapshot; hot-swaps take effect on the next recording.
-        let llm_processor = self.llm_processor.read().await.clone();
-        let output_sink = self.output_sink.read().await.clone();
-        let chinese_conversion = *self.chinese_conversion.read().await;
-        let dictionary = self.dictionary.clone();
-        let state_arc = self.state.clone();
-        let capture_arc = self.audio_capture.clone();
-        let transcription_failed = failed.clone();
-
-        // Spawn transcription event handler
-        let transcription_task = tokio::spawn(async move {
-            let mut full_transcription = String::new();
-            let mut last_partial_text = String::new();
-            let mut last_timestamp = 0u64;
-
-            while let Some(event) = event_rx.recv().await {
-                match &event {
-                    TranscriptionEvent::Partial { text, timestamp_ms } => {
-                        tracing::debug!(chars = text.chars().count(), "Partial transcript");
-                        let _ = event_tx.send(PipelineEvent::PartialTranscription {
-                            text: text.clone(),
-                            timestamp_ms: *timestamp_ms,
-                        });
-                        last_timestamp = *timestamp_ms;
-
-                        // Track latest partial for fallback (Apple STT only sends partials)
-                        if !text.is_empty() {
-                            last_partial_text = text.clone();
-                        }
-
-                        // Transition to Transcribing if we have text
-                        if !text.is_empty() {
-                            let mut state = state_arc.lock().await;
-                            if *state == PipelineState::Recording {
-                                *state = PipelineState::Transcribing;
-                                let _ = event_tx.send(PipelineEvent::StateChanged {
-                                    state: PipelineState::Transcribing,
-                                    timestamp_ms: last_timestamp,
-                                });
-                            }
-                        }
-                    }
-                    TranscriptionEvent::Committed { text, timestamp_ms } => {
-                        tracing::info!(chars = text.chars().count(), "Committed transcript");
-                        let _ = event_tx.send(PipelineEvent::CommittedTranscription {
-                            text: text.clone(),
-                            timestamp_ms: *timestamp_ms,
-                        });
-
-                        // Accumulate transcription
-                        if !full_transcription.is_empty() {
-                            full_transcription.push(' ');
-                        }
-                        full_transcription.push_str(text);
-                        last_timestamp = *timestamp_ms;
-
-                        // Reset partial tracker so it only holds text
-                        // from partials AFTER this commit (the uncommitted tail)
-                        last_partial_text.clear();
-                    }
-                    TranscriptionEvent::Error { message } => {
-                        transcription_failed.store(true, Ordering::SeqCst);
-                        tracing::error!("STT error: {}", message);
-                        let _ = event_tx.send(PipelineEvent::Error {
-                            message: message.clone(),
-                            recoverable: false,
-                        });
-                        break; // Exit loop — let post-processing run or transition to Idle
-                    }
-                }
-            }
-
-            // A failed provider may still be finalizing. Closing its receiver
-            // makes callbacks fail promptly instead of blocking during the LLM.
-            drop(event_rx);
-
-            // Ending transcription (including provider failure) ends capture.
-            // Do this before emitting any terminal state or writing output.
-            let _ = stop_capture(&capture_arc).await;
-            let _ = cancel_tx.send(true);
-
-            // Append any uncommitted trailing partial text.
-            // Covers two cases:
-            // 1. No commits at all (e.g. Apple STT only sent partials) — partial becomes the full text
-            // 2. Commits + trailing partials — appends the uncommitted tail after the last commit
-            if !last_partial_text.is_empty() {
-                tracing::info!(
-                    "Appending trailing partial text ({} chars, had_commits={})",
-                    last_partial_text.len(),
-                    !full_transcription.is_empty()
-                );
-                if !full_transcription.is_empty() {
-                    full_transcription.push(' ');
-                }
-                full_transcription.push_str(&last_partial_text);
-            }
-
-            // When transcription finishes (channel closed), trigger LLM processing
-            if !full_transcription.is_empty() {
-                tracing::info!("Transcription complete, detecting voice commands");
-
-                // Get dictionary terms
-                let dictionary_terms = {
-                    let dict = dictionary.lock().await;
-                    dict.get_terms()
-                };
-
-                // Detect voice commands in the transcription
-                let detection = detect_command(&full_transcription, dictionary_terms);
-
-                // Emit command detection event
-                let _ = event_tx.send(PipelineEvent::CommandDetected {
-                    command_name: detection.command_name.clone(),
-                    timestamp_ms: last_timestamp,
-                });
-
-                if let Some(ref cmd) = detection.command_name {
-                    tracing::info!("Voice command detected: {}", cmd);
-                } else {
-                    tracing::info!("No voice command detected, using default post-processing");
-                }
-
-                // Transition to Processing state
-                publish_state(
-                    &state_arc,
-                    &event_tx,
-                    PipelineState::Processing,
-                    last_timestamp,
-                )
-                .await;
-
-                // On LLM failure the user gets the spoken content back, not the
-                // command prefix that addressed the model.
-                let fallback_content = detection.content.clone();
-                let task = detection.task;
-                let translate_target = match &task {
-                    ProcessingTask::Translate {
-                        target_language, ..
-                    } => Some(target_language.clone()),
-                    _ => None,
-                };
-
-                tracing::info!(
-                    "Starting LLM post-processing: input_len={} chars",
-                    full_transcription.chars().count()
-                );
-
-                let start_time = std::time::Instant::now();
-
-                match llm_processor.process(task).await {
-                    Ok(output) => {
-                        let final_text = finalize_output(
-                            &output.text,
-                            chinese_conversion,
-                            translate_target.as_deref(),
-                        );
-                        tracing::info!(
-                            "LLM processing successful (took {}ms, output_len={} chars)",
-                            output.processing_time_ms,
-                            final_text.chars().count()
-                        );
-
-                        // Output to clipboard/keyboard
-                        if let Err(e) = output_sink.output_text(&final_text).await {
-                            tracing::error!("Failed to output text: {}", e);
-                            let _ = event_tx.send(PipelineEvent::Error {
-                                message: format!("Output failed: {}", e),
-                                recoverable: true,
-                            });
-                        }
-
-                        // Emit final result
-                        let _ = event_tx.send(PipelineEvent::FinalResult {
-                            text: final_text,
-                            processing_time_ms: start_time.elapsed().as_millis() as u64,
-                        });
-
-                        // Transition to Done state. The audio task can set
-                        // `failed` at any point, so read it once: two reads
-                        // could store one state and announce another.
-                        let terminal = if transcription_failed.load(Ordering::SeqCst) {
-                            PipelineState::Error
-                        } else {
-                            PipelineState::Done
-                        };
-                        publish_state(&state_arc, &event_tx, terminal, last_timestamp).await;
-                    }
-                    Err(e) => {
-                        tracing::error!("LLM processing failed: {}", e);
-                        let fallback_text = finalize_output(
-                            &fallback_content,
-                            chinese_conversion,
-                            translate_target.as_deref(),
-                        );
-
-                        // Emit error but try to output raw transcription
-                        let _ = event_tx.send(PipelineEvent::Error {
-                            message: format!(
-                                "LLM processing failed: {}. Using raw transcription.",
-                                e
-                            ),
-                            recoverable: true,
-                        });
-
-                        // Output raw transcription as fallback
-                        if let Err(e) = output_sink.output_text(&fallback_text).await {
-                            tracing::error!("Failed to output raw transcription: {}", e);
-                        }
-
-                        // Emit raw transcription as final result
-                        let _ = event_tx.send(PipelineEvent::FinalResult {
-                            text: fallback_text,
-                            processing_time_ms: start_time.elapsed().as_millis() as u64,
-                        });
-
-                        // Transition to Error state
-                        publish_state(&state_arc, &event_tx, PipelineState::Error, last_timestamp)
-                            .await;
-                    }
-                }
-            } else {
-                tracing::info!("No transcription to process");
-
-                // Transition back to Idle, reading `failed` once for the same
-                // reason as the successful path above.
-                let terminal = if transcription_failed.load(Ordering::SeqCst) {
-                    PipelineState::Error
-                } else {
-                    PipelineState::Idle
-                };
-                publish_state(&state_arc, &event_tx, terminal, last_timestamp).await;
-            }
-
-            tracing::debug!("Transcription task finished");
-        });
-
-        *self.transcription_task.lock().await = Some(transcription_task);
-
-        // Subscribe to audio levels for waveform
-        if let Some(mut level_rx) = levels {
-            let event_tx = self.event_tx.clone();
-
-            let level_task = tokio::spawn(async move {
-                while let Some(level) = level_rx.recv().await {
-                    let _ = event_tx.send(PipelineEvent::AudioLevel {
-                        rms: level.rms,
-                        voice_active: level.voice_active,
-                        timestamp_ms: level.timestamp_ms,
-                    });
-                }
-                tracing::debug!("Audio level task finished");
-            });
-
-            *self.level_task.lock().await = Some(level_task);
+        *self.transcription_task.lock().await = Some(tokio::spawn(run_transcription(
+            session.clone(),
+            stt_events,
+            cancel_tx,
+        )));
+        if let Some(levels) = levels {
+            *self.level_task.lock().await =
+                Some(tokio::spawn(forward_levels(self.event_tx.clone(), levels)));
         }
-
-        let capture_arc = self.audio_capture.clone();
-        let event_tx = self.event_tx.clone();
-        let audio_task = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = cancel_rx.changed() => break,
-                    chunk = chunk_rx.recv() => {
-                        let Some(chunk) = chunk else { break; };
-                        let sent = tokio::select! {
-                            biased;
-                            _ = cancel_rx.changed() => break,
-                            result = tokio::time::timeout(Duration::from_secs(30), stt.send_audio(chunk)) => result,
-                        };
-                        if !matches!(sent, Ok(Ok(()))) {
-                            failed.store(true, Ordering::SeqCst);
-                            let _ = event_tx.send(PipelineEvent::Error {
-                                message: "STT audio delivery failed or timed out".into(),
-                                recoverable: false,
-                            });
-                            let _ = stop_capture(&capture_arc).await;
-                            break;
-                        }
-                    }
-                }
-            }
-            // Providers own cleanup when this future is cancelled. A stalled
-            // shutdown cannot retain the transcription event channel forever.
-            // Allow a full HTTP backlog (4 queued + in-flight + final buffer)
-            // to drain, with at most 30 seconds per request.
-            if !matches!(
-                tokio::time::timeout(Duration::from_secs(180), stt.stop_session()).await,
-                Ok(Ok(()))
-            ) {
-                failed.store(true, Ordering::SeqCst);
-                let _ = event_tx.send(PipelineEvent::Error {
-                    message: "STT shutdown failed or timed out".into(),
-                    recoverable: false,
-                });
-            }
-        });
-        *self.audio_task.lock().await = Some(audio_task);
+        *self.audio_task.lock().await =
+            Some(tokio::spawn(pump_audio(session, stt, chunks, cancel_rx)));
 
         tracing::info!("Pipeline started successfully");
         Ok(())
+    }
+
+    /// Freeze the configuration this recording runs against.
+    ///
+    /// Everything is read under its lock once, here, so a hot-swap of the LLM
+    /// processor, the output sink or the conversion setting takes effect on the
+    /// next recording rather than partway through this one.
+    async fn session_snapshot(&self) -> Session {
+        Session {
+            events: self.event_tx.clone(),
+            state: self.state.clone(),
+            capture: self.audio_capture.clone(),
+            dictionary: self.dictionary.clone(),
+            llm: self.llm_processor.read().await.clone(),
+            output: self.output_sink.read().await.clone(),
+            chinese_conversion: *self.chinese_conversion.read().await,
+            failed: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     /// Stop capture and let queued transcription and output finish normally.
@@ -541,6 +279,333 @@ impl AudioInput {
             chunks,
             levels,
         })
+    }
+}
+
+/// One recording's shared handles and frozen configuration.
+///
+/// Session tasks run detached and have no `&self`, so everything they touch is
+/// gathered here instead of being cloned field by field into each spawn.
+#[derive(Clone)]
+struct Session {
+    events: broadcast::Sender<PipelineEvent>,
+    state: Arc<Mutex<PipelineState>>,
+    capture: Arc<Mutex<Option<Box<dyn CaptureControl>>>>,
+    dictionary: Arc<Mutex<PersonalDictionary>>,
+    llm: Arc<dyn LlmProcessor>,
+    output: Arc<dyn OutputSink>,
+    chinese_conversion: ChineseConversion,
+    /// Set by whichever task hits an unrecoverable problem; read once when
+    /// choosing the terminal state.
+    failed: Arc<AtomicBool>,
+}
+
+impl Session {
+    fn emit(&self, event: PipelineEvent) {
+        // No receiver is a closed UI, not a pipeline error.
+        let _ = self.events.send(event);
+    }
+
+    async fn publish(&self, next: PipelineState, timestamp_ms: u64) {
+        publish_state(&self.state, &self.events, next, timestamp_ms).await;
+    }
+
+    /// Record an unrecoverable failure and tell the UI.
+    fn fail(&self, message: impl Into<String>) {
+        self.failed.store(true, Ordering::SeqCst);
+        self.emit(PipelineEvent::Error {
+            message: message.into(),
+            recoverable: false,
+        });
+    }
+
+    /// The terminal state to settle on, downgraded to `Error` when any task
+    /// failed. Read once: two reads either side of an await could store one
+    /// state and announce another.
+    fn terminal(&self, success: PipelineState) -> PipelineState {
+        if self.failed.load(Ordering::SeqCst) {
+            PipelineState::Error
+        } else {
+            success
+        }
+    }
+
+    /// Write the final text out and settle the pipeline.
+    ///
+    /// A sink failure is reported but never withholds the result: the text
+    /// stays available in the overlay even when delivery fails.
+    async fn deliver(
+        &self,
+        text: String,
+        elapsed_ms: u64,
+        timestamp_ms: u64,
+        terminal: PipelineState,
+    ) {
+        if let Err(error) = self.output.output_text(&text).await {
+            tracing::error!("Failed to output text: {error}");
+            self.emit(PipelineEvent::Error {
+                message: format!("Output failed: {error}"),
+                recoverable: true,
+            });
+        }
+        self.emit(PipelineEvent::FinalResult {
+            text,
+            processing_time_ms: elapsed_ms,
+        });
+        self.publish(terminal, timestamp_ms).await;
+    }
+}
+
+/// What the transcription event loop accumulated.
+struct Transcript {
+    text: String,
+    last_timestamp_ms: u64,
+}
+
+/// Mirror STT events to the UI and accumulate the transcript, returning when
+/// the provider stops sending or reports an error.
+async fn collect_transcript(
+    session: &Session,
+    events: &mut mpsc::Receiver<TranscriptionEvent>,
+) -> Transcript {
+    let mut text = String::new();
+    // Apple STT only sends partials, and a stream can end with an uncommitted
+    // tail, so the latest partial is kept as a fallback until the next commit.
+    let mut trailing_partial = String::new();
+    let mut last_timestamp_ms = 0u64;
+
+    while let Some(event) = events.recv().await {
+        match &event {
+            TranscriptionEvent::Partial {
+                text: partial,
+                timestamp_ms,
+            } => {
+                tracing::debug!(chars = partial.chars().count(), "Partial transcript");
+                session.emit(PipelineEvent::PartialTranscription {
+                    text: partial.clone(),
+                    timestamp_ms: *timestamp_ms,
+                });
+                last_timestamp_ms = *timestamp_ms;
+
+                if !partial.is_empty() {
+                    trailing_partial = partial.clone();
+                    // Compare-and-set: only the first non-empty partial moves
+                    // the pipeline out of Recording.
+                    let mut state = session.state.lock().await;
+                    if *state == PipelineState::Recording {
+                        *state = PipelineState::Transcribing;
+                        session.emit(PipelineEvent::StateChanged {
+                            state: PipelineState::Transcribing,
+                            timestamp_ms: last_timestamp_ms,
+                        });
+                    }
+                }
+            }
+            TranscriptionEvent::Committed {
+                text: committed,
+                timestamp_ms,
+            } => {
+                tracing::info!(chars = committed.chars().count(), "Committed transcript");
+                session.emit(PipelineEvent::CommittedTranscription {
+                    text: committed.clone(),
+                    timestamp_ms: *timestamp_ms,
+                });
+                if !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(committed);
+                last_timestamp_ms = *timestamp_ms;
+                // Anything kept so far is now committed; only partials after
+                // this point are an uncommitted tail.
+                trailing_partial.clear();
+            }
+            TranscriptionEvent::Error { message } => {
+                tracing::error!("STT error: {message}");
+                session.fail(message.clone());
+                // Let post-processing run on whatever was transcribed.
+                break;
+            }
+        }
+    }
+
+    if !trailing_partial.is_empty() {
+        tracing::info!(
+            "Appending trailing partial text ({} chars, had_commits={})",
+            trailing_partial.len(),
+            !text.is_empty()
+        );
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        text.push_str(&trailing_partial);
+    }
+
+    Transcript {
+        text,
+        last_timestamp_ms,
+    }
+}
+
+/// Run the transcript through command detection and the LLM, then deliver it.
+async fn post_process(session: &Session, transcript: Transcript) {
+    tracing::info!("Transcription complete, detecting voice commands");
+    let dictionary_terms = session.dictionary.lock().await.get_terms();
+    let detection = detect_command(&transcript.text, dictionary_terms);
+
+    session.emit(PipelineEvent::CommandDetected {
+        command_name: detection.command_name.clone(),
+        timestamp_ms: transcript.last_timestamp_ms,
+    });
+    match &detection.command_name {
+        Some(command) => tracing::info!("Voice command detected: {command}"),
+        None => tracing::info!("No voice command detected, using default post-processing"),
+    }
+
+    session
+        .publish(PipelineState::Processing, transcript.last_timestamp_ms)
+        .await;
+
+    // On LLM failure the user gets the spoken content back, not the command
+    // prefix that addressed the model.
+    let fallback_content = detection.content;
+    let task = detection.task;
+    let translate_target = match &task {
+        ProcessingTask::Translate {
+            target_language, ..
+        } => Some(target_language.clone()),
+        _ => None,
+    };
+
+    tracing::info!(
+        "Starting LLM post-processing: input_len={} chars",
+        transcript.text.chars().count()
+    );
+    let started = std::time::Instant::now();
+
+    match session.llm.process(task).await {
+        Ok(output) => {
+            let final_text = finalize_output(
+                &output.text,
+                session.chinese_conversion,
+                translate_target.as_deref(),
+            );
+            tracing::info!(
+                "LLM processing successful (took {}ms, output_len={} chars)",
+                output.processing_time_ms,
+                final_text.chars().count()
+            );
+            let terminal = session.terminal(PipelineState::Done);
+            session
+                .deliver(
+                    final_text,
+                    started.elapsed().as_millis() as u64,
+                    transcript.last_timestamp_ms,
+                    terminal,
+                )
+                .await;
+        }
+        Err(error) => {
+            tracing::error!("LLM processing failed: {error}");
+            session.emit(PipelineEvent::Error {
+                message: format!("LLM processing failed: {error}. Using raw transcription."),
+                recoverable: true,
+            });
+            let fallback = finalize_output(
+                &fallback_content,
+                session.chinese_conversion,
+                translate_target.as_deref(),
+            );
+            session
+                .deliver(
+                    fallback,
+                    started.elapsed().as_millis() as u64,
+                    transcript.last_timestamp_ms,
+                    PipelineState::Error,
+                )
+                .await;
+        }
+    }
+}
+
+/// Own the recording from the first STT event to the terminal state.
+async fn run_transcription(
+    session: Session,
+    mut stt_events: mpsc::Receiver<TranscriptionEvent>,
+    cancel_tx: watch::Sender<bool>,
+) {
+    let transcript = collect_transcript(&session, &mut stt_events).await;
+
+    // A failed provider may still be finalizing. Closing its receiver makes
+    // callbacks fail promptly instead of blocking during the LLM call.
+    drop(stt_events);
+
+    // Ending transcription (including provider failure) ends capture. Do this
+    // before emitting any terminal state or writing output.
+    let _ = stop_capture(&session.capture).await;
+    let _ = cancel_tx.send(true);
+
+    if transcript.text.is_empty() {
+        tracing::info!("No transcription to process");
+        let terminal = session.terminal(PipelineState::Idle);
+        session
+            .publish(terminal, transcript.last_timestamp_ms)
+            .await;
+    } else {
+        post_process(&session, transcript).await;
+    }
+
+    tracing::debug!("Transcription task finished");
+}
+
+/// Mirror capture levels to the waveform until capture ends.
+async fn forward_levels(
+    events: broadcast::Sender<PipelineEvent>,
+    mut levels: mpsc::Receiver<lt_audio::AudioLevel>,
+) {
+    while let Some(level) = levels.recv().await {
+        let _ = events.send(PipelineEvent::AudioLevel {
+            rms: level.rms,
+            voice_active: level.voice_active,
+            timestamp_ms: level.timestamp_ms,
+        });
+    }
+    tracing::debug!("Audio level task finished");
+}
+
+/// Feed captured audio to the provider, then close the session.
+async fn pump_audio(
+    session: Session,
+    mut stt: Box<dyn SttProvider>,
+    mut chunks: mpsc::Receiver<AudioChunk>,
+    mut cancel: watch::Receiver<bool>,
+) {
+    loop {
+        tokio::select! {
+            biased;
+            _ = cancel.changed() => break,
+            chunk = chunks.recv() => {
+                let Some(chunk) = chunk else { break; };
+                let sent = tokio::select! {
+                    biased;
+                    _ = cancel.changed() => break,
+                    result = tokio::time::timeout(STT_SEND_TIMEOUT, stt.send_audio(chunk)) => result,
+                };
+                if !matches!(sent, Ok(Ok(()))) {
+                    session.fail("STT audio delivery failed or timed out");
+                    let _ = stop_capture(&session.capture).await;
+                    break;
+                }
+            }
+        }
+    }
+
+    // Providers own cleanup when this future is cancelled. A stalled shutdown
+    // cannot retain the transcription event channel forever.
+    if !matches!(
+        tokio::time::timeout(STT_SHUTDOWN_TIMEOUT, stt.stop_session()).await,
+        Ok(Ok(()))
+    ) {
+        session.fail("STT shutdown failed or timed out");
     }
 }
 
@@ -677,8 +742,23 @@ mod tests {
         }
     }
 
+    struct FailingOutput;
+    #[async_trait]
+    impl OutputSink for FailingOutput {
+        async fn output_text(&self, _: &str) -> Result<()> {
+            Err(MurmurError::Output("sink is unavailable".into()))
+        }
+    }
+
     fn pipeline(
         output: Arc<TestOutput>,
+        llm: Arc<dyn LlmProcessor>,
+    ) -> (PipelineOrchestrator, Arc<AtomicBool>) {
+        pipeline_with_sink(output, llm)
+    }
+
+    fn pipeline_with_sink(
+        output: Arc<dyn OutputSink>,
         llm: Arc<dyn LlmProcessor>,
     ) -> (PipelineOrchestrator, Arc<AtomicBool>) {
         let running = Arc::new(AtomicBool::new(false));
@@ -980,6 +1060,50 @@ mod tests {
         p.stop().await.unwrap();
         wait_state(&mut events, PipelineState::Error).await;
         assert_eq!(*output.0.lock().unwrap(), ["hello world"]);
+    }
+
+    #[tokio::test]
+    async fn a_failed_delivery_is_reported_on_the_fallback_path_too() {
+        // The success arm emitted an Error event when the sink rejected the
+        // text; the fallback arm only logged it, so a user whose clipboard
+        // failed after an LLM failure saw nothing about the second problem.
+        let (p, _) = pipeline_with_sink(Arc::new(FailingOutput), Arc::new(FailingLlm));
+        let mut events = p.subscribe_events();
+        let (stt, tx) = TestStt::new(false);
+        p.start(stt).await.unwrap();
+        tx.send(TranscriptionEvent::Committed {
+            text: "hello world".into(),
+            timestamp_ms: 1,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+        p.stop().await.unwrap();
+
+        let mut messages = Vec::new();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match events.recv().await.unwrap() {
+                    PipelineEvent::Error { message, .. } => messages.push(message),
+                    PipelineEvent::StateChanged {
+                        state: PipelineState::Error,
+                        ..
+                    } => break,
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("a terminal state");
+
+        assert!(
+            messages.iter().any(|m| m.contains("LLM processing failed")),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|m| m.contains("Output failed")),
+            "{messages:?}"
+        );
     }
 
     #[tokio::test]
