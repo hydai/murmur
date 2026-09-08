@@ -1464,9 +1464,7 @@ fn main() {
         tracing::warn!("{warning}");
     }
 
-    let is_first_launch = AppConfig::default_config_file()
-        .map(|path| !path.exists())
-        .unwrap_or(false);
+    let is_first_launch = storage::claim_first_launch(config_path.as_deref(), &config);
 
     let startup_hotkey = config.hotkey.clone();
 

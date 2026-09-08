@@ -202,6 +202,30 @@ pub(crate) fn load_startup_config(path: Option<&Path>) -> (AppConfig, Option<Str
     }
 }
 
+/// Report whether this is the first launch, materialising the config file when
+/// it is.
+///
+/// Nothing else in startup creates config.toml — `load_startup_config` only
+/// reads and `AppStore::new` only tightens permissions on files that exist — so
+/// without this every launch looked like the first and re-opened the settings
+/// window. A file that exists is left untouched even when it is corrupt, since
+/// `load_startup_config` reports it for the user to repair.
+pub(crate) fn claim_first_launch(path: Option<&Path>, config: &AppConfig) -> bool {
+    let Some(path) = path else {
+        return false;
+    };
+    if path.exists() {
+        return false;
+    }
+    match config.save_to_file(path) {
+        Ok(()) => tracing::info!("Created {}", path.display()),
+        // Still report a first launch: opening settings is more useful than
+        // hiding it because the file could not be written.
+        Err(error) => tracing::warn!("Failed to create {}: {error}", path.display()),
+    }
+    true
+}
+
 #[derive(Clone)]
 pub(crate) struct AppStore {
     pub config: FileStore<AppConfig>,
@@ -232,6 +256,39 @@ impl AppStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_first_launch_creates_the_config_and_the_next_one_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        assert!(claim_first_launch(Some(&path), &AppConfig::default()));
+        assert!(path.exists(), "the config file must be materialised");
+
+        assert!(
+            !claim_first_launch(Some(&path), &AppConfig::default()),
+            "a launch after the file exists is not the first"
+        );
+    }
+
+    #[test]
+    fn an_existing_corrupt_config_is_neither_replaced_nor_reported_as_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "hotkey = [not toml").unwrap();
+
+        assert!(!claim_first_launch(Some(&path), &AppConfig::default()));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "hotkey = [not toml",
+            "a corrupt file must be left for the user to repair"
+        );
+    }
+
+    #[test]
+    fn an_unknown_config_location_is_not_a_first_launch() {
+        assert!(!claim_first_launch(None, &AppConfig::default()));
+    }
 
     #[tokio::test]
     async fn concurrent_config_updates_preserve_all_keys() {
