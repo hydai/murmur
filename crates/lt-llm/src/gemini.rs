@@ -1,174 +1,47 @@
-use async_trait::async_trait;
-use lt_core::error::{MurmurError, Result};
-use lt_core::llm::{LlmProcessor, ProcessingOutput, ProcessingTask};
-use std::time::Instant;
-
-use crate::executor::CliExecutor;
-use crate::prompts::PromptManager;
-
-/// Gemini CLI adapter implementing LlmProcessor trait
-pub struct GeminiProcessor {
-    executor: CliExecutor,
-    prompt_manager: PromptManager,
-    model: String,
-}
+use crate::cli::{cli_processor, CliSpec};
 
 pub const DEFAULT_MODEL: &str = "gemini-3-flash-preview";
 
-impl GeminiProcessor {
-    /// Create a new Gemini processor with default settings
-    pub fn new() -> Self {
-        Self::with_model_and_prompts(None, PromptManager::new())
-    }
+static SPEC: CliSpec = CliSpec {
+    binary: "gemini",
+    display_name: "Gemini CLI",
+    default_model: DEFAULT_MODEL,
+    install_hint: "Please install gemini-cli: https://github.com/google/generative-ai-cli",
+    args: |prompt, model| {
+        vec![
+            "-p".into(),
+            prompt.into(),
+            "--output-format".into(),
+            "json".into(),
+            "-m".into(),
+            model.into(),
+        ]
+    },
+    parse: parse_json_output,
+};
 
-    /// Create a new Gemini processor with an optional model override
-    pub fn with_model(model: Option<String>) -> Self {
-        Self::with_model_and_prompts(model, PromptManager::new())
-    }
-
-    /// Create a new Gemini processor with a model override and a shared PromptManager
-    pub fn with_model_and_prompts(model: Option<String>, prompts: PromptManager) -> Self {
-        let model = model
-            .filter(|m| !m.is_empty())
-            .unwrap_or_else(|| DEFAULT_MODEL.to_string());
-        Self {
-            executor: CliExecutor::with_timeout(30),
-            prompt_manager: prompts,
-            model,
-        }
-    }
-
-    /// Create a new Gemini processor with custom timeout
-    pub fn with_timeout(timeout_secs: u64) -> Self {
-        Self {
-            executor: CliExecutor::with_timeout(timeout_secs),
-            prompt_manager: PromptManager::new(),
-            model: DEFAULT_MODEL.to_string(),
-        }
-    }
-
-    /// Parse JSON output from gemini CLI
-    fn parse_json_output(&self, output: &str) -> Result<String> {
-        // Try to parse as JSON first
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(output) {
-            // Check for various possible JSON response formats
-            if let Some(text) = json.get("text").and_then(|v| v.as_str()) {
-                return Ok(text.to_string());
-            }
-            if let Some(text) = json.get("content").and_then(|v| v.as_str()) {
-                return Ok(text.to_string());
-            }
-            if let Some(text) = json.get("response").and_then(|v| v.as_str()) {
-                return Ok(text.to_string());
-            }
-            // If it's a string value directly
-            if let Some(text) = json.as_str() {
-                return Ok(text.to_string());
+/// Pull the reply out of `--output-format json`, tolerating the plain text the
+/// CLI still returns for some responses.
+fn parse_json_output(output: &str) -> String {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(output) {
+        for field in ["text", "content", "response"] {
+            if let Some(text) = json.get(field).and_then(|value| value.as_str()) {
+                return text.to_string();
             }
         }
-
-        // If JSON parsing fails or no recognized fields, return output as-is
-        // (gemini might return plain text even with --output-format json)
-        Ok(output.trim().to_string())
+        if let Some(text) = json.as_str() {
+            return text.to_string();
+        }
     }
+    output.trim().to_string()
 }
 
-impl Default for GeminiProcessor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl LlmProcessor for GeminiProcessor {
-    async fn process(&self, task: ProcessingTask) -> Result<ProcessingOutput> {
-        let start_time = Instant::now();
-
-        // Build prompt from the shared prompt set (respects user overrides)
-        let prompt = self.prompt_manager.build_prompt(&task).await;
-
-        tracing::debug!(
-            "Executing gemini CLI with prompt (length: {} chars)",
-            prompt.len()
-        );
-
-        // Execute gemini CLI
-        // Format: gemini -p "prompt" --output-format json -m <model>
-        let output = self
-            .executor
-            .execute(
-                "gemini",
-                &[
-                    "-p",
-                    &prompt,
-                    "--output-format",
-                    "json",
-                    "-m",
-                    &self.model,
-                ],
-            )
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::TimedOut {
-                    MurmurError::Llm("Gemini CLI timed out".to_string())
-                } else if e.kind() == std::io::ErrorKind::NotFound {
-                    MurmurError::Llm(
-                        "Gemini CLI not found. Please install gemini-cli: https://github.com/google/generative-ai-cli".to_string()
-                    )
-                } else {
-                    MurmurError::Llm(format!("Failed to execute gemini CLI: {}", e))
-                }
-            })?;
-
-        // Check exit code
-        if output.exit_code != 0 {
-            tracing::error!(
-                "Gemini CLI failed with exit code {}: {}",
-                output.exit_code,
-                output.stderr
-            );
-            return Err(MurmurError::Llm(format!(
-                "Gemini CLI failed: {}",
-                output.stderr
-            )));
-        }
-
-        // Parse output
-        let processed_text = self.parse_json_output(&output.stdout)?;
-
-        let processing_time_ms = start_time.elapsed().as_millis() as u64;
-
-        tracing::info!(
-            "LLM processing completed in {}ms (output length: {} chars)",
-            processing_time_ms,
-            processed_text.len()
-        );
-
-        Ok(ProcessingOutput {
-            text: processed_text,
-            processing_time_ms,
-            metadata: None,
-        })
-    }
-
-    async fn health_check(&self) -> Result<bool> {
-        tracing::debug!("Performing gemini CLI health check");
-
-        let is_available = self.executor.is_available("gemini").await;
-
-        if is_available {
-            tracing::info!("Gemini CLI is available");
-            Ok(true)
-        } else {
-            tracing::warn!("Gemini CLI is not available in PATH");
-            Ok(false)
-        }
-    }
-}
+cli_processor!(GeminiProcessor, SPEC);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lt_core::llm::LlmProcessor;
 
     #[tokio::test]
     #[ignore = "requires a locally installed Gemini CLI"]
@@ -180,18 +53,43 @@ mod tests {
 
     #[test]
     fn test_parse_json_output() {
-        let processor = GeminiProcessor::new();
+        assert_eq!(
+            parse_json_output(r#"{"text": "Hello world"}"#),
+            "Hello world"
+        );
+        assert_eq!(
+            parse_json_output(r#"{"content": "Hello world"}"#),
+            "Hello world"
+        );
+        assert_eq!(
+            parse_json_output(r#"{"response": "Hello world"}"#),
+            "Hello world"
+        );
+        assert_eq!(parse_json_output("  Hello world  "), "Hello world");
+    }
 
-        // Test with "text" field
-        let json1 = r#"{"text": "Hello world"}"#;
-        assert_eq!(processor.parse_json_output(json1).unwrap(), "Hello world");
+    #[test]
+    fn the_configured_model_falls_back_to_the_default() {
+        assert_eq!(
+            GeminiProcessor::with_model(Some(String::new()))
+                .inner
+                .model(),
+            DEFAULT_MODEL
+        );
+        assert_eq!(
+            GeminiProcessor::with_model(Some("gemini-x".into()))
+                .inner
+                .model(),
+            "gemini-x"
+        );
+    }
 
-        // Test with "content" field
-        let json2 = r#"{"content": "Hello world"}"#;
-        assert_eq!(processor.parse_json_output(json2).unwrap(), "Hello world");
-
-        // Test with plain text fallback
-        let plain = "Hello world";
-        assert_eq!(processor.parse_json_output(plain).unwrap(), "Hello world");
+    #[test]
+    fn arguments_carry_the_prompt_and_model() {
+        let args = (SPEC.args)("say hi", "gemini-x");
+        assert_eq!(
+            args,
+            ["-p", "say hi", "--output-format", "json", "-m", "gemini-x"]
+        );
     }
 }

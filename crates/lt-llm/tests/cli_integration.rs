@@ -229,3 +229,97 @@ async fn test_cli_stdout_stderr_capture() {
     assert!(result.stderr.is_empty());
     assert_eq!(result.exit_code, 0);
 }
+
+// ---------------------------------------------------------------------------
+// CliLlmProcessor: the behaviour both CLI processors now share.
+// ---------------------------------------------------------------------------
+
+use lt_core::llm::{LlmProcessor, ProcessingTask};
+use lt_llm::cli::{CliLlmProcessor, CliSpec};
+use lt_llm::prompts::PromptManager;
+
+/// Build a spec pointing at a throwaway script. The leaks are bounded by the
+/// test binary's lifetime and let the spec satisfy its 'static bound.
+fn fake_cli(script: &str) -> (&'static CliSpec, tempfile::TempDir) {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("fake-cli");
+    fs::write(&path, script).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    let binary: &'static str = Box::leak(path.to_str().unwrap().to_owned().into_boxed_str());
+    let spec: &'static CliSpec = Box::leak(Box::new(CliSpec {
+        binary,
+        display_name: "Fake CLI",
+        default_model: "fake-default",
+        install_hint: "Please install fake-cli.",
+        args: |prompt, model| {
+            vec![
+                "--prompt".into(),
+                prompt.into(),
+                "--model".into(),
+                model.into(),
+            ]
+        },
+        parse: |stdout| stdout.trim().to_string(),
+    }));
+    (spec, dir)
+}
+
+fn post_process() -> ProcessingTask {
+    ProcessingTask::PostProcess {
+        text: "hello".into(),
+        dictionary_terms: Vec::new(),
+    }
+}
+
+#[tokio::test]
+async fn the_configured_model_reaches_the_command_line() {
+    let (spec, _dir) = fake_cli("#!/bin/sh\nshift 2\necho \"model=$2\"\n");
+    let processor =
+        CliLlmProcessor::with_model_and_prompts(spec, Some("chosen".into()), PromptManager::new());
+    let output = processor.process(post_process()).await.unwrap();
+    assert_eq!(output.text, "model=chosen");
+}
+
+#[tokio::test]
+async fn an_absent_model_override_falls_back_to_the_spec_default() {
+    let (spec, _dir) = fake_cli("#!/bin/sh\nshift 2\necho \"model=$2\"\n");
+    let processor = CliLlmProcessor::with_model_and_prompts(spec, None, PromptManager::new());
+    assert_eq!(processor.model(), "fake-default");
+    let output = processor.process(post_process()).await.unwrap();
+    assert_eq!(output.text, "model=fake-default");
+}
+
+#[tokio::test]
+async fn a_nonzero_exit_reports_the_tool_name_and_its_stderr() {
+    let (spec, _dir) = fake_cli("#!/bin/sh\necho 'boom' >&2\nexit 3\n");
+    let processor = CliLlmProcessor::with_model_and_prompts(spec, None, PromptManager::new());
+    let error = processor
+        .process(post_process())
+        .await
+        .expect_err("a failing tool must not look successful")
+        .to_string();
+    assert!(error.contains("Fake CLI failed"), "{error}");
+    assert!(error.contains("boom"), "{error}");
+}
+
+#[tokio::test]
+async fn a_missing_binary_reports_the_install_hint() {
+    static MISSING: CliSpec = CliSpec {
+        binary: "nonexistent-cli-tool-xyz123",
+        display_name: "Fake CLI",
+        default_model: "fake-default",
+        install_hint: "Please install fake-cli.",
+        args: |prompt, _| vec![prompt.into()],
+        parse: |stdout| stdout.trim().to_string(),
+    };
+    let processor = CliLlmProcessor::with_model_and_prompts(&MISSING, None, PromptManager::new());
+    let error = processor
+        .process(post_process())
+        .await
+        .expect_err("a missing binary must be an error")
+        .to_string();
+    assert!(error.contains("Fake CLI not found"), "{error}");
+    assert!(error.contains("Please install fake-cli."), "{error}");
+
+    assert!(!processor.health_check().await.unwrap());
+}

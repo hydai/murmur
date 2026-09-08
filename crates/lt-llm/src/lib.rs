@@ -1,3 +1,4 @@
+pub mod cli;
 pub mod copilot;
 pub mod executor;
 pub mod gemini;
