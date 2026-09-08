@@ -369,3 +369,18 @@ describe('history opt-out', () => {
     expect(button(target, 'Save transcription history').textContent).toContain('Off');
   });
 });
+
+describe('chinese conversion setting', () => {
+  it('shows the active conversion and switches it through the backend', async () => {
+    mocks.invoke.mockImplementation(async command => command === 'get_config'
+      ? { output_mode: 'clipboard', save_history: true, chinese_conversion: 'traditional' }
+      : undefined);
+    const { target } = render(OutputConfig, {});
+    await settle();
+    expect(button(target, 'Traditional Chinese (Taiwan)').textContent).toContain('Active');
+    button(target, 'No conversion').click();
+    await settle();
+    expect(mocks.invoke).toHaveBeenCalledWith('set_chinese_conversion', { mode: 'none' });
+    expect(button(target, 'No conversion').textContent).toContain('Active');
+  });
+});

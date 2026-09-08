@@ -31,6 +31,12 @@ hotkey = "Ctrl+`"
 # Set to false to stop writing finished transcriptions to history.json
 save_history = true
 
+# Chinese Output
+# "traditional": convert Simplified Chinese to Traditional (Taiwan phrasing)
+# "none": deliver the text exactly as transcribed
+# Translations whose target is Simplified Chinese are never converted.
+chinese_conversion = "traditional"
+
 # API Keys
 # Store your API keys here or use environment variables
 [api_keys]

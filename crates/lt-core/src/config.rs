@@ -87,6 +87,17 @@ impl Default for UiPreferences {
     }
 }
 
+/// How Chinese text in the final output is converted before delivery.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ChineseConversion {
+    /// Convert Simplified Chinese to Traditional Chinese with Taiwan phrasing.
+    #[default]
+    Traditional,
+    /// Deliver the text as transcribed.
+    None,
+}
+
 /// Application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -131,6 +142,10 @@ pub struct AppConfig {
     /// Whether finished transcriptions are written to history.json
     #[serde(default = "default_save_history")]
     pub save_history: bool,
+
+    /// Chinese conversion applied to the final output
+    #[serde(default)]
+    pub chinese_conversion: ChineseConversion,
 }
 
 fn default_save_history() -> bool {
@@ -160,6 +175,7 @@ impl Default for AppConfig {
             http_llm_config: HttpLlmConfig::default(),
             http_stt_config: HttpSttConfig::default(),
             save_history: default_save_history(),
+            chinese_conversion: ChineseConversion::default(),
         }
     }
 }
@@ -264,5 +280,25 @@ mod tests {
         assert!(!legacy.contains("save_history"));
         let parsed: AppConfig = toml::from_str(&legacy).unwrap();
         assert!(parsed.save_history);
+    }
+
+    #[test]
+    fn chinese_conversion_defaults_to_traditional_for_existing_config_files() {
+        assert_eq!(
+            AppConfig::default().chinese_conversion,
+            ChineseConversion::Traditional
+        );
+        let written = toml::to_string(&AppConfig::default()).unwrap();
+        let legacy: String = written
+            .lines()
+            .filter(|line| !line.starts_with("chinese_conversion"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let parsed: AppConfig = toml::from_str(&legacy).unwrap();
+        assert_eq!(parsed.chinese_conversion, ChineseConversion::Traditional);
+        // Top-level keys must precede the tables in the written document.
+        let none: AppConfig =
+            toml::from_str(&format!("chinese_conversion = \"none\"\n{legacy}")).unwrap();
+        assert_eq!(none.chinese_conversion, ChineseConversion::None);
     }
 }

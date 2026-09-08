@@ -804,6 +804,27 @@ async fn set_output_mode(mode: String, state: tauri::State<'_, AppState>) -> Res
 }
 
 #[tauri::command]
+async fn set_chinese_conversion(
+    mode: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let conversion = match mode.to_lowercase().as_str() {
+        "traditional" => lt_core::config::ChineseConversion::Traditional,
+        "none" => lt_core::config::ChineseConversion::None,
+        _ => return Err(format!("Unknown Chinese conversion mode: {mode}")),
+    };
+    state
+        .store
+        .config
+        .update(move |config| {
+            config.chinese_conversion = conversion;
+            Ok(())
+        })
+        .await
+        .map(|_| ())
+}
+
+#[tauri::command]
 async fn set_save_history(enabled: bool, state: tauri::State<'_, AppState>) -> Result<(), String> {
     state
         .store
@@ -941,6 +962,9 @@ async fn start_pipeline(
     let output = CombinedOutput::new(config.output_mode)
         .map_err(|error| format!("Failed to initialize output: {error}"))?;
     pipeline.set_output_sink(Arc::new(output)).await;
+    pipeline
+        .set_chinese_conversion(config.chinese_conversion)
+        .await;
     *pipeline.get_dictionary().lock().await = state.store.dictionary.read().await?;
 
     // Start the pipeline
@@ -1539,6 +1563,7 @@ fn main() {
             set_custom_stt_endpoint,
             set_output_mode,
             set_save_history,
+            set_chinese_conversion,
             set_hotkey,
             get_dictionary,
             add_dictionary_entry,

@@ -118,6 +118,7 @@ cargo tauri build
 - Read and mutate config, history, and dictionary through the shared `AppStore`; do not add independent read-modify-write sequences in IPC commands.
 - `get_config` returns `AppConfig::redacted()` (no `api_keys`) and `save_config` applies the copy with `apply_redacted`, so keys only change through `save_api_key`. Data files are owner-only (0600); `AppStore::new` tightens files written by earlier releases.
 - `AppConfig.save_history` (default true) gates history writes: `set_save_history` persists it and flips `HistoryStore::set_enabled`, which drops appends while disabled; main applies the stored value at startup.
+- `AppConfig.chinese_conversion` (`traditional` default, or `none`) is snapshotted per recording via `set_chinese_conversion`; `text_normalization::finalize_output` applies it and never converts a translation whose target is Simplified Chinese.
 - File replacements use `lt_core::persistence::atomic_write`. Corrupt or unreadable files must not silently become empty documents.
 - Prompt disk and memory updates share an owned write guard, including when the command caller is cancelled.
 - Desktop-mutating tests and tests requiring installed CLI tools are opt-in (`#[ignore]`); normal tests use fake providers/processes and local HTTP servers.

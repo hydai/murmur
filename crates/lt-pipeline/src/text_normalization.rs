@@ -1,6 +1,7 @@
 use std::sync::OnceLock;
 
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
+use lt_core::config::ChineseConversion;
 
 static OPENCC_S2TWP: OnceLock<Result<OpenCC, String>> = OnceLock::new();
 
@@ -23,7 +24,29 @@ const FALLBACK_TAIWAN_REPLACEMENTS: &[(&str, &str)] = &[
     ("复制", "複製"),
 ];
 
-pub(crate) fn normalize_final_output(text: &str) -> String {
+/// Apply the configured Chinese conversion to the final output. A translation
+/// whose target is Simplified Chinese is delivered as produced, whatever the
+/// setting says.
+pub(crate) fn finalize_output(
+    text: &str,
+    conversion: ChineseConversion,
+    translate_target: Option<&str>,
+) -> String {
+    match conversion {
+        ChineseConversion::None => text.to_string(),
+        ChineseConversion::Traditional if translate_target.is_some_and(targets_simplified) => {
+            text.to_string()
+        }
+        ChineseConversion::Traditional => normalize_final_output(text),
+    }
+}
+
+fn targets_simplified(target: &str) -> bool {
+    let lower = target.to_lowercase();
+    lower.contains("simplified") || lower.contains("简体") || lower.contains("簡體")
+}
+
+fn normalize_final_output(text: &str) -> String {
     if text.is_empty() || contains_japanese_kana(text) {
         return text.to_string();
     }
@@ -129,6 +152,37 @@ mod tests {
         let output = normalize_final_output(input);
 
         assert_eq!(output, "軟體會把資料庫資料複製到伺服器記憶體。");
+    }
+
+    #[test]
+    fn finalize_output_respects_the_conversion_setting() {
+        let input = "软件会把数据复制到服务器。";
+        assert_eq!(finalize_output(input, ChineseConversion::None, None), input);
+        assert_eq!(
+            finalize_output(input, ChineseConversion::Traditional, None),
+            "軟體會把資料複製到伺服器。"
+        );
+    }
+
+    #[test]
+    fn finalize_output_keeps_simplified_translations_simplified() {
+        let input = "软件会把数据复制到服务器。";
+        for target in [
+            "Simplified Chinese",
+            "simplified chinese",
+            "简体中文",
+            "簡體中文",
+        ] {
+            assert_eq!(
+                finalize_output(input, ChineseConversion::Traditional, Some(target)),
+                input,
+                "target {target}"
+            );
+        }
+        assert_eq!(
+            finalize_output(input, ChineseConversion::Traditional, Some("Japanese")),
+            "軟體會把資料複製到伺服器。"
+        );
     }
 
     #[test]
