@@ -58,7 +58,9 @@
     try {
       error = '';
       success = '';
-      await writeText(formatDiagnosticLogsForClipboard(logs));
+      // Export in the order the panel shows, so the entry the user just
+      // read at the top is the first line they paste.
+      await writeText(formatDiagnosticLogsForClipboard(newestFirstLogs));
       success = 'Diagnostics copied';
       lifecycle.timeout(() => { success = ''; }, 3000, 'success');
     } catch (err) {
