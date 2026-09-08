@@ -368,7 +368,7 @@
           <label for="custom-display-name">Display Name <span class="optional">(optional)</span></label>
           <input id="custom-display-name" type="text" bind:value={customDisplayName} placeholder="e.g., Local Ollama" />
         </div>
-        <button class="primary-btn" onclick={saveCustomEndpoint} disabled={loading || !customBaseUrl.trim()}>
+        <button class="btn btn-block btn-primary" onclick={saveCustomEndpoint} disabled={loading || !customBaseUrl.trim()}>
           {loading ? 'Saving...' : 'Save & Activate'}
         </button>
       </div>
@@ -416,8 +416,8 @@
       </div>
 
       <div class="modal-actions">
-        <button class="btn-secondary" onclick={closeModal}>Cancel</button>
-        <button class="btn-primary" onclick={saveApiKey} disabled={loading}>
+        <button class="btn btn-md btn-secondary" onclick={closeModal}>Cancel</button>
+        <button class="btn btn-md btn-primary" onclick={saveApiKey} disabled={loading}>
           {loading ? 'Saving...' : editingExistingKey ? 'Update Key' : 'Save & Activate'}
         </button>
       </div>
@@ -530,27 +530,8 @@
     color: var(--text-placeholder);
   }
 
-  .primary-btn {
-    width: 100%;
-    padding: 8px;
-    border-radius: 8px;
-    border: none;
-    background: var(--accent);
-    color: var(--text-primary);
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
 
-  .primary-btn:hover:not(:disabled) {
-    background: var(--accent-hover);
-  }
 
-  .primary-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
 
   /* Model override */
   .model-row {
@@ -680,36 +661,9 @@
     justify-content: flex-end;
   }
 
-  .btn-primary, .btn-secondary {
-    padding: 8px 16px;
-    border-radius: 8px;
-    border: none;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
 
-  .btn-primary {
-    background: var(--accent);
-    color: var(--text-primary);
-  }
 
-  .btn-primary:hover:not(:disabled) {
-    background: var(--accent-hover);
-  }
 
-  .btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
 
-  .btn-secondary {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--text-primary);
-  }
 
-  .btn-secondary:hover {
-    background: rgba(255, 255, 255, 0.15);
-  }
 </style>

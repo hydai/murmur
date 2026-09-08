@@ -162,7 +162,7 @@
 
     <div class="actions">
       <button
-        class="btn-secondary"
+        class="btn btn-md btn-secondary"
         onclick={reset}
         disabled={loading || !current.is_override}
         title={current.is_override ? 'Delete the override and revert to the built-in default' : 'No override to reset'}
@@ -171,7 +171,7 @@
       </button>
       <span class="spacer"></span>
       <button
-        class="btn-primary"
+        class="btn btn-md btn-primary"
         onclick={save}
         disabled={loading || !isDirty || isEmpty}
       >
@@ -287,42 +287,10 @@
     flex: 1;
   }
 
-  .btn-primary,
-  .btn-secondary {
-    padding: 8px 16px;
-    border-radius: 8px;
-    border: none;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
 
-  .btn-primary {
-    background: var(--accent);
-    color: var(--text-primary);
-  }
 
-  .btn-primary:hover:not(:disabled) {
-    background: var(--accent-hover);
-  }
 
-  .btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
 
-  .btn-secondary {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--text-primary);
-  }
 
-  .btn-secondary:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.15);
-  }
 
-  .btn-secondary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
 </style>

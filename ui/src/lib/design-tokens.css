@@ -14,6 +14,10 @@
   /* Borders */
   --border: #1E1E2E;
 
+  /* Raised surfaces (secondary buttons, hover fills) */
+  --surface-raised: rgba(255, 255, 255, 0.1);
+  --surface-raised-hover: rgba(255, 255, 255, 0.15);
+
   /* Status */
   --status-green: #22C55E;
   --status-red: #EF4444;

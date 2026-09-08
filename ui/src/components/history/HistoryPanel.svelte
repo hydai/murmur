@@ -150,7 +150,7 @@
   <div class="header">
     <h2>History</h2>
     {#if entries.length > 0}
-      <button class="btn btn-danger-outline" onclick={() => { showClearModal = true; }}>
+      <button class="btn btn-lg btn-danger-outline" onclick={() => { showClearModal = true; }}>
         Clear All
       </button>
     {/if}
@@ -209,7 +209,7 @@
             <button class="btn-icon" onclick={() => copyText(entry.final_text)} title="Copy">
               📋
             </button>
-            <button class="btn-icon btn-danger" onclick={() => deleteEntry(entry.id)} title="Delete" disabled={loading || mutating}>
+            <button class="btn-icon is-danger" onclick={() => deleteEntry(entry.id)} title="Delete" disabled={loading || mutating}>
               ✕
             </button>
           </div>
@@ -217,7 +217,7 @@
       {/each}
 
       {#if hasMore && !searchQuery.trim()}
-        <button class="btn btn-secondary load-more" onclick={loadMore} disabled={loading}>
+        <button class="btn btn-lg btn-secondary load-more" onclick={loadMore} disabled={loading}>
           {loading ? 'Loading...' : 'Load more'}
         </button>
       {/if}
@@ -234,8 +234,8 @@
       <p>Are you sure you want to delete all transcription history? This cannot be undone.</p>
 
       <div class="modal-actions">
-        <button class="btn btn-secondary" onclick={() => { showClearModal = false; }}>Cancel</button>
-        <button class="btn btn-danger" onclick={clearAll} disabled={loading}>
+        <button class="btn btn-lg btn-secondary" onclick={() => { showClearModal = false; }}>Cancel</button>
+        <button class="btn btn-lg btn-danger" onclick={clearAll} disabled={loading}>
           {loading ? 'Clearing...' : 'Clear All'}
         </button>
       </div>
@@ -426,55 +426,19 @@
     color: #fff;
   }
 
-  .btn-icon.btn-danger:hover {
+  .btn-icon.is-danger:hover {
     background: rgba(239, 68, 68, 0.2);
     border-color: rgba(239, 68, 68, 0.5);
     color: #fca5a5;
   }
 
-  .btn {
-    padding: 10px 20px;
-    border-radius: 8px;
-    border: none;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
 
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
 
-  .btn-secondary {
-    background: rgba(255, 255, 255, 0.1);
-    color: #fff;
-  }
 
-  .btn-secondary:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.15);
-  }
 
-  .btn-danger {
-    background: rgba(239, 68, 68, 0.3);
-    color: #fca5a5;
-    border: 1px solid rgba(239, 68, 68, 0.5);
-  }
 
-  .btn-danger:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.4);
-  }
 
-  .btn-danger-outline {
-    background: transparent;
-    color: #fca5a5;
-    border: 1px solid rgba(239, 68, 68, 0.4);
-  }
 
-  .btn-danger-outline:hover {
-    background: rgba(239, 68, 68, 0.15);
-  }
 
   .load-more {
     align-self: center;
