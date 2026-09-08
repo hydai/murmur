@@ -19,7 +19,6 @@ serde.workspace = true
 
 # Error handling
 thiserror.workspace = true
-anyhow = "1.0.104"
 
 # Logging
 tracing.workspace = true
