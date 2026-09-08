@@ -177,16 +177,22 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "Default permissions for the Murmur app\n#### This default permission set includes:\n\n- `allow-all-commands`",
+          "description": "Reading and pruning the transcription history",
           "type": "string",
-          "const": "default",
-          "markdownDescription": "Default permissions for the Murmur app\n#### This default permission set includes:\n\n- `allow-all-commands`"
+          "const": "history-commands",
+          "markdownDescription": "Reading and pruning the transcription history"
         },
         {
-          "description": "Allow all custom app commands",
+          "description": "What the always-on recording overlay needs",
           "type": "string",
-          "const": "allow-all-commands",
-          "markdownDescription": "Allow all custom app commands"
+          "const": "overlay-commands",
+          "markdownDescription": "What the always-on recording overlay needs"
+        },
+        {
+          "description": "Reading and writing every configurable setting",
+          "type": "string",
+          "const": "settings-commands",
+          "markdownDescription": "Reading and writing every configurable setting"
         },
         {
           "description": "No features are enabled by default, as we believe\nthe clipboard can be inherently dangerous and it is \napplication specific if read and/or write access is needed.\n\nClipboard interaction needs to be explicitly enabled.\n",

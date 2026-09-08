@@ -1,7 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "overlay",
-  "description": "Allow dragging the floating recording window",
+  "description": "The always-on recording overlay: start or stop a recording, open settings, drag the window",
   "windows": ["main"],
-  "permissions": ["core:window:allow-start-dragging"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "overlay-commands"
+  ]
 }
