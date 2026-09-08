@@ -1,4 +1,13 @@
 # Changelog
+## 0.2.16 (2026-09-08)
+
+### Fixes
+
+- replace disabled depends_on macos symbol in cask template (#111)
+- harden recording lifecycle and application state (#113)
+- address audit follow-ups for secrets, history, cancellation, and parsing (#114)
+- keep transcripts out of logs, fail fast on rejected handshakes, and bound keyboard output (#115)
+
 ## 0.2.15 (2026-09-07)
 
 ### Fixes
