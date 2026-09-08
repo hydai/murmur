@@ -232,7 +232,6 @@
 
 <!-- Clear All Confirmation Modal -->
 {#if showClearModal}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal-overlay" onclick={() => { showClearModal = false; }} onkeydown={(e: KeyboardEvent) => e.key === 'Escape' && (showClearModal = false)} role="presentation">
 
     <div class="modal modal-small" onclick={(e: MouseEvent) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') showClearModal = false; e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-label="Clear all history">

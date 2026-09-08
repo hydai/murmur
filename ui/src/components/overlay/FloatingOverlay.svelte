@@ -14,7 +14,6 @@
   let partialText = $state('');
   let committedText = $state('');
   let isProcessing = $state(false);
-  let processedText = $state('');
   let pipelineState = $state('idle');
   let showResultIndicator = $state(false);
   let detectedCommand = $state<string | null>(null);
@@ -39,7 +38,6 @@
     errorMessage = null;
     partialText = '';
     committedText = '';
-    processedText = '';
     isProcessing = false;
     showResultIndicator = false;
     detectedCommand = null;
@@ -63,7 +61,6 @@
     overlayVisible = false;
     lifecycle.timeout(() => {
       committedText = '';
-      processedText = '';
       partialText = '';
       errorMessage = null;
       overlayVisible = true;
@@ -131,7 +128,6 @@
           // A cancelled session returns to Idle without a result.
           committedText = '';
           partialText = '';
-          processedText = '';
           cancelled = true;
           lifecycle.timeout(() => { cancelled = false; }, 2000, 'cancelled');
         }
@@ -146,7 +142,6 @@
       // Final text remains available even if delivery to the selected output fails.
       await lifecycle.listen('pipeline-result', (event) => {
         const payload = event.payload as { text: string; processing_time_ms: number };
-        processedText = payload.text;
         committedText = payload.text;
         // Do not wait for the terminal pipeline-state to clear the spinner.
         isProcessing = false;

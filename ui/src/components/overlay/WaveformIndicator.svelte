@@ -23,7 +23,7 @@
 
 <div class="waveform-container">
   <div class="waveform">
-    {#each barHeights as height, i}
+    {#each barHeights as height}
       <div
         class="bar"
         class:active={voiceActive}
