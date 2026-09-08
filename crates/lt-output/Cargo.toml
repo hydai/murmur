@@ -9,10 +9,10 @@ repository.workspace = true
 lt-core = { path = "../lt-core" }
 arboard = "3.6.1"
 enigo = "0.6.1"
-tokio = { version = "1.53.1", features = ["rt", "time"] }
+tokio = { workspace = true, features = ["rt", "time"] }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
