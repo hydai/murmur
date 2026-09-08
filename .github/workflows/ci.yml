@@ -73,8 +73,10 @@ jobs:
         working-directory: ui
         run: npm ci
 
+      # Unpinned, this compiles whatever tauri-cli is newest that day;
+      # --locked also builds it from its own lockfile.
       - name: Install Tauri CLI
-        run: cargo install tauri-cli
+        run: cargo install tauri-cli --version "^2.11" --locked
 
       - name: Build Tauri app
         run: cargo tauri build
