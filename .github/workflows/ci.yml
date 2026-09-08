@@ -46,14 +46,12 @@ jobs:
         working-directory: ui
         run: npm run build
 
-      - name: Cargo check
-        run: cargo check --workspace
-
       - name: Cargo test
         run: cargo test --workspace
 
+      # --all-targets covers tests and examples too, and subsumes cargo check.
       - name: Cargo clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Cargo fmt
         run: cargo fmt --all -- --check
