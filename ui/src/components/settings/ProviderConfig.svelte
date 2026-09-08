@@ -56,7 +56,7 @@
 
   async function initialize() {
     try {
-      await lifecycle.listen<{ locale: string; progress: number; finished: boolean; error: string | null }>(
+      await lifecycle.listen(
         'apple-stt-model-progress',
         (event) => {
           const { progress, finished, error: errorMsg } = event.payload;
