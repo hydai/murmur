@@ -105,6 +105,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Mint a short-lived tap token
+        id: tap-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: homebrew-murmur
+          permission-contents: write
+
       - name: Update Homebrew cask
         run: |
           VERSION=$(grep '^version' crates/lt-tauri/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
@@ -144,4 +154,4 @@ jobs:
           git commit -m "chore: update murmur to ${VERSION}"
           git push
         env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ steps.tap-token.outputs.token }}
