@@ -151,14 +151,7 @@ async fn set_stt_provider(
     provider: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let provider = match provider.to_lowercase().as_str() {
-        "elevenlabs" => SttProviderType::ElevenLabs,
-        "openai" => SttProviderType::OpenAI,
-        "groq" => SttProviderType::Groq,
-        "apple_stt" => SttProviderType::AppleStt,
-        "custom_stt" => SttProviderType::CustomStt,
-        _ => return Err(format!("Unknown STT provider: {provider}")),
-    };
+    let provider: SttProviderType = provider.parse()?;
     state
         .store
         .config
@@ -201,78 +194,70 @@ struct SttProviderInfo {
     model_status: Option<String>,
 }
 
+/// Whether the provider has everything it needs for the next recording.
+/// Apple's model availability is layered on separately, since it lives in
+/// lt-stt rather than the config.
+fn stt_provider_configured(provider: SttProviderType, config: &AppConfig) -> bool {
+    match provider {
+        // The base URL is what makes the endpoint usable; a local Whisper
+        // server usually needs no key.
+        SttProviderType::CustomStt => config.http_stt_config.custom_base_url.is_some(),
+        SttProviderType::AppleStt => true,
+        other => other
+            .api_key_name()
+            .is_some_and(|key| config.api_keys.contains_key(key)),
+    }
+}
+
 #[tauri::command]
 async fn get_stt_providers(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<SttProviderInfo>, String> {
     let config = state.store.config.read().await?;
 
-    let mut providers = vec![
-        SttProviderInfo {
-            name: "ElevenLabs Scribe".to_string(),
-            id: "elevenlabs".to_string(),
-            provider_type: "streaming".to_string(),
-            configured: config.api_keys.contains_key("elevenlabs"),
-            requires_api_key: true,
-            model_status: None,
-        },
-        SttProviderInfo {
-            name: "OpenAI Whisper".to_string(),
-            id: "openai".to_string(),
-            provider_type: "batch".to_string(),
-            configured: config.api_keys.contains_key("openai"),
-            requires_api_key: true,
-            model_status: None,
-        },
-        SttProviderInfo {
-            name: "Groq Whisper Turbo".to_string(),
-            id: "groq".to_string(),
-            provider_type: "batch".to_string(),
-            configured: config.api_keys.contains_key("groq"),
-            requires_api_key: true,
-            model_status: None,
-        },
-    ];
+    let mut providers = Vec::new();
+    for provider in SttProviderType::ALL {
+        if provider.is_macos_only() && !cfg!(target_os = "macos") {
+            continue;
+        }
 
-    // Add Apple STT on macOS
-    #[cfg(target_os = "macos")]
-    {
-        let available = lt_stt::apple::is_available();
-        let model_status = if !available {
-            "unavailable".to_string()
-        } else {
-            let check_locale = resolve_apple_locale(&config.apple_stt_locale);
-            match lt_stt::apple::check_model_status(&check_locale) {
-                lt_stt::apple::SpeechModelStatus::Installed => "installed".to_string(),
-                lt_stt::apple::SpeechModelStatus::NotInstalled => "not_installed".to_string(),
-                lt_stt::apple::SpeechModelStatus::Downloading => "downloading".to_string(),
-                lt_stt::apple::SpeechModelStatus::Unavailable => "unavailable".to_string(),
-            }
-        };
+        let mut configured = stt_provider_configured(provider, &config);
+        let mut model_status = None;
+
+        #[cfg(target_os = "macos")]
+        if provider == SttProviderType::AppleStt {
+            let status = if lt_stt::apple::is_available() {
+                let locale = resolve_apple_locale(&config.apple_stt_locale);
+                match lt_stt::apple::check_model_status(&locale) {
+                    lt_stt::apple::SpeechModelStatus::Installed => "installed",
+                    lt_stt::apple::SpeechModelStatus::NotInstalled => "not_installed",
+                    lt_stt::apple::SpeechModelStatus::Downloading => "downloading",
+                    lt_stt::apple::SpeechModelStatus::Unavailable => "unavailable",
+                }
+            } else {
+                "unavailable"
+            };
+            configured = status == "installed";
+            model_status = Some(status.to_string());
+        }
 
         providers.push(SttProviderInfo {
-            name: "Apple Speech".to_string(),
-            id: "apple_stt".to_string(),
-            provider_type: "local".to_string(),
-            configured: available && model_status == "installed",
-            requires_api_key: false,
-            model_status: Some(model_status),
+            name: match provider {
+                // The user names their own endpoint.
+                SttProviderType::CustomStt => config
+                    .http_stt_config
+                    .custom_display_name
+                    .clone()
+                    .unwrap_or_else(|| provider.display_name().to_string()),
+                other => other.display_name().to_string(),
+            },
+            id: provider.id().to_string(),
+            provider_type: provider.kind().as_str().to_string(),
+            configured,
+            requires_api_key: provider.api_key_name().is_some(),
+            model_status,
         });
     }
-
-    // Add custom STT endpoint
-    providers.push(SttProviderInfo {
-        name: config
-            .http_stt_config
-            .custom_display_name
-            .clone()
-            .unwrap_or_else(|| "Custom Endpoint".to_string()),
-        id: "custom_stt".to_string(),
-        provider_type: "batch".to_string(),
-        configured: config.http_stt_config.custom_base_url.is_some(),
-        requires_api_key: false,
-        model_status: None,
-    });
 
     Ok(providers)
 }
@@ -496,112 +481,70 @@ struct LlmProcessorInfo {
     api_key_name: Option<String>,
 }
 
+/// Whether the processor has everything it needs for the next recording.
+/// CLI and on-device availability is layered on separately, since probing the
+/// binary is async and platform-specific.
+fn llm_processor_configured(processor: LlmProcessorType, config: &AppConfig) -> bool {
+    match processor {
+        // The base URL is what makes the endpoint usable; a local server
+        // usually needs no key.
+        LlmProcessorType::CustomApi => config.http_llm_config.custom_base_url.is_some(),
+        other => other
+            .api_key_name()
+            .is_none_or(|key| config.api_keys.contains_key(key)),
+    }
+}
+
 #[tauri::command]
 async fn get_llm_processors(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<LlmProcessorInfo>, String> {
     let config = state.store.config.read().await?;
 
-    // Check health for CLI processors
+    // Probe both CLIs at once: a missing binary costs a process spawn each.
     let gemini = GeminiProcessor::new();
     let copilot = CopilotProcessor::new();
-
     let (gemini_available, copilot_available) =
         tokio::join!(gemini.health_check(), copilot.health_check());
     let gemini_available = gemini_available.unwrap_or(false);
     let copilot_available = copilot_available.unwrap_or(false);
 
-    let mut processors = vec![
-        // CLI processors
-        LlmProcessorInfo {
-            name: "Gemini CLI".to_string(),
-            id: "gemini".to_string(),
-            available: gemini_available,
-            default_model: lt_llm::gemini::DEFAULT_MODEL.to_string(),
-            provider_type: "cli".to_string(),
-            requires_api_key: false,
-            configured: true,
-            api_key_name: None,
-        },
-        LlmProcessorInfo {
-            name: "Copilot CLI".to_string(),
-            id: "copilot".to_string(),
-            available: copilot_available,
-            default_model: lt_llm::copilot::DEFAULT_MODEL.to_string(),
-            provider_type: "cli".to_string(),
-            requires_api_key: false,
-            configured: true,
-            api_key_name: None,
-        },
-    ];
+    let mut processors = Vec::new();
+    for processor in LlmProcessorType::ALL {
+        if processor.is_macos_only() && !cfg!(target_os = "macos") {
+            continue;
+        }
 
-    #[cfg(target_os = "macos")]
-    {
+        let configured = llm_processor_configured(processor, &config);
+        let available = match processor {
+            LlmProcessorType::Gemini => gemini_available,
+            LlmProcessorType::Copilot => copilot_available,
+            #[cfg(target_os = "macos")]
+            LlmProcessorType::AppleLlm => AppleLlmProcessor::is_available(),
+            #[cfg(not(target_os = "macos"))]
+            LlmProcessorType::AppleLlm => false,
+            _ => configured,
+        };
+
         processors.push(LlmProcessorInfo {
-            name: "Apple Intelligence".to_string(),
-            id: "apple_llm".to_string(),
-            available: AppleLlmProcessor::is_available(),
-            default_model: lt_llm::apple::DEFAULT_MODEL.to_string(),
-            provider_type: "local".to_string(),
-            requires_api_key: false,
-            configured: true,
-            api_key_name: None,
+            name: match processor {
+                // The user names their own endpoint.
+                LlmProcessorType::CustomApi => config
+                    .http_llm_config
+                    .custom_display_name
+                    .clone()
+                    .unwrap_or_else(|| processor.display_name().to_string()),
+                other => other.display_name().to_string(),
+            },
+            id: processor.id().to_string(),
+            available,
+            default_model: lt_llm::default_model(processor).to_string(),
+            provider_type: processor.kind().as_str().to_string(),
+            requires_api_key: processor.requires_api_key(),
+            configured,
+            api_key_name: processor.api_key_name().map(str::to_owned),
         });
     }
-
-    // HTTP API processors
-    let openai_configured = config.api_keys.contains_key("openai");
-    let anthropic_configured = config.api_keys.contains_key("anthropic");
-    let google_ai_configured = config.api_keys.contains_key("google_ai");
-
-    processors.push(LlmProcessorInfo {
-        name: "OpenAI API".to_string(),
-        id: "openai_api".to_string(),
-        available: openai_configured,
-        default_model: lt_llm::http_api::OPENAI_DEFAULT_MODEL.to_string(),
-        provider_type: "http".to_string(),
-        requires_api_key: true,
-        configured: openai_configured,
-        api_key_name: Some("openai".to_string()),
-    });
-    processors.push(LlmProcessorInfo {
-        name: "Claude API".to_string(),
-        id: "claude_api".to_string(),
-        available: anthropic_configured,
-        default_model: lt_llm::http_api::CLAUDE_DEFAULT_MODEL.to_string(),
-        provider_type: "http".to_string(),
-        requires_api_key: true,
-        configured: anthropic_configured,
-        api_key_name: Some("anthropic".to_string()),
-    });
-    processors.push(LlmProcessorInfo {
-        name: "Gemini API".to_string(),
-        id: "gemini_api".to_string(),
-        available: google_ai_configured,
-        default_model: lt_llm::http_api::GEMINI_API_DEFAULT_MODEL.to_string(),
-        provider_type: "http".to_string(),
-        requires_api_key: true,
-        configured: google_ai_configured,
-        api_key_name: Some("google_ai".to_string()),
-    });
-
-    let custom_name = config
-        .http_llm_config
-        .custom_display_name
-        .unwrap_or_else(|| "Custom Endpoint".to_string());
-    // The base URL is what makes the endpoint usable; a local server needs no
-    // key. This mirrors `custom_stt`, which reports the same way.
-    let custom_endpoint_set = config.http_llm_config.custom_base_url.is_some();
-    processors.push(LlmProcessorInfo {
-        name: custom_name,
-        id: "custom_api".to_string(),
-        available: custom_endpoint_set,
-        default_model: lt_llm::http_api::OPENAI_DEFAULT_MODEL.to_string(),
-        provider_type: "custom".to_string(),
-        requires_api_key: false,
-        configured: custom_endpoint_set,
-        api_key_name: Some("custom_llm".to_string()),
-    });
 
     Ok(processors)
 }
@@ -727,16 +670,7 @@ async fn set_llm_processor(
     processor: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let processor = match processor.to_lowercase().as_str() {
-        "gemini" => LlmProcessorType::Gemini,
-        "copilot" => LlmProcessorType::Copilot,
-        "apple_llm" => LlmProcessorType::AppleLlm,
-        "openai_api" => LlmProcessorType::OpenAiApi,
-        "claude_api" => LlmProcessorType::ClaudeApi,
-        "gemini_api" => LlmProcessorType::GeminiApi,
-        "custom_api" => LlmProcessorType::CustomApi,
-        _ => return Err(format!("Unknown LLM processor: {processor}")),
-    };
+    let processor: LlmProcessorType = processor.parse()?;
     state
         .store
         .config
@@ -1828,6 +1762,70 @@ mod tests {
         AppConfig {
             llm_processor: processor,
             ..AppConfig::default()
+        }
+    }
+
+    #[test]
+    fn a_provider_counts_as_configured_once_its_key_is_present() {
+        let mut config = AppConfig::default();
+        for provider in SttProviderType::ALL {
+            let Some(key) = provider.api_key_name() else {
+                continue;
+            };
+            assert!(!stt_provider_configured(provider, &config), "{provider:?}");
+            config.api_keys.insert(key.into(), "k".into());
+            assert!(stt_provider_configured(provider, &config), "{provider:?}");
+        }
+    }
+
+    #[test]
+    fn the_custom_endpoints_hinge_on_the_base_url_not_the_key() {
+        let mut config = AppConfig::default();
+        config.api_keys.insert("custom_stt".into(), "k".into());
+        config.api_keys.insert("custom_llm".into(), "k".into());
+        assert!(!stt_provider_configured(
+            SttProviderType::CustomStt,
+            &config
+        ));
+        assert!(!llm_processor_configured(
+            LlmProcessorType::CustomApi,
+            &config
+        ));
+
+        config.http_stt_config.custom_base_url = Some("http://127.0.0.1/v1".into());
+        config.http_llm_config.custom_base_url = Some("http://127.0.0.1/v1".into());
+        assert!(stt_provider_configured(SttProviderType::CustomStt, &config));
+        assert!(llm_processor_configured(
+            LlmProcessorType::CustomApi,
+            &config
+        ));
+    }
+
+    #[test]
+    fn processors_that_need_no_key_are_configured_out_of_the_box() {
+        let config = AppConfig::default();
+        for processor in [
+            LlmProcessorType::Gemini,
+            LlmProcessorType::Copilot,
+            LlmProcessorType::AppleLlm,
+        ] {
+            assert!(
+                llm_processor_configured(processor, &config),
+                "{processor:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_processor_declares_a_default_model() {
+        for processor in LlmProcessorType::ALL {
+            if processor.is_macos_only() && !cfg!(target_os = "macos") {
+                continue;
+            }
+            assert!(
+                !lt_llm::default_model(processor).is_empty(),
+                "{processor:?} has no default model"
+            );
         }
     }
 
