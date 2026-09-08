@@ -9,16 +9,24 @@ repository.workspace = true
 lt-core = { path = "../lt-core" }
 
 # Async runtime
-tokio = { version = "1.53.1", features = ["full"] }
+tokio = { workspace = true, features = [
+    "io-util",
+    "macros",
+    "net",
+    "rt",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
 async-trait.workspace = true
 
 # WebSocket
 tokio-tungstenite = { version = "0.30.0", features = ["native-tls"] }
 futures-util = "0.3.34"
-url = "2.5.8"
+url = { workspace = true }
 
 # HTTP client (for REST providers)
-reqwest = { version = "0.13.4", features = ["json", "multipart"] }
+reqwest = { workspace = true, features = ["json", "multipart"] }
 
 # WAV encoding (used by chunker for REST providers)
 hound = "3.5.1"
@@ -29,12 +37,12 @@ serde_json.workspace = true
 base64 = "0.23.1"
 
 # Locale detection (for Apple STT "auto" mode)
-sys-locale = "0.3.2"
+sys-locale = { workspace = true }
 
 # Error handling and logging
 thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-tracing-subscriber = "0.3.23"
+tracing-subscriber = { workspace = true }
 tokio-test = "0.4.5"

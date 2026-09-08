@@ -23,3 +23,13 @@ thiserror = "2.0.20"
 async-trait = "0.1.92"
 tracing = "0.1.44"
 directories = "6.0.0"
+
+# Each crate selects the features it needs on top of these; the version lives
+# here so an upgrade cannot leave one manifest behind.
+tokio = { version = "1.53.1" }
+# Keeps its default TLS stack; only the extra features differ per crate.
+reqwest = { version = "0.13.4" }
+tempfile = "3.27.0"
+tracing-subscriber = "0.3.23"
+sys-locale = "0.3.2"
+url = "2.5.8"
