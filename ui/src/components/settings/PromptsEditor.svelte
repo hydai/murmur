@@ -46,11 +46,13 @@
 
   function syncEditor() {
     editorContent = current?.content ?? '';
-    error = '';
-    success = '';
   }
 
   function onSelectChange() {
+    // Reloading after a save must keep the banner, so the reset lives with the
+    // selection change rather than inside syncEditor.
+    error = '';
+    success = '';
     syncEditor();
   }
 
@@ -70,7 +72,7 @@
       await loadPrompts();
       lifecycle.timeout(() => {
         success = '';
-      }, 3000);
+      }, 3000, 'success');
     } catch (err) {
       error = `Failed to save: ${err}`;
       console.error(error);
@@ -89,7 +91,7 @@
       await loadPrompts();
       lifecycle.timeout(() => {
         success = '';
-      }, 3000);
+      }, 3000, 'success');
     } catch (err) {
       error = `Failed to reset: ${err}`;
       console.error(error);
