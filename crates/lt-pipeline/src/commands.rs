@@ -20,18 +20,13 @@ pub struct CommandDetection {
 /// - "reply to:" / "generate reply:" → ProcessingTask::GenerateReply
 /// - "translate to [language]:" → ProcessingTask::Translate (with target language)
 /// - No command prefix → ProcessingTask::PostProcess (default cleanup)
+///
+/// A command with no content after the colon, or a translate whose language is
+/// longer than three words, is treated as ordinary speech.
 pub fn detect_command(text: &str, dictionary_terms: Vec<String>) -> CommandDetection {
     let trimmed = text.trim();
-    let lower = trimmed.to_lowercase();
 
-    // Shorten command
-    if lower.starts_with("shorten this:") || lower.starts_with("shorten:") {
-        let prefix_len = if lower.starts_with("shorten this:") {
-            13
-        } else {
-            8
-        };
-        let content = trimmed[prefix_len..].trim().to_string();
+    if let Some(content) = content_after(trimmed, &["shorten this:", "shorten:"]) {
         return CommandDetection {
             task: ProcessingTask::Shorten {
                 text: content.clone(),
@@ -41,14 +36,7 @@ pub fn detect_command(text: &str, dictionary_terms: Vec<String>) -> CommandDetec
         };
     }
 
-    // Make it formal command
-    if lower.starts_with("make it formal:") || lower.starts_with("formalize:") {
-        let prefix_len = if lower.starts_with("make it formal:") {
-            15
-        } else {
-            10
-        };
-        let content = trimmed[prefix_len..].trim().to_string();
+    if let Some(content) = content_after(trimmed, &["make it formal:", "formalize:"]) {
         return CommandDetection {
             task: ProcessingTask::ChangeTone {
                 text: content.clone(),
@@ -59,14 +47,7 @@ pub fn detect_command(text: &str, dictionary_terms: Vec<String>) -> CommandDetec
         };
     }
 
-    // Make it casual command
-    if lower.starts_with("make it casual:") || lower.starts_with("casualize:") {
-        let prefix_len = if lower.starts_with("make it casual:") {
-            15
-        } else {
-            10
-        };
-        let content = trimmed[prefix_len..].trim().to_string();
+    if let Some(content) = content_after(trimmed, &["make it casual:", "casualize:"]) {
         return CommandDetection {
             task: ProcessingTask::ChangeTone {
                 text: content.clone(),
@@ -77,14 +58,7 @@ pub fn detect_command(text: &str, dictionary_terms: Vec<String>) -> CommandDetec
         };
     }
 
-    // Reply to command
-    if lower.starts_with("reply to:") || lower.starts_with("generate reply:") {
-        let prefix_len = if lower.starts_with("generate reply:") {
-            15
-        } else {
-            9
-        };
-        let content = trimmed[prefix_len..].trim().to_string();
+    if let Some(content) = content_after(trimmed, &["reply to:", "generate reply:"]) {
         return CommandDetection {
             task: ProcessingTask::GenerateReply {
                 context: content.clone(),
@@ -94,28 +68,26 @@ pub fn detect_command(text: &str, dictionary_terms: Vec<String>) -> CommandDetec
         };
     }
 
-    // Translate to [language] command
-    if lower.starts_with("translate to ") {
-        // Extract the target language and content
-        // Format: "translate to [language]: [content]"
-        let after_prefix = &trimmed[13..]; // "translate to ".len() = 13
-
-        if let Some(colon_pos) = after_prefix.find(':') {
-            let language = after_prefix[..colon_pos].trim().to_string();
-            let content = after_prefix[colon_pos + 1..].trim().to_string();
-
-            return CommandDetection {
-                task: ProcessingTask::Translate {
-                    text: content.clone(),
-                    target_language: language.clone(),
-                },
-                content,
-                command_name: Some(format!("translate to {}", language)),
-            };
+    // "translate to [language]: [content]" — the language is the short phrase
+    // before the first colon; anything longer is ordinary speech.
+    if let Some(rest) = strip_prefix_ignore_ascii_case(trimmed, "translate to ") {
+        if let Some((language, content)) = rest.split_once(':') {
+            let language = language.trim();
+            let content = content.trim();
+            if is_language_name(language) && !content.is_empty() {
+                return CommandDetection {
+                    task: ProcessingTask::Translate {
+                        text: content.to_string(),
+                        target_language: language.to_string(),
+                    },
+                    content: content.to_string(),
+                    command_name: Some(format!("translate to {language}")),
+                };
+            }
         }
     }
 
-    // No command detected - default to post-processing
+    // No usable command: clean up the whole utterance instead.
     CommandDetection {
         task: ProcessingTask::PostProcess {
             text: trimmed.to_string(),
@@ -124,6 +96,35 @@ pub fn detect_command(text: &str, dictionary_terms: Vec<String>) -> CommandDetec
         content: trimmed.to_string(),
         command_name: None,
     }
+}
+
+/// Case-insensitive ASCII prefix match on a char boundary. The remainder is
+/// taken from the original text, never from a lowercased copy whose byte
+/// offsets can differ.
+fn strip_prefix_ignore_ascii_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = text.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &text[prefix.len()..])
+}
+
+/// The non-empty content after the first matching prefix.
+fn content_after(text: &str, prefixes: &[&str]) -> Option<String> {
+    prefixes.iter().find_map(|prefix| {
+        let content = strip_prefix_ignore_ascii_case(text, prefix)?.trim();
+        (!content.is_empty()).then(|| content.to_string())
+    })
+}
+
+/// A spoken language name: one to three words of letters, hyphens, or
+/// parentheses, such as "Japanese" or "Traditional Chinese (Taiwan)".
+fn is_language_name(language: &str) -> bool {
+    let words: Vec<&str> = language.split_whitespace().collect();
+    !words.is_empty()
+        && words.len() <= 3
+        && words.iter().all(|word| {
+            word.chars()
+                .all(|c| c.is_alphabetic() || matches!(c, '-' | '(' | ')'))
+        })
 }
 
 #[cfg(test)]
@@ -376,6 +377,51 @@ mod tests {
         } else {
             panic!("Expected Translate task");
         }
+    }
+
+    fn is_post_process_of_whole_text(result: &CommandDetection, text: &str) -> bool {
+        result.command_name.is_none()
+            && result.content == text.trim()
+            && matches!(&result.task, ProcessingTask::PostProcess { text: t, .. } if t == text.trim())
+    }
+
+    #[test]
+    fn translate_requires_a_short_language_before_the_colon() {
+        let text = "translate to my friend what I said yesterday: hello there";
+        let result = detect_command(text, vec![]);
+        assert!(is_post_process_of_whole_text(&result, text), "{result:?}");
+
+        let text = "translate to Traditional Chinese (Taiwan): hello";
+        let result = detect_command(text, vec![]);
+        assert_eq!(
+            result.command_name.as_deref(),
+            Some("translate to Traditional Chinese (Taiwan)")
+        );
+    }
+
+    #[test]
+    fn empty_command_content_falls_back_to_post_processing() {
+        for text in [
+            "translate to French:",
+            "shorten:",
+            "make it formal:  ",
+            "reply to:",
+        ] {
+            let result = detect_command(text, vec![]);
+            assert!(
+                is_post_process_of_whole_text(&result, text),
+                "{text:?} -> {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_ascii_lookalikes_do_not_corrupt_the_content() {
+        // U+212A KELVIN SIGN lowercases to ASCII "k", so byte offsets taken
+        // from the lowercased text do not apply to the original.
+        let text = "ma\u{212A}e it formal: hello";
+        let result = detect_command(text, vec![]);
+        assert!(is_post_process_of_whole_text(&result, text), "{result:?}");
     }
 
     #[test]

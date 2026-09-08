@@ -128,6 +128,7 @@ cargo tauri build
 - Detection: `crates/lt-pipeline/src/commands.rs` (`detect_command()`)
 - Prefixes: `"shorten:"`, `"make it formal:"`, `"make it casual:"`, `"reply to:"`, `"translate to [language]:"`
 - Default (no prefix): PostProcess with dictionary terms
+- Empty content after a prefix, or a translate language longer than three words, falls back to PostProcess; prefixes match ASCII case-insensitively on char boundaries.
 
 ### Output Modes
 - `OutputMode` in `crates/lt-core/src/output.rs`: Clipboard (default), Keyboard, Both
