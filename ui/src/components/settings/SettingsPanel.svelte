@@ -73,7 +73,7 @@
           </div>
           <div class="nav-separator"></div>
           <div class="nav-items">
-            {#each navItems as item}
+            {#each navItems as item (item.id)}
               <button
                 class="nav-item"
                 class:active={activeTab === item.id}
@@ -127,7 +127,7 @@
             </div>
             <div class="nav-separator"></div>
             <div class="nav-items">
-              {#each navItems as item}
+              {#each navItems as item (item.id)}
                 <button
                   class="nav-item"
                   class:active={activeTab === item.id}

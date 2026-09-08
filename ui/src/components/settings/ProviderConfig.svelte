@@ -463,7 +463,7 @@
     <div class="section">
       <SectionHeader label="LOCAL ON-DEVICE" />
       <div class="section-rows">
-        {#each localProviders as provider}
+        {#each localProviders as provider (provider.id)}
           <StatusRow
             label={provider.name}
             value={getProviderValue(provider)}
@@ -471,18 +471,16 @@
             statusText={getProviderStatusText(provider)}
             onclick={() => selectProvider(provider.id)}
           >
-            {#snippet children()}
-              {#if provider.model_status === 'not_installed'}
-                <button class="inline-btn" onclick={(e) => { e.stopPropagation(); downloadModel(provider); }} disabled={modelDownloading}>
-                  {modelDownloading ? 'Downloading...' : 'Download'}
-                </button>
-              {/if}
-              {#if provider.requires_api_key && provider.configured}
-                <button class="inline-btn" onclick={(e) => { e.stopPropagation(); editApiKey(provider); }}>
-                  Edit Key
-                </button>
-              {/if}
-            {/snippet}
+            {#if provider.model_status === 'not_installed'}
+              <button class="inline-btn" onclick={(e) => { e.stopPropagation(); downloadModel(provider); }} disabled={modelDownloading}>
+                {modelDownloading ? 'Downloading...' : 'Download'}
+              </button>
+            {/if}
+            {#if provider.requires_api_key && provider.configured}
+              <button class="inline-btn" onclick={(e) => { e.stopPropagation(); editApiKey(provider); }}>
+                Edit Key
+              </button>
+            {/if}
           </StatusRow>
 
           <!-- Download progress inline -->
@@ -516,7 +514,7 @@
               <label for="apple-stt-locale">Language</label>
               <select id="apple-stt-locale" value={appleSttLocale} onchange={changeAppleSttLocale}>
                 <option value="auto">Auto-detect</option>
-                {#each appleSttLocales as locale}
+                {#each appleSttLocales as locale (locale)}
                   <option value={locale}>{locale}</option>
                 {/each}
               </select>
@@ -532,7 +530,7 @@
     <div class="section">
       <SectionHeader label="CLOUD API" />
       <div class="section-rows">
-        {#each cloudProviders as provider}
+        {#each cloudProviders as provider (provider.id)}
           <StatusRow
             label={provider.name}
             value={getProviderValue(provider)}
@@ -540,13 +538,11 @@
             statusText={getProviderStatusText(provider)}
             onclick={() => selectProvider(provider.id)}
           >
-            {#snippet children()}
-              {#if provider.requires_api_key && provider.configured}
-                <button class="inline-btn" onclick={(e) => { e.stopPropagation(); editApiKey(provider); }}>
-                  Edit Key
-                </button>
-              {/if}
-            {/snippet}
+            {#if provider.requires_api_key && provider.configured}
+              <button class="inline-btn" onclick={(e) => { e.stopPropagation(); editApiKey(provider); }}>
+                Edit Key
+              </button>
+            {/if}
           </StatusRow>
 
           <!-- Language selector for active ElevenLabs -->
@@ -556,7 +552,7 @@
             <div class="locale-row" onclick={(e) => e.stopPropagation()}>
               <label for="elevenlabs-language">Language</label>
               <select id="elevenlabs-language" value={elevenlabsLanguage} onchange={changeElevenLabsLanguage}>
-                {#each elevenlabsLanguages as [code, name]}
+                {#each elevenlabsLanguages as [code, name] (code)}
                   <option value={code}>{name}</option>
                 {/each}
               </select>
@@ -579,13 +575,11 @@
           statusText={getProviderStatusText(customProvider)}
           onclick={() => selectProvider(customProvider.id)}
         >
-          {#snippet children()}
-            {#if customProvider.configured}
-              <button class="inline-btn" onclick={(e) => { e.stopPropagation(); showCustomSttSection = true; }}>
-                Edit
-              </button>
-            {/if}
-          {/snippet}
+          {#if customProvider.configured}
+            <button class="inline-btn" onclick={(e) => { e.stopPropagation(); showCustomSttSection = true; }}>
+              Edit
+            </button>
+          {/if}
         </StatusRow>
       </div>
     {/if}

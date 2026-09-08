@@ -23,7 +23,8 @@
 
 <div class="waveform-container">
   <div class="waveform">
-    {#each barHeights as height}
+    <!-- Bars are positional, so the index is the key. -->
+    {#each barHeights as height, i (i)}
       <div
         class="bar"
         class:active={voiceActive}

@@ -211,25 +211,19 @@
       label="GitHub"
       onclick={() => window.open('https://github.com/hydai/murmur', '_blank')}
     >
-      {#snippet children()}
-        <ExternalLink size={12} color="var(--text-muted)" />
-      {/snippet}
+      <ExternalLink size={12} color="var(--text-muted)" />
     </StatusRow>
     <StatusRow
       label="Releases"
       onclick={() => window.open('https://github.com/hydai/murmur/releases', '_blank')}
     >
-      {#snippet children()}
-        <ExternalLink size={12} color="var(--text-muted)" />
-      {/snippet}
+      <ExternalLink size={12} color="var(--text-muted)" />
     </StatusRow>
     <StatusRow
       label="Report Issue"
       onclick={() => window.open('https://github.com/hydai/murmur/issues', '_blank')}
     >
-      {#snippet children()}
-        <ExternalLink size={12} color="var(--text-muted)" />
-      {/snippet}
+      <ExternalLink size={12} color="var(--text-muted)" />
     </StatusRow>
   </div>
 </div>

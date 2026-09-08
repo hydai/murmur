@@ -291,7 +291,7 @@
     <div class="section">
       <SectionHeader label="LOCAL CLI" />
       <div class="section-rows">
-        {#each cliProcessors as processor}
+        {#each cliProcessors as processor (processor.id)}
           <StatusRow
             label={processor.name}
             value={processor.provider_type === 'cli' ? 'CLI' : 'on-device'}
@@ -312,7 +312,7 @@
     <div class="section">
       <SectionHeader label="API PROVIDERS" />
       <div class="section-rows">
-        {#each apiProcessors as processor}
+        {#each apiProcessors as processor (processor.id)}
           <StatusRow
             label={processor.name}
             value={processor.default_model}
@@ -320,13 +320,11 @@
             statusText={getStatusText(processor)}
             onclick={() => selectProcessor(processor.id)}
           >
-            {#snippet children()}
-              {#if processor.requires_api_key && processor.configured}
-                <button class="inline-btn" onclick={(e) => { e.stopPropagation(); editApiKey(processor); }}>
-                  Edit Key
-                </button>
-              {/if}
-            {/snippet}
+            {#if processor.requires_api_key && processor.configured}
+              <button class="inline-btn" onclick={(e) => { e.stopPropagation(); editApiKey(processor); }}>
+                Edit Key
+              </button>
+            {/if}
           </StatusRow>
         {/each}
       </div>
@@ -338,7 +336,7 @@
     <div class="section">
       <SectionHeader label="LOCAL ON-DEVICE" />
       <div class="section-rows">
-        {#each localProcessors as processor}
+        {#each localProcessors as processor (processor.id)}
           <StatusRow
             label={processor.name}
             value="on-device"
