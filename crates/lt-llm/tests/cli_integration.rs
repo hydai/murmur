@@ -141,6 +141,26 @@ async fn child_stdin_is_closed() {
     assert!(output.stdout.is_empty());
 }
 
+/// Wait for a child that records its pid before exec'ing a long sleep.
+///
+/// Reading the file directly races process startup: on a loaded machine the
+/// shell can take longer to write the line than the executor's deadline allows,
+/// and the child is then killed before the file exists.
+async fn wait_for_recorded_pid(path: &std::path::Path) -> String {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if let Ok(pid) = fs::read_to_string(path) {
+                if !pid.trim().is_empty() {
+                    return pid.trim().to_owned();
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("child never recorded its pid at {}", path.display()))
+}
+
 async fn process_exists(pid: &str) -> bool {
     tokio::process::Command::new("/bin/kill")
         .args(["-0", pid])
@@ -170,18 +190,7 @@ async fn cancellation_kills_and_reaps_child() {
             )
             .await
     });
-    let pid = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        loop {
-            if let Ok(pid) = fs::read_to_string(&pid_path) {
-                if !pid.trim().is_empty() {
-                    break pid.trim().to_owned();
-                }
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .unwrap();
+    let pid = wait_for_recorded_pid(&pid_path).await;
     assert!(process_exists(&pid).await);
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
@@ -208,15 +217,21 @@ async fn health_check_has_deadline_and_reaps_child() {
     )
     .unwrap();
     fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
-    let available = tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        CliExecutor::with_timeout(1).is_available(cli.to_str().unwrap()),
-    )
-    .await
-    .unwrap();
+
+    // The deadline has to outlast process startup on a loaded machine while
+    // staying far short of the 20 seconds the child would otherwise run for.
+    let program = cli.to_str().unwrap().to_owned();
+    let check =
+        tokio::spawn(async move { CliExecutor::with_timeout(3).is_available(&program).await });
+
+    let pid = wait_for_recorded_pid(&pid_path).await;
+
+    let available = tokio::time::timeout(std::time::Duration::from_secs(10), check)
+        .await
+        .expect("the health check must observe its own deadline")
+        .unwrap();
     assert!(!available);
-    let pid = fs::read_to_string(pid_path).unwrap();
-    assert!(!process_exists(pid.trim()).await);
+    assert!(!process_exists(&pid).await);
 }
 
 #[tokio::test]
