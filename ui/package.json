@@ -2,7 +2,7 @@
   "name": "murmur-ui",
   "version": "0.2.0",
   "private": true,
-  "description": "Murmur UI — Svelte 5 frontend for the Murmur voice typing app",
+  "description": "Murmur UI \u2014 Svelte 5 frontend for the Murmur voice typing app",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -15,7 +15,7 @@
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "lint": "eslint .",
-    "test": "node --test src/components/settings/*.test.mjs && vitest run"
+    "test": "node --test src/components/settings/*.test.mjs src/test/*.test.mjs && vitest run"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
