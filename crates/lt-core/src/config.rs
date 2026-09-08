@@ -70,19 +70,22 @@ pub struct HttpSttConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiPreferences {
     /// Window opacity (0.0 - 1.0)
+    #[serde(default = "default_opacity")]
     pub opacity: f32,
     /// Show waveform indicator
+    #[serde(default = "default_show_waveform")]
     pub show_waveform: bool,
     /// Theme (light/dark)
+    #[serde(default = "default_theme")]
     pub theme: String,
 }
 
 impl Default for UiPreferences {
     fn default() -> Self {
         Self {
-            opacity: 0.9,
-            show_waveform: true,
-            theme: "dark".to_string(),
+            opacity: default_opacity(),
+            show_waveform: default_show_waveform(),
+            theme: default_theme(),
         }
     }
 }
@@ -102,15 +105,19 @@ pub enum ChineseConversion {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     /// Selected STT provider
+    #[serde(default)]
     pub stt_provider: SttProviderType,
 
     /// API keys (provider_name -> api_key)
+    #[serde(default)]
     pub api_keys: HashMap<String, String>,
 
     /// Global hotkey (e.g., "Cmd+Shift+L")
+    #[serde(default = "default_hotkey")]
     pub hotkey: String,
 
     /// Selected LLM processor
+    #[serde(default)]
     pub llm_processor: LlmProcessorType,
 
     /// Optional LLM model name override (None = use provider default)
@@ -118,9 +125,11 @@ pub struct AppConfig {
     pub llm_model: Option<String>,
 
     /// Output mode
+    #[serde(default)]
     pub output_mode: OutputMode,
 
     /// UI preferences
+    #[serde(default)]
     pub ui_preferences: UiPreferences,
 
     /// Apple STT locale ("auto" = detect system locale, or e.g. "en_US", "ja_JP")
@@ -152,6 +161,22 @@ fn default_save_history() -> bool {
     true
 }
 
+fn default_hotkey() -> String {
+    "Ctrl+`".to_string()
+}
+
+fn default_opacity() -> f32 {
+    0.9
+}
+
+fn default_show_waveform() -> bool {
+    true
+}
+
+fn default_theme() -> String {
+    "dark".to_string()
+}
+
 fn default_apple_stt_locale() -> String {
     "auto".to_string()
 }
@@ -165,7 +190,7 @@ impl Default for AppConfig {
         Self {
             stt_provider: SttProviderType::default(),
             api_keys: HashMap::new(),
-            hotkey: "Ctrl+`".to_string(),
+            hotkey: default_hotkey(),
             llm_processor: LlmProcessorType::default(),
             llm_model: None,
             output_mode: OutputMode::default(),
@@ -319,6 +344,57 @@ mod tests {
         let none: AppConfig =
             toml::from_str(&format!("chinese_conversion = \"none\"\n{legacy}")).unwrap();
         assert_eq!(none.chinese_conversion, ChineseConversion::None);
+    }
+
+    #[test]
+    fn an_empty_config_file_loads_as_the_defaults() {
+        // Every field must be optional: a config.toml that fails to parse makes
+        // `FileStore::load` error, which breaks every settings IPC with no
+        // in-app way to rewrite the file.
+        let parsed: AppConfig = toml::from_str("").unwrap();
+        let defaults = AppConfig::default();
+        assert_eq!(parsed.stt_provider, defaults.stt_provider);
+        assert_eq!(parsed.llm_processor, defaults.llm_processor);
+        assert_eq!(parsed.output_mode, defaults.output_mode);
+        assert_eq!(parsed.hotkey, defaults.hotkey);
+        assert!(parsed.api_keys.is_empty());
+        assert_eq!(parsed.ui_preferences.theme, defaults.ui_preferences.theme);
+    }
+
+    #[test]
+    fn dropping_any_single_key_still_loads() {
+        // Mirrors a user hand-editing config.toml from the documented template.
+        let written = toml::to_string(&AppConfig::default()).unwrap();
+        for (index, line) in written.lines().enumerate() {
+            if line.trim().is_empty() || line.starts_with('[') {
+                continue;
+            }
+            let without: String = written
+                .lines()
+                .enumerate()
+                .filter(|(i, _)| *i != index)
+                .map(|(_, l)| l)
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                toml::from_str::<AppConfig>(&without).is_ok(),
+                "dropping `{line}` must not make the config unloadable"
+            );
+        }
+    }
+
+    #[test]
+    fn dropping_the_ui_preferences_table_still_loads() {
+        // The table is documented in config/default.toml but nothing reads it.
+        let written = toml::to_string(&AppConfig::default()).unwrap();
+        assert!(written.contains("[ui_preferences]"));
+        let without: String = written
+            .lines()
+            .take_while(|line| !line.starts_with("[ui_preferences]"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let parsed: AppConfig = toml::from_str(&without).unwrap();
+        assert_eq!(parsed.ui_preferences.opacity, 0.9);
     }
 
     #[test]
