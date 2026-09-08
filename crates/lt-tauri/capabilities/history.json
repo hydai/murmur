@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "history",
+  "description": "The history window: browse, copy and prune past transcriptions",
+  "windows": ["history"],
+  "permissions": [
+    "core:default",
+    "clipboard-manager:allow-write-text",
+    "history-commands"
+  ]
+}

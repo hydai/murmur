@@ -1759,6 +1759,72 @@ mod tests {
         }
     }
 
+    /// Command names the ACL grants, across every permission set.
+    fn acl_commands() -> Vec<String> {
+        include_str!("../permissions/default.toml")
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with('"') && line.ends_with("\","))
+            .map(|line| line.trim_matches(|c| c == '"' || c == ',').to_owned())
+            .collect()
+    }
+
+    /// Command names passed to `generate_handler!`.
+    fn registered_commands() -> Vec<String> {
+        let source = include_str!("main.rs");
+        let start = source
+            .find("generate_handler![")
+            .expect("the handler list must exist");
+        let block = &source[start..];
+        let end = block.find("])").expect("the handler list must be closed");
+        block[..end]
+            .lines()
+            .skip(1)
+            .map(|line| line.trim().trim_end_matches(',').to_owned())
+            .filter(|name| !name.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn the_acl_only_grants_commands_that_exist() {
+        // A stale entry is invisible at runtime: it grants nothing and nothing
+        // reports it, so it survives until someone reads the file.
+        let registered = registered_commands();
+        assert!(
+            registered.len() > 20,
+            "handler list looks wrong: {registered:?}"
+        );
+        for command in acl_commands() {
+            assert!(
+                registered.contains(&command),
+                "the ACL allows `{command}`, which generate_handler! does not register"
+            );
+        }
+    }
+
+    #[test]
+    fn the_overlay_cannot_reach_configuration_or_history() {
+        // The overlay window is always on screen. Least privilege here is the
+        // difference between a compromised page reading API keys or not.
+        let overlay = include_str!("../permissions/default.toml")
+            .split("identifier = \"settings-commands\"")
+            .next()
+            .expect("the overlay set comes first");
+        for forbidden in [
+            "get_config",
+            "save_api_key",
+            "get_dictionary",
+            "get_history",
+            "clear_history",
+            "get_diagnostic_logs",
+        ] {
+            assert!(
+                !overlay.contains(forbidden),
+                "the overlay must not be granted `{forbidden}`"
+            );
+        }
+    }
+
     #[test]
     fn a_provider_counts_as_configured_once_its_key_is_present() {
         let mut config = AppConfig::default();

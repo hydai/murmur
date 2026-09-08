@@ -1,21 +1,25 @@
 "$schema" = "../gen/schemas/desktop-schema.json"
 
+# One permission set per window. The overlay is always on screen and only ever
+# starts a recording or opens settings; it has no business reading the config,
+# writing an API key or clearing history, so it cannot.
+
 [[permission]]
-identifier = "allow-all-commands"
-description = "Allow all custom app commands"
+identifier = "overlay-commands"
+description = "What the always-on recording overlay needs"
 commands.allow = [
-    "start_pipeline",
-    "stop_pipeline",
     "toggle_recording",
-    "is_recording",
-    "get_pipeline_state",
+    "open_settings_window",
+]
+
+[[permission]]
+identifier = "settings-commands"
+description = "Reading and writing every configurable setting"
+commands.allow = [
     "get_config",
-    "save_config",
-    "get_diagnostic_logs",
-    "clear_diagnostic_logs",
+    "get_stt_providers",
     "set_stt_provider",
     "save_api_key",
-    "get_stt_providers",
     "get_llm_processors",
     "set_llm_processor",
     "set_llm_model",
@@ -29,26 +33,24 @@ commands.allow = [
     "add_dictionary_entry",
     "update_dictionary_entry",
     "delete_dictionary_entry",
-    "search_dictionary",
     "get_prompts",
     "set_prompt",
     "reset_prompt",
-    "check_permissions",
-    "request_microphone_permission",
-    "open_system_preferences",
-    "open_settings_window",
-    "get_history",
-    "search_history",
-    "delete_history_entry",
-    "clear_history",
-    "open_history_window",
+    "get_diagnostic_logs",
+    "clear_diagnostic_logs",
     "get_apple_stt_locales",
-    "download_apple_stt_model",
     "set_apple_stt_locale",
+    "download_apple_stt_model",
     "get_elevenlabs_languages",
     "set_elevenlabs_language",
 ]
 
-[default]
-description = "Default permissions for the Murmur app"
-permissions = ["allow-all-commands"]
+[[permission]]
+identifier = "history-commands"
+description = "Reading and pruning the transcription history"
+commands.allow = [
+    "get_history",
+    "search_history",
+    "delete_history_entry",
+    "clear_history",
+]
