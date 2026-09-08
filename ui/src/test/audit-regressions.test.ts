@@ -129,6 +129,27 @@ describe('recording overlay', () => {
     expect(target.textContent).not.toContain('Processing...');
   });
 
+  it('clears the processing indicator from the result alone', async () => {
+    const { target } = render(FloatingOverlay, { status: 'Ready' });
+    await settle();
+    emit('pipeline-state', { state: 'processing' });
+    emit('recording-state', { is_recording: false });
+    expect(target.textContent).toContain('Processing...');
+    // The backend no longer emits a duplicate transcription-processed event,
+    // so the result itself has to clear the spinner.
+    emit('pipeline-result', { text: 'done', processing_time_ms: 5 });
+    await settle();
+    expect(target.textContent).not.toContain('Processing...');
+  });
+
+  it('does not subscribe to events the backend never emits', async () => {
+    render(FloatingOverlay, { status: 'Ready' });
+    await settle();
+    for (const name of ['processing-status', 'transcription-error', 'transcription-processed']) {
+      expect(listeners.has(name), `${name} has no emitter in the Rust side`).toBe(false);
+    }
+  });
+
   it('uses native dragging for the window surface and excludes its controls', async () => {
     const { target } = render(FloatingOverlay, { status: 'Ready' });
     target.querySelector('.app-title')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
