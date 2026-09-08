@@ -180,6 +180,28 @@ impl HistoryStore {
     }
 }
 
+/// Load the configuration for startup. A corrupt or unreadable file is
+/// reported so the fallback to defaults is visible, and it is left in place
+/// so nothing overwrites what the user might want to recover.
+pub(crate) fn load_startup_config(path: Option<&Path>) -> (AppConfig, Option<String>) {
+    let Some(path) = path else {
+        return (AppConfig::default(), None);
+    };
+    match AppConfig::load_from_file(path) {
+        Ok(config) => (config, None),
+        Err(MurmurError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            (AppConfig::default(), None)
+        }
+        Err(error) => (
+            AppConfig::default(),
+            Some(format!(
+                "Using default settings because {} could not be loaded: {error}",
+                path.display()
+            )),
+        ),
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct AppStore {
     pub config: FileStore<AppConfig>,
@@ -467,5 +489,56 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(store.history.read().await.unwrap().entries.len(), 1);
+    }
+
+    #[test]
+    fn startup_config_reports_corrupt_files_and_keeps_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "hotkey = [not toml").unwrap();
+        let (config, warning) = load_startup_config(Some(&path));
+        assert_eq!(config.hotkey, AppConfig::default().hotkey);
+        let warning = warning.expect("a corrupt config must be reported");
+        assert!(warning.contains("config.toml"), "{warning}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "hotkey = [not toml"
+        );
+    }
+
+    #[test]
+    fn startup_config_warning_does_not_echo_secrets_from_the_broken_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[api_keys]\nopenai = \"sk-top-secret-token\n").unwrap();
+        let (_, warning) = load_startup_config(Some(&path));
+        let warning = warning.expect("a corrupt config must be reported");
+        assert!(
+            !warning.contains("sk-top-secret-token"),
+            "secret echoed: {warning}"
+        );
+        assert!(warning.contains("line 2"), "{warning}");
+    }
+
+    #[test]
+    fn startup_config_is_silent_for_missing_or_valid_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let (config, warning) = load_startup_config(Some(&path));
+        assert_eq!(config.hotkey, AppConfig::default().hotkey);
+        assert!(warning.is_none());
+
+        let saved = AppConfig {
+            hotkey: "Ctrl+Alt+M".into(),
+            ..AppConfig::default()
+        };
+        saved.save_to_file(&path).unwrap();
+        let (config, warning) = load_startup_config(Some(&path));
+        assert_eq!(config.hotkey, "Ctrl+Alt+M");
+        assert!(warning.is_none());
+
+        let (config, warning) = load_startup_config(None);
+        assert_eq!(config.hotkey, AppConfig::default().hotkey);
+        assert!(warning.is_none());
     }
 }
