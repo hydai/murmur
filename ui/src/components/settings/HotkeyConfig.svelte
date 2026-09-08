@@ -199,7 +199,7 @@
       border-color: var(--status-red);
     }
     50% {
-      border-color: rgba(239, 68, 68, 0.4);
+      border-color: color-mix(in srgb, var(--status-red) 40%, transparent);
     }
   }
 
@@ -224,7 +224,7 @@
     font-family: var(--font-mono);
     font-size: 14px;
     font-weight: 600;
-    color: #fca5a5;
+    color: var(--status-red-text);
   }
 
 

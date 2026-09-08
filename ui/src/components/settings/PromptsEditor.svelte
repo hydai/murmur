@@ -251,9 +251,9 @@
   }
 
   .ph-chip.missing {
-    color: #fca5a5;
-    border-color: rgba(239, 68, 68, 0.5);
-    background: rgba(239, 68, 68, 0.1);
+    color: var(--status-red-text);
+    border-color: color-mix(in srgb, var(--status-red) 50%, transparent);
+    background: color-mix(in srgb, var(--status-red) 10%, transparent);
   }
 
   .prompt-textarea {

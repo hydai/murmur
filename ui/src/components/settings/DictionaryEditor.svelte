@@ -446,14 +446,14 @@
   }
 
   .icon-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--surface-raised);
     color: var(--text-primary);
   }
 
   .icon-btn.danger:hover {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: rgba(239, 68, 68, 0.5);
-    color: #fca5a5;
+    background: color-mix(in srgb, var(--status-red) 20%, transparent);
+    border-color: color-mix(in srgb, var(--status-red) 50%, transparent);
+    color: var(--status-red-text);
   }
 
   .empty-state {

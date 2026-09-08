@@ -287,7 +287,7 @@
     box-shadow:
       0 8px 32px rgba(0, 0, 0, 0.6),
       0 2px 8px rgba(0, 0, 0, 0.4),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      inset 0 1px 0 var(--surface-raised);
     border: 1px solid rgba(255, 255, 255, 0.12);
     cursor: move;
     min-width: 400px;
@@ -311,7 +311,7 @@
     box-shadow:
       0 12px 40px rgba(0, 0, 0, 0.7),
       0 4px 12px rgba(0, 0, 0, 0.5),
-      inset 0 1px 0 rgba(255, 255, 255, 0.15);
+      inset 0 1px 0 var(--surface-raised-hover);
   }
 
   .header-row {
@@ -392,7 +392,7 @@
 
   .status-dot.recording {
     background: #ef4444;
-    box-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--status-red) 80%, transparent);
     animation: pulse 1s ease-in-out infinite;
   }
 
@@ -420,7 +420,7 @@
 
   .status-dot.error {
     background: #ef4444;
-    box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--status-red) 60%, transparent);
   }
 
   @keyframes pulse {

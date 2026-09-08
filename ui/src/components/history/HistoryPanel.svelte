@@ -263,7 +263,7 @@
     margin: 0;
     font-size: 24px;
     font-weight: bold;
-    color: #fff;
+    color: var(--text-primary);
   }
 
 
@@ -279,7 +279,7 @@
     border-radius: 8px;
     border: 1px solid rgba(255, 255, 255, 0.2);
     background: rgba(0, 0, 0, 0.3);
-    color: #fff;
+    color: var(--text-primary);
     font-size: 14px;
     box-sizing: border-box;
   }
@@ -322,7 +322,7 @@
     padding: 16px;
     border-radius: 12px;
     background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--surface-raised);
     transition: all 0.2s ease;
     position: relative;
   }
@@ -366,7 +366,7 @@
 
   .entry-text {
     font-size: 14px;
-    color: #fff;
+    color: var(--text-primary);
     line-height: 1.6;
     margin-bottom: 8px;
     white-space: pre-wrap;
@@ -407,7 +407,7 @@
 
   .btn-icon {
     background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--surface-raised);
     color: rgba(255, 255, 255, 0.7);
     width: 32px;
     height: 32px;
@@ -422,14 +422,14 @@
   }
 
   .btn-icon:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #fff;
+    background: var(--surface-raised);
+    color: var(--text-primary);
   }
 
   .btn-icon.is-danger:hover {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: rgba(239, 68, 68, 0.5);
-    color: #fca5a5;
+    background: color-mix(in srgb, var(--status-red) 20%, transparent);
+    border-color: color-mix(in srgb, var(--status-red) 50%, transparent);
+    color: var(--status-red-text);
   }
 
 
@@ -463,7 +463,7 @@
     border-radius: 16px;
     max-width: 500px;
     width: 90%;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--surface-raised);
   }
 
   .modal-small {
@@ -473,7 +473,7 @@
   .modal h3 {
     margin: 0 0 20px 0;
     font-size: 20px;
-    color: #fff;
+    color: var(--text-primary);
   }
 
   .modal p {
