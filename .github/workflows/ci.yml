@@ -82,11 +82,28 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.11" --locked
 
+      # A Dependabot-authored pull_request reads a separate secret store, so
+      # the key arrives empty; createUpdaterArtifacts makes signing the
+      # updater tarball unconditional, and the build dies after bundling.
+      # A throwaway key keeps compiling and bundling under test on those PRs.
+      # Only the DMG is uploaded, and release.yml does the signing that ships.
       - name: Build Tauri app
-        run: cargo tauri build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::notice::No updater signing key in scope; bundling with a throwaway key."
+            # rsign prompts for a password when the variable is unset and
+            # rejects an empty one, so the throwaway key needs a real value.
+            TAURI_SIGNING_PRIVATE_KEY_PASSWORD=throwaway
+            cargo tauri signer generate --ci \
+              -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+              -w "$RUNNER_TEMP/updater.key"
+            TAURI_SIGNING_PRIVATE_KEY="$(cat "$RUNNER_TEMP/updater.key")"
+            export TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          fi
+          cargo tauri build
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v7
