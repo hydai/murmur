@@ -1,61 +1,35 @@
 version: 2
 
+# One multi-ecosystem group means one scheduled pull request covering Cargo,
+# npm, and GitHub Actions together, instead of one PR per group plus one per
+# ungrouped dependency (the 2026-09-28 run opened eight). It also keeps the
+# Rust crate and npm package of a Tauri plugin release in the same PR.
+# Every `updates` entry must declare `patterns` to join the group; `ignore`
+# rules stay per ecosystem.
+multi-ecosystem-groups:
+  deps:
+    schedule:
+      interval: weekly
+      day: monday
+
 updates:
   # Cargo (Rust workspace)
   - package-ecosystem: cargo
     directory: /
-    schedule:
-      interval: weekly
-      day: monday
-    groups:
-      tauri:
-        patterns:
-          - "tauri*"
-      serialization:
-        patterns:
-          - "serde*"
-          - "toml"
-      async-runtime:
-        patterns:
-          - "tokio*"
-          - "async-trait"
-          - "futures-util"
-      networking:
-        patterns:
-          - "reqwest"
-          - "tokio-tungstenite"
-          - "url"
-          - "base64"
-      observability:
-        patterns:
-          - "tracing*"
+    patterns: ["*"]
+    multi-ecosystem-group: deps
 
   # npm (Svelte 5 frontend)
   - package-ecosystem: npm
     directory: /ui
-    schedule:
-      interval: weekly
-      day: monday
-    groups:
-      tauri-plugins:
-        patterns:
-          - "@tauri-apps/*"
-      svelte:
-        patterns:
-          - "svelte*"
-          - "@sveltejs/*"
-      build-tools:
-        patterns:
-          - "vite*"
-          - "typescript"
-          - "tslib"
-          - "@tsconfig/*"
+    patterns: ["*"]
+    multi-ecosystem-group: deps
     ignore:
       # @tauri-apps/api must match the Rust `tauri` crate's major/minor
       # version (enforced by tauri-cli at build time). Allow patch bumps
-      # only — major/minor bumps must be coordinated with the cargo
-      # `tauri` group PR by hand (e.g. `npm install @tauri-apps/api@<v>`
-      # in /ui after merging the Rust-side bump).
+      # only — major/minor bumps must be coordinated with the Rust-side
+      # `tauri` bump by hand (e.g. `npm install @tauri-apps/api@<v>`
+      # in /ui after merging it).
       - dependency-name: "@tauri-apps/api"
         update-types:
           - "version-update:semver-major"
@@ -71,10 +45,5 @@ updates:
   # GitHub Actions
   - package-ecosystem: github-actions
     directory: /
-    schedule:
-      interval: weekly
-      day: monday
-    groups:
-      github-actions:
-        patterns:
-          - "*"
+    patterns: ["*"]
+    multi-ecosystem-group: deps
