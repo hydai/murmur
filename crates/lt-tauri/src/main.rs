@@ -1302,28 +1302,16 @@ async fn clear_history(state: tauri::State<'_, AppState>) -> Result<(), String> 
     state.store.history.clear().await
 }
 
+/// History is a pane of the settings window; the tray's History item lands there.
 #[tauri::command]
 async fn open_history_window(app: tauri::AppHandle) -> Result<(), String> {
-    // If history window already exists, just focus it
-    if let Some(window) = app.get_webview_window("history") {
-        window.set_focus().map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
-    // Create new history window
-    let _window = tauri::WebviewWindowBuilder::new(
+    show_settings(
         &app,
-        "history",
-        tauri::WebviewUrl::App("index.html?view=history".into()),
+        Some(SettingsRoute {
+            pane: "history",
+            action: None,
+        }),
     )
-    .title("Murmur History")
-    .inner_size(720.0, 560.0)
-    .resizable(true)
-    .center()
-    .build()
-    .map_err(|e| e.to_string())?;
-
-    Ok(())
 }
 
 // ============================================================================
@@ -1666,7 +1654,7 @@ fn main() {
                             let handle = app_handle.clone();
                             tauri::async_runtime::spawn(async move {
                                 if let Err(e) = open_history_window(handle).await {
-                                    tracing::warn!("Failed to open history window: {}", e);
+                                    tracing::warn!("Failed to open the History pane: {}", e);
                                 }
                             });
                         }
@@ -2058,6 +2046,13 @@ mod tests {
                 action: Some("check-update")
             })),
             "view=settings&pane=about&action=check-update"
+        );
+        assert_eq!(
+            settings_query(Some(SettingsRoute {
+                pane: "history",
+                action: None
+            })),
+            "view=settings&pane=history"
         );
     }
 

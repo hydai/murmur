@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "settings",
-  "description": "The settings window: configuration, diagnostics and the updater",
+  "description": "The settings window: configuration, history, diagnostics and the updater",
   "windows": ["settings"],
   "permissions": [
     "core:default",
@@ -9,6 +9,7 @@
     "clipboard-manager:allow-write-text",
     "updater:default",
     "process:default",
-    "settings-commands"
+    "settings-commands",
+    "history-commands"
   ]
 }

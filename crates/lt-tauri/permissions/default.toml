@@ -1,8 +1,9 @@
 "$schema" = "../gen/schemas/desktop-schema.json"
 
-# One permission set per window. The overlay is always on screen and only ever
-# starts a recording or opens settings; it has no business reading the config,
-# writing an API key or clearing history, so it cannot.
+# Permission sets group commands by job, and each window's capability lists the
+# sets it needs. The overlay is always on screen and only ever starts a
+# recording or opens settings; it has no business reading the config, writing
+# an API key or clearing history, so it cannot.
 
 [[permission]]
 identifier = "overlay-commands"

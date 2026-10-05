@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { Component, ComponentType, SvelteComponent } from 'svelte';
-  import { BookOpen, Info, Mic, PenLine, SlidersHorizontal } from 'lucide-svelte';
+  import { BookOpen, Clock, Info, Mic, PenLine, SlidersHorizontal } from 'lucide-svelte';
   import type { IconProps } from 'lucide-svelte';
   import { useLifecycle } from '../../lib/lifecycle';
   import { PANES, initialRoute, parsePane, type PaneId } from './navigation';
@@ -14,6 +14,7 @@
   import PromptsEditor from './PromptsEditor.svelte';
   import DiagnosticsPanel from './DiagnosticsPanel.svelte';
   import AboutSection from './AboutSection.svelte';
+  import HistoryPanel from '../history/HistoryPanel.svelte';
 
   // lucide-svelte icons are class components, which `Component` alone rejects.
   type IconComponent = Component<IconProps> | ComponentType<SvelteComponent<IconProps>>;
@@ -23,6 +24,7 @@
     transcription: Mic,
     ai: PenLine,
     dictionary: BookOpen,
+    history: Clock,
     about: Info,
   };
 
@@ -79,6 +81,8 @@
       <LegacyPane><LlmConfig /><PromptsEditor /></LegacyPane>
     {:else if activePane === 'dictionary'}
       <LegacyPane><DictionaryEditor /></LegacyPane>
+    {:else if activePane === 'history'}
+      <LegacyPane><HistoryPanel /></LegacyPane>
     {:else if activePane === 'about'}
       <LegacyPane>
         <AboutSection

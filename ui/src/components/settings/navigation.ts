@@ -3,7 +3,7 @@
  * window URL picks the first one shown.
  */
 
-export type PaneId = 'general' | 'transcription' | 'ai' | 'dictionary' | 'about';
+export type PaneId = 'general' | 'transcription' | 'ai' | 'dictionary' | 'history' | 'about';
 
 export interface PaneInfo {
   id: PaneId;
@@ -17,6 +17,7 @@ export const PANES: readonly PaneInfo[] = [
   { id: 'transcription', label: 'Transcription', group: 1 },
   { id: 'ai', label: 'AI Processing', group: 1 },
   { id: 'dictionary', label: 'Dictionary', group: 1 },
+  { id: 'history', label: 'History', group: 2 },
   { id: 'about', label: 'About', group: 2 },
 ];
 
@@ -29,12 +30,16 @@ export function parsePane(value: string | null | undefined): PaneId | null {
  * Where a window opened with `search` starts. `pane` picks the pane; with no
  * `pane`, `action=check-update` means About. A `pane` that names nothing drops
  * the whole route, `action` included, the same as a `navigate` event for it.
+ * `view=history`, the old history window's URL, starts on History instead of
+ * General or About, with no update check; only a pane that exists beats it.
  */
 export function initialRoute(search: string): { pane: PaneId; checkUpdate: boolean } {
   const params = new URLSearchParams(search);
   const checkUpdate = params.get('action') === 'check-update';
   const requested = params.get('pane');
-  if (requested === null) return { pane: checkUpdate ? 'about' : 'general', checkUpdate };
   const pane = parsePane(requested);
-  return pane ? { pane, checkUpdate } : { pane: 'general', checkUpdate: false };
+  if (pane) return { pane, checkUpdate };
+  if (params.get('view') === 'history') return { pane: 'history', checkUpdate: false };
+  if (requested === null) return { pane: checkUpdate ? 'about' : 'general', checkUpdate };
+  return { pane: 'general', checkUpdate: false };
 }
