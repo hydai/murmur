@@ -165,6 +165,28 @@ describe('Toast', () => {
     // A confirmation clears itself, so there is nothing to dismiss.
     expect(render(Toast, { success: 'Saved', ondismiss: vi.fn() }).target.querySelector('button')).toBeNull();
   });
+
+  it('keeps the focus where it was when the error is dismissed with the mouse', async () => {
+    // A failure that comes from a sheet is shown above it. Pressing Dismiss must not pull the focus
+    // out of the sheet, or Escape, Enter and the Tab trap would stop reaching it.
+    const { target: sheet } = render(SheetHarness, { onclose: vi.fn(), onsubmit: vi.fn() });
+    const field = sheet.querySelector<HTMLInputElement>('#term')!;
+    expect(document.activeElement).toBe(field);
+
+    const ondismiss = vi.fn();
+    const { target } = render(Toast, { error: 'Failed to save: boom', ondismiss });
+    await userEvent.setup().click(target.querySelector<HTMLButtonElement>('[aria-label="Dismiss"]')!);
+    expect(ondismiss).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('still dismisses the error from the keyboard', async () => {
+    const ondismiss = vi.fn();
+    const { target } = render(Toast, { error: 'Failed to save: boom', ondismiss });
+    target.querySelector<HTMLButtonElement>('[aria-label="Dismiss"]')!.focus();
+    await userEvent.setup().keyboard('{Enter}');
+    expect(ondismiss).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('ShortcutField', () => {

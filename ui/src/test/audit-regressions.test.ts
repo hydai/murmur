@@ -8,7 +8,9 @@ import ProviderConfig from '../components/settings/ProviderConfig.svelte';
 import HistoryPanel from '../components/history/HistoryPanel.svelte';
 import DictionaryEditor from '../components/settings/DictionaryEditor.svelte';
 import GeneralConfig from '../components/settings/GeneralConfig.svelte';
+import LlmConfig from '../components/settings/LlmConfig.svelte';
 import PromptsEditor from '../components/settings/PromptsEditor.svelte';
+import { resetDrafts } from '../components/settings/promptDrafts.svelte';
 import DiagnosticsPanel from '../components/settings/DiagnosticsPanel.svelte';
 import StatusRowHarness from './StatusRowHarness.svelte';
 
@@ -419,9 +421,14 @@ describe('prompt editor', () => {
       command === 'get_prompts' ? entries : undefined);
   }
 
-  it('keeps the success banner after the save reloads the prompts', async () => {
+  // Drafts live as long as the window, so one test's edit would otherwise open the next one.
+  beforeEach(() => {
+    resetDrafts();
+  });
+
+  it('keeps the success toast after the save reloads the prompts', async () => {
     mockPrompts(prompt('post_process', 'original'));
-    const { target } = render(PromptsEditor, {});
+    const { target } = render(PromptsEditor, { name: 'post_process', onback: vi.fn() });
     await settle();
 
     const editor = target.querySelector('textarea')!;
@@ -435,39 +442,35 @@ describe('prompt editor', () => {
     expect(mocks.invoke).toHaveBeenCalledWith('set_prompt', {
       params: { name: 'post_process', content: 'edited' },
     });
-    // loadPrompts() runs after the banner is set; syncEditor must not wipe it.
-    expect(target.querySelector('.alert-success')?.textContent).toContain('Saved');
+    // The prompts are read again after the save; that must not wipe the toast.
+    expect(target.querySelector('.toast-success')?.textContent).toContain('Saved');
   });
 
-  it('keeps unsaved edits when the selector moves away and back', async () => {
+  it('keeps unsaved edits after leaving the editor and coming back', async () => {
     mockPrompts(prompt('post_process', 'a'), prompt('shorten', 'b'));
-    const { target } = render(PromptsEditor, {});
+    const { target, instance } = render(PromptsEditor, { name: 'post_process', onback: vi.fn() });
     await settle();
 
-    const editor = () => target.querySelector('textarea')!;
-    editor().value = 'work in progress';
-    editor().dispatchEvent(new Event('input', { bubbles: true }));
+    const editor = target.querySelector('textarea')!;
+    editor.value = 'work in progress';
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
     await settle();
 
-    const select = target.querySelector('select')!;
-    const choose = async (name: string) => {
-      select.value = name;
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-      await settle();
-    };
+    // This file keeps its own list of mounted components, so it unmounts through that list.
+    await unmount(instance);
+    mounted = [];
 
-    await choose('shorten');
-    expect(editor().value).toBe('b');
-    await choose('post_process');
-    expect(editor().value).toBe('work in progress');
+    const again = render(PromptsEditor, { name: 'post_process', onback: vi.fn() });
+    await settle();
+    expect(again.target.querySelector('textarea')!.value).toBe('work in progress');
   });
 
-  it('drops the draft once the prompt is reset to its default', async () => {
-    // Reset is only offered for a prompt that currently has an override.
+  it('drops the draft once the prompt is restored to its default', async () => {
+    // Restore Default is only offered for a prompt that currently has an override.
     mocks.invoke.mockImplementation(async command => command === 'get_prompts'
       ? [{ ...prompt('post_process', 'a'), is_override: true, default_content: 'a' }]
       : undefined);
-    const { target } = render(PromptsEditor, {});
+    const { target } = render(PromptsEditor, { name: 'post_process', onback: vi.fn() });
     await settle();
 
     const editor = () => target.querySelector('textarea')!;
@@ -475,7 +478,7 @@ describe('prompt editor', () => {
     editor().dispatchEvent(new Event('input', { bubbles: true }));
     await settle();
 
-    button(target, 'Reset to default').click();
+    button(target, 'Restore Default').click();
     await settle();
     expect(mocks.invoke).toHaveBeenCalledWith('reset_prompt', {
       params: { name: 'post_process' },
@@ -484,25 +487,35 @@ describe('prompt editor', () => {
     expect(editor().value).toBe('a');
   });
 
-  it('clears the banner when a different prompt is selected', async () => {
-    mockPrompts(prompt('post_process', 'a'), prompt('shorten', 'b'));
-    const { target } = render(PromptsEditor, {});
+  it('starts each opened prompt without the previous toast', async () => {
+    const prompts = ['post_process', 'shorten', 'change_tone', 'generate_reply', 'translate']
+      .map(name => prompt(name, `content of ${name}`));
+    mocks.invoke.mockImplementation(async command => {
+      switch (command) {
+        case 'get_llm_processors': return [];
+        case 'get_config': return { llm_processor: 'gemini', llm_model: null, http_llm_config: null };
+        case 'get_prompts': return prompts;
+        default: return undefined;
+      }
+    });
+    const { target } = render(LlmConfig, {});
     await settle();
 
+    button(target, 'Shorten').click();
+    await settle();
     const editor = target.querySelector('textarea')!;
     editor.value = 'edited';
     editor.dispatchEvent(new Event('input', { bubbles: true }));
     await settle();
-
     button(target, 'Save').click();
     await settle();
-    expect(target.querySelector('.alert-success')).not.toBeNull();
+    expect(target.querySelector('.toast-success')).not.toBeNull();
 
-    const select = target.querySelector('select')!;
-    select.value = 'shorten';
-    select.dispatchEvent(new Event('change', { bubbles: true }));
+    target.querySelector<HTMLElement>('[aria-label="Back to AI Processing"]')!.click();
     await settle();
-    expect(target.querySelector('.alert-success')).toBeNull();
+    button(target, 'Reply').click();
+    await settle();
+    expect(target.querySelector('.toast-success')).toBeNull();
   });
 });
 

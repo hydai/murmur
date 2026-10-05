@@ -1,61 +1,92 @@
 <script lang="ts">
-  import Alert from './ui/Alert.svelte';
+  import { onMount, tick } from 'svelte';
+  import { ChevronRight, Cloud, Laptop, Server, Terminal } from 'lucide-svelte';
   import { useLifecycle } from '../../lib/lifecycle';
   import { createStatus } from '../../lib/status.svelte';
-  import { trapFocus } from '../../lib/focus';
   import { safeInvoke as invoke } from '../../lib/tauri';
-  import { onMount } from 'svelte';
-  import PageHeader from './ui/PageHeader.svelte';
-  import SectionHeader from './ui/SectionHeader.svelte';
-  import StatusRow from './ui/StatusRow.svelte';
-  import ActionRow from './ui/ActionRow.svelte';
+  import { VOICE_COMMANDS, type PromptName } from '../../lib/voiceCommands';
+  import Group from '../ui/Group.svelte';
+  import Pane from '../ui/Pane.svelte';
+  import Row from '../ui/Row.svelte';
+  import Sheet from '../ui/Sheet.svelte';
+  import ApiKeySheet from './ApiKeySheet.svelte';
+  import {
+    llmProcessorAction,
+    llmProcessorDetail,
+    llmProcessorDisabled,
+    llmProcessorHint,
+    orderedLlmProcessors,
+    type LlmProcessorAction,
+    type LlmProcessorInfo,
+  } from './llmProcessors';
+  import { hasDraft } from './promptDrafts.svelte';
+  import PromptsEditor from './PromptsEditor.svelte';
 
   const lifecycle = useLifecycle();
   const status = createStatus(lifecycle);
 
-  interface LlmProcessorInfo {
-    name: string;
-    id: string;
-    available: boolean;
-    default_model: string;
-    provider_type: string;
-    requires_api_key: boolean;
-    configured: boolean;
-    api_key_name: string | null;
+  const ACTION_LABELS: Record<Exclude<LlmProcessorAction, null>, string> = {
+    'add-key': 'Add API Key…',
+    'set-up': 'Set Up…',
+  };
+
+  /** The part of what `get_prompts` lists that this pane uses; the editor reads the rest itself. */
+  interface PromptState {
+    name: PromptName;
+    is_override: boolean;
   }
 
   let processors = $state<LlmProcessorInfo[]>([]);
   let currentProcessor = $state('');
-  let currentModel = $state('');
-  let defaultModel = $state('');
-  // The model row saves independently of the rest of the page.
-  let modelLoading = $state(false);
+  let prompts = $state<PromptState[]>([]);
 
-  let showApiKeyModal = $state(false);
-  let selectedProvider = $state<LlmProcessorInfo | null>(null);
-  let apiKeyInput = $state('');
-  let showApiKey = $state(false);
+  // The model the backend has (empty for the default), and what the field says.
+  // The field is saved when it is left with a different value than `savedModel`.
+  let savedModel = $state('');
+  let modelInput = $state('');
+
+  // The prompt whose editor is open. The editor takes the place of the whole
+  // pane, so there is one heading on screen and the toolbar's back arrow leads here.
+  let editing = $state<PromptName | null>(null);
+  // The Voice Commands list, for putting the focus back on a row.
+  let voiceCommandList = $state<HTMLElement>();
+
+  // API key sheet: which service it is for and whether it replaces a key. The key
+  // itself lives in the sheet, so it is gone when the sheet is.
+  let showApiKeySheet = $state(false);
+  let keyProcessor = $state<LlmProcessorInfo | null>(null);
   let editingExistingKey = $state(false);
 
-  let showCustomSection = $state(false);
+  // Custom endpoint: what is saved, and the sheet's own copy of it. The rows show
+  // the saved values, so typing in the sheet changes nothing behind it, and a
+  // sheet that is cancelled leaves no half-typed address on the page.
+  let showCustomSheet = $state(false);
   let customBaseUrl = $state('');
   let customDisplayName = $state('');
-  let customApiKey = $state('');
+  let draft = $state({ baseUrl: '', apiKey: '', displayName: '' });
 
-  // Derived groups
-  let cliProcessors = $derived(processors.filter(p => p.provider_type === 'cli'));
-  let localProcessors = $derived(processors.filter(p => p.provider_type === 'local'));
-  let apiProcessors = $derived(processors.filter(p => p.provider_type === 'http'));
+  let orderedProcessors = $derived(orderedLlmProcessors(processors));
+  let activeProcessor = $derived(processors.find((processor) => processor.id === currentProcessor));
+  // Apple Intelligence ignores the model setting. Nothing is known of the
+  // processor in use until the settings have loaded, so nothing is shown before.
+  let showModel = $derived(currentProcessor !== '' && currentProcessor !== 'apple_llm');
+  let modelLabel = $derived(activeProcessor ? `Model for ${activeProcessor.name}` : 'Model');
+  let modelPlaceholder = $derived(
+    activeProcessor?.default_model ? `Default: ${activeProcessor.default_model}` : 'Default',
+  );
 
-  onMount(async () => {
-    await loadProcessors();
-    await loadConfig();
+  onMount(() => {
+    // Each reports its own failure, and the voice commands do not wait for the
+    // processors, whose list costs a probe of each command-line tool.
+    void Promise.all([loadProcessors(), loadConfig(), loadPrompts()]);
   });
 
   async function loadProcessors() {
-    await status.run('Failed to load LLM processors', async () => {
-      processors = await invoke<LlmProcessorInfo[]>('get_llm_processors');
-    });
+    try {
+      processors = (await invoke<LlmProcessorInfo[]>('get_llm_processors')) ?? [];
+    } catch (err) {
+      status.fail(`Failed to load LLM processors: ${err}`);
+    }
   }
 
   async function loadConfig() {
@@ -66,555 +97,410 @@
         http_llm_config: {
           custom_base_url: string | null;
           custom_display_name: string | null;
-        };
+        } | null;
       }>('get_config');
       currentProcessor = config.llm_processor.toLowerCase();
-      currentModel = config.llm_model || '';
+      savedModel = config.llm_model || '';
+      modelInput = savedModel;
       customBaseUrl = config.http_llm_config?.custom_base_url || '';
       customDisplayName = config.http_llm_config?.custom_display_name || '';
-      if (currentProcessor === 'custom_api') {
-        showCustomSection = true;
-      }
-      updateDefaultModel();
     } catch (err) {
       status.fail(`Failed to load config: ${err}`);
     }
   }
 
-  function updateDefaultModel() {
-    const active = processors.find(p => p.id === currentProcessor);
-    defaultModel = active?.default_model || '';
+  async function loadPrompts() {
+    try {
+      prompts = (await invoke<PromptState[]>('get_prompts')) ?? [];
+    } catch (err) {
+      status.fail(`Failed to load prompts: ${err}`);
+    }
   }
 
-  async function selectProcessor(processorId: string) {
-    const processor = processors.find(p => p.id === processorId);
-    if (!processor) return;
+  /**
+   * Switch the pipeline over, or ask for what the processor still needs first.
+   * The check that moves to the new row is the confirmation, so there is no toast.
+   */
+  async function selectProcessor(processor: LlmProcessorInfo) {
+    // The row is disabled for these; this only guards a click that gets past it.
+    if (llmProcessorDisabled(processor)) return;
 
-    if (processor.provider_type === 'cli' && !processor.available) {
-      status.fail(`${processor.name} is not installed. Please install it first.`, 5000);
-      return;
-    }
-
-    if (processor.requires_api_key && !processor.configured) {
-      selectedProvider = processor;
-      showApiKeyModal = true;
-      editingExistingKey = false;
-      apiKeyInput = '';
-      return;
-    }
-
-    if (processor.provider_type === 'local' && !processor.available) {
-      status.fail(`${processor.name} is not available on this system.`, 5000);
+    const action = llmProcessorAction(processor);
+    if (action) {
+      runAction(processor, action);
       return;
     }
 
     await status.run('Failed to switch processor', async () => {
-      await invoke('set_llm_processor', { processor: processorId });
-      currentProcessor = processorId;
-      updateDefaultModel();
-      status.confirm(`Switched to ${processor.name}`);
+      await invoke('set_llm_processor', { processor: processor.id });
+      currentProcessor = processor.id;
     });
   }
 
-  function editApiKey(processor: LlmProcessorInfo) {
-    selectedProvider = processor;
-    showApiKeyModal = true;
-    editingExistingKey = true;
-    apiKeyInput = '';
-  }
-
-  async function saveApiKey() {
-    if (!apiKeyInput.trim()) {
-      status.fail('API key cannot be empty');
-      return;
+  function runAction(processor: LlmProcessorInfo, action: Exclude<LlmProcessorAction, null>) {
+    if (action === 'add-key') {
+      openApiKeySheet(processor, false);
+    } else {
+      openCustomSheet();
     }
+  }
 
-    if (!selectedProvider || !selectedProvider.api_key_name) return;
+  function openApiKeySheet(processor: LlmProcessorInfo, existing: boolean) {
+    keyProcessor = processor;
+    editingExistingKey = existing;
+    showApiKeySheet = true;
+  }
 
-    const provider = selectedProvider;
-    const updating = editingExistingKey;
+  /** The sheet refuses an empty key before it gets here, and hands the key over as typed. */
+  async function saveApiKey(apiKey: string) {
+    if (status.busy) return;
+    const processor = keyProcessor;
+    if (!processor?.api_key_name) return;
+
     await status.run('Failed to save API key', async () => {
-      await invoke('save_api_key', {
-        provider: provider.api_key_name,
-        apiKey: apiKeyInput
-      });
-      await invoke('set_llm_processor', { processor: provider.id });
-
-      currentProcessor = provider.id;
-      updateDefaultModel();
-      showApiKeyModal = false;
+      await invoke('save_api_key', { provider: processor.api_key_name, apiKey });
+      await invoke('set_llm_processor', { processor: processor.id });
+      currentProcessor = processor.id;
+      dismissApiKeySheet();
       await loadProcessors();
-      status.confirm(updating
-        ? `Updated API key for ${provider.name}`
-        : `Configured and activated ${provider.name}`);
+      status.confirm('API key saved');
     });
   }
 
-  function closeModal() {
-    showApiKeyModal = false;
-    apiKeyInput = '';
-    showApiKey = false;
+  /** Close the sheet; the key typed into it goes with it. */
+  function dismissApiKeySheet() {
+    showApiKeySheet = false;
     editingExistingKey = false;
+  }
+
+  /** Cancel: the sheet goes, and so does a failure it may have caused. */
+  function closeApiKeySheet() {
+    dismissApiKeySheet();
     status.reset();
   }
 
-  async function saveModel() {
-    modelLoading = true;
-    await status.run('Failed to set model', async () => {
-      await invoke('set_llm_model', { model: currentModel });
-      status.confirm(currentModel
-        ? `Model set to ${currentModel}`
-        : `Reset to default model (${defaultModel})`);
-    });
-    modelLoading = false;
+  function openCustomSheet() {
+    draft = { baseUrl: customBaseUrl, apiKey: '', displayName: customDisplayName };
+    showCustomSheet = true;
+  }
+
+  /** Close the sheet and forget what was typed in it, the key included. */
+  function dismissCustomSheet() {
+    showCustomSheet = false;
+    draft = { baseUrl: '', apiKey: '', displayName: '' };
+  }
+
+  /** Cancel: the sheet goes, and so does a failure it may have caused. */
+  function closeCustomSheet() {
+    dismissCustomSheet();
+    status.reset();
   }
 
   async function saveCustomEndpoint() {
-    if (!customBaseUrl.trim()) {
+    if (status.busy) return;
+    const baseUrl = draft.baseUrl.trim();
+    const displayName = draft.displayName.trim();
+    const apiKey = draft.apiKey.trim();
+
+    // The sheet's button is off without a Base URL; this only guards a submit that gets past it.
+    if (!baseUrl) {
       status.fail('Base URL is required for custom endpoint');
       return;
     }
 
     await status.run('Failed to save custom endpoint', async () => {
-      await invoke('set_custom_llm_endpoint', {
-        baseUrl: customBaseUrl,
-        displayName: customDisplayName || null,
-      });
-      if (customApiKey.trim()) {
-        await invoke('save_api_key', {
-          provider: 'custom_llm',
-          apiKey: customApiKey
-        });
+      await invoke('set_custom_llm_endpoint', { baseUrl, displayName: displayName || null });
+      if (apiKey) {
+        await invoke('save_api_key', { provider: 'custom_llm', apiKey });
       }
       await invoke('set_llm_processor', { processor: 'custom_api' });
       currentProcessor = 'custom_api';
-
+      customBaseUrl = baseUrl;
+      customDisplayName = displayName;
+      dismissCustomSheet();
       await loadProcessors();
-      updateDefaultModel();
-      customApiKey = '';
-      status.confirm(`Custom endpoint activated: ${customDisplayName || customBaseUrl}`);
+      status.confirm('Custom endpoint saved');
     });
   }
 
-  function getStatus(processor: LlmProcessorInfo): 'green' | 'yellow' | 'red' | 'none' {
-    if (currentProcessor === processor.id) return 'green';
-    if (processor.provider_type === 'cli' && processor.available) return 'yellow';
-    if (processor.provider_type === 'cli' && !processor.available) return 'red';
-    if (processor.provider_type === 'local' && processor.available) return 'yellow';
-    if (processor.provider_type === 'local' && !processor.available) return 'red';
-    if (processor.configured) return 'yellow';
-    if (processor.requires_api_key && !processor.configured) return 'red';
-    return 'none';
+  async function saveModel() {
+    if (status.busy) return;
+    const model = modelInput.trim();
+    await status.run('Failed to set model', async () => {
+      await invoke('set_llm_model', { model });
+      savedModel = model;
+      status.confirm(model ? 'Model saved' : 'Using the default model');
+    });
   }
 
-  function getStatusText(processor: LlmProcessorInfo): string {
-    if (currentProcessor === processor.id) return 'Active';
-    if (processor.provider_type === 'cli' && processor.available) return 'Available';
-    if (processor.provider_type === 'cli' && !processor.available) return 'Not Installed';
-    if (processor.provider_type === 'local' && processor.available) return 'Ready';
-    if (processor.provider_type === 'local' && !processor.available) return 'Unavailable';
-    if (processor.configured) return 'Configured';
-    if (processor.requires_api_key && !processor.configured) return 'API Key Required';
-    return 'Available';
+  function onModelKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Enter') return;
+    // An input method confirms its candidate with Enter. That press is the input
+    // method's own, and saving on it would send half a composition. keyCode 229
+    // marks a key it handled, which WebKit can report after the composition has ended.
+    if (event.isComposing || event.keyCode === 229) return;
+    void saveModel();
   }
 
-  function getInstallCommand(processorId: string): string {
-    if (processorId === 'gemini') {
-      return 'Install from: https://github.com/google/generative-ai-cli';
-    } else if (processorId === 'copilot') {
-      return 'Install: npm install -g @githubnext/github-copilot-cli';
+  /** Leaving the field saves a changed value. Enter has already saved its own, and an untouched field has nothing to save. */
+  function onModelBlur() {
+    if (modelInput.trim() !== savedModel) void saveModel();
+  }
+
+  /** Back from a prompt: it may have been saved or restored there, so its mark is read again. */
+  function closeEditor() {
+    const opened = editing;
+    editing = null;
+    void loadPrompts();
+    void focusRow(opened);
+  }
+
+  /**
+   * The pane was rebuilt, and the row that opened the editor went with the old
+   * one, which leaves the focus on the page. Its new button takes the focus, so
+   * the keyboard carries on from where it left.
+   */
+  async function focusRow(prompt: PromptName | null) {
+    await tick();
+    const index = VOICE_COMMANDS.findIndex((command) => command.prompt === prompt);
+    voiceCommandList?.querySelectorAll<HTMLElement>('.row-main')[index]?.focus();
+  }
+
+  function processorIcon(processor: LlmProcessorInfo) {
+    switch (processor.provider_type) {
+      case 'local': return Laptop;
+      case 'cli': return Terminal;
+      case 'custom': return Server;
+      default: return Cloud;
     }
-    return '';
+  }
+
+  function actionName(processor: LlmProcessorInfo, action: Exclude<LlmProcessorAction, null>): string {
+    return action === 'add-key' ? `Add API Key for ${processor.name}` : `Set up ${processor.name}`;
+  }
+
+  /** The mark at the end of a voice command's row: unsaved work shows over a prompt that was edited. */
+  function promptMark(prompt: PromptName): string {
+    if (hasDraft(prompt)) return 'Unsaved';
+    return prompts.some((candidate) => candidate.name === prompt && candidate.is_override) ? 'Edited' : '';
   }
 </script>
 
-<div class="page">
-  <PageHeader title="LLM Processor" description="Configure language model for text processing" />
-
-  <Alert error={status.error} success={status.success} />
-
-  <!-- LOCAL CLI -->
-  {#if cliProcessors.length > 0}
-    <div class="section">
-      <SectionHeader label="LOCAL CLI" />
-      <div class="section-rows">
-        {#each cliProcessors as processor (processor.id)}
-          <StatusRow
-            label={processor.name}
-            value={processor.provider_type === 'cli' ? 'CLI' : 'on-device'}
-            status={getStatus(processor)}
-            statusText={getStatusText(processor)}
-            onclick={() => selectProcessor(processor.id)}
-          />
-          {#if !processor.available && processor.provider_type === 'cli'}
-            <div class="install-hint">{getInstallCommand(processor.id)}</div>
-          {/if}
-        {/each}
-      </div>
-    </div>
-  {/if}
-
-  <!-- API PROVIDERS -->
-  {#if apiProcessors.length > 0}
-    <div class="section">
-      <SectionHeader label="API PROVIDERS" />
-      <div class="section-rows">
-        {#each apiProcessors as processor (processor.id)}
-          <StatusRow
-            label={processor.name}
-            value={processor.default_model}
-            status={getStatus(processor)}
-            statusText={getStatusText(processor)}
-            onclick={() => selectProcessor(processor.id)}
-          >
-            {#if processor.requires_api_key && processor.configured}
-              <button class="inline-btn" onclick={(e) => { e.stopPropagation(); editApiKey(processor); }}>
-                Edit Key
+{#if editing}
+  <PromptsEditor name={editing} onback={closeEditor} />
+{:else}
+  <Pane title="AI Processing" {status}>
+    {#if orderedProcessors.length > 0}
+      <Group title="Service">
+        {#each orderedProcessors as processor (processor.id)}
+          {@const action = llmProcessorAction(processor)}
+          {@const hint = llmProcessorHint(processor)}
+          {#snippet rowAction()}
+            {#if action}
+              <button
+                type="button"
+                class="btn btn-small"
+                aria-label={actionName(processor, action)}
+                onclick={() => runAction(processor, action)}
+              >
+                {ACTION_LABELS[action]}
               </button>
             {/if}
-          </StatusRow>
-        {/each}
-      </div>
-    </div>
-  {/if}
-
-  <!-- LOCAL ON-DEVICE -->
-  {#if localProcessors.length > 0}
-    <div class="section">
-      <SectionHeader label="LOCAL ON-DEVICE" />
-      <div class="section-rows">
-        {#each localProcessors as processor (processor.id)}
-          <StatusRow
+          {/snippet}
+          <!-- Under the row, not in its button: the hint wraps instead of being cut off, and it can be selected. -->
+          {#snippet rowHint()}
+            <p class="install-hint">{hint}</p>
+          {/snippet}
+          <!-- A Row reserves room for a snippet it is given, so each goes in only when it has something to show. -->
+          <Row
             label={processor.name}
-            value="on-device"
-            status={getStatus(processor)}
-            statusText={getStatusText(processor)}
-            onclick={() => selectProcessor(processor.id)}
+            detail={llmProcessorDetail(processor, customBaseUrl)}
+            icon={processorIcon(processor)}
+            current={currentProcessor === processor.id}
+            disabled={llmProcessorDisabled(processor)}
+            onclick={() => selectProcessor(processor)}
+            trailing={action ? rowAction : undefined}
+            children={hint ? rowHint : undefined}
           />
         {/each}
-      </div>
-    </div>
-  {/if}
-
-  <!-- CUSTOM ENDPOINT -->
-  <div class="section">
-    <SectionHeader label="CUSTOM ENDPOINT" />
-    <ActionRow
-      label="Add custom OpenAI-compatible endpoint"
-      onclick={() => { showCustomSection = !showCustomSection; }}
-    />
-
-    {#if showCustomSection}
-      <div class="custom-form">
-        <p class="form-desc">Connect to any OpenAI-compatible endpoint (Ollama, LM Studio, Azure OpenAI, etc.)</p>
-        <div class="form-group">
-          <label for="custom-base-url">Base URL</label>
-          <input id="custom-base-url" type="text" bind:value={customBaseUrl} placeholder="http://localhost:11434/v1" />
-        </div>
-        <div class="form-group">
-          <label for="custom-api-key">API Key <span class="optional">(optional for local)</span></label>
-          <input id="custom-api-key" type="password" bind:value={customApiKey} placeholder="API key (if required)" />
-        </div>
-        <div class="form-group">
-          <label for="custom-display-name">Display Name <span class="optional">(optional)</span></label>
-          <input id="custom-display-name" type="text" bind:value={customDisplayName} placeholder="e.g., Local Ollama" />
-        </div>
-        <button class="btn btn-block btn-primary" onclick={saveCustomEndpoint} disabled={status.busy || !customBaseUrl.trim()}>
-          {status.busy ? 'Saving...' : 'Save & Activate'}
-        </button>
-      </div>
+      </Group>
     {/if}
-  </div>
 
-  <div class="separator"></div>
+    <!-- What the processor in use has: a key or an endpoint, under its own name. -->
+    {#if activeProcessor?.configured}
+      {@const processor = activeProcessor}
+      {#if processor.provider_type === 'http'}
+        <Group title={processor.name}>
+          <Row label="API key" detail="Saved">
+            {#snippet trailing()}
+              <button
+                type="button"
+                class="btn btn-small"
+                aria-label={`Change API key for ${processor.name}`}
+                onclick={() => openApiKeySheet(processor, true)}
+              >
+                Change…
+              </button>
+            {/snippet}
+          </Row>
+        </Group>
+      {:else if processor.provider_type === 'custom'}
+        <Group title={processor.name}>
+          <Row label="Endpoint" detail={customBaseUrl}>
+            {#snippet trailing()}
+              <button
+                type="button"
+                class="btn btn-small"
+                aria-label={`Edit endpoint of ${processor.name}`}
+                onclick={openCustomSheet}
+              >
+                Edit…
+              </button>
+            {/snippet}
+          </Row>
+        </Group>
+      {/if}
+    {/if}
 
-  <!-- MODEL OVERRIDE -->
-  <div class="section">
-    <SectionHeader label="MODEL OVERRIDE" />
-    <div class="model-row">
-      <input
-        type="text"
-        class="model-input"
-        bind:value={currentModel}
-        placeholder={defaultModel ? `e.g. ${defaultModel}` : 'default'}
-        onkeydown={(e) => e.key === 'Enter' && saveModel()}
+    {#if showModel}
+      <Group title="Model">
+        <Row label={modelLabel}>
+          {#snippet trailing()}
+            <input
+              type="text"
+              class="model-field"
+              aria-label="Model"
+              placeholder={modelPlaceholder}
+              bind:value={modelInput}
+              onkeydown={onModelKeydown}
+              onblur={onModelBlur}
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+            />
+          {/snippet}
+        </Row>
+      </Group>
+    {/if}
+
+    <!-- Wrapped so that a row can be found in it when the pane is rebuilt on coming back from an editor. -->
+    <div bind:this={voiceCommandList}>
+      <Group title="Voice Commands">
+        {#each VOICE_COMMANDS as command (command.prompt)}
+          {@const mark = promptMark(command.prompt)}
+          <Row label={command.title} detail={command.detail} onclick={() => (editing = command.prompt)}>
+            <!-- Not controls, so inside the button: the whole width of the row opens the prompt. -->
+            {#snippet accessory()}
+              {#if mark}<span class="mark">{mark}</span>{/if}
+              <span class="chevron"><ChevronRight size={16} aria-hidden="true" /></span>
+            {/snippet}
+          </Row>
+        {/each}
+      </Group>
+    </div>
+
+    <!-- Inside the pane, where the tokens are. -->
+    {#if showApiKeySheet && keyProcessor}
+      <ApiKeySheet
+        providerName={keyProcessor.name}
+        mode={editingExistingKey ? 'change' : 'add'}
+        busy={status.busy}
+        onsave={saveApiKey}
+        onclose={closeApiKeySheet}
       />
-      <button class="apply-btn" onclick={saveModel} disabled={modelLoading}>
-        {modelLoading ? '...' : 'Apply'}
-      </button>
-    </div>
-  </div>
-</div>
+    {/if}
 
-<!-- API Key Modal -->
-{#if showApiKeyModal}
-  <div class="modal-overlay" onclick={closeModal} onkeydown={(e) => e.key === 'Escape' && closeModal()} role="presentation">
-    <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') closeModal(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="llm-api-key-title">
-      <h3 id="llm-api-key-title">{editingExistingKey ? 'Update' : 'Configure'} {selectedProvider?.name}</h3>
-      <p>{editingExistingKey ? 'Enter a new API key:' : 'Enter your API key to enable this provider:'}</p>
-
-      <div class="api-key-wrapper">
+    {#if showCustomSheet}
+      <Sheet title="Custom Endpoint" onclose={closeCustomSheet} onsubmit={saveCustomEndpoint}>
+        <label for="custom-llm-base-url">Base URL</label>
         <input
-          type={showApiKey ? 'text' : 'password'}
-          bind:value={apiKeyInput}
-          placeholder="API Key"
-          class="api-key-input"
-          onkeydown={(e) => e.key === 'Enter' && saveApiKey()}
+          id="custom-llm-base-url"
+          type="text"
+          bind:value={draft.baseUrl}
+          placeholder="http://localhost:11434/v1"
+          aria-required="true"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
         />
-        <button class="visibility-toggle" onclick={() => showApiKey = !showApiKey} type="button">
-          {showApiKey ? '🙈' : '👁️'}
-        </button>
-      </div>
-
-      <div class="modal-actions">
-        <button class="btn btn-md btn-secondary" onclick={closeModal}>Cancel</button>
-        <button class="btn btn-md btn-primary" onclick={saveApiKey} disabled={status.busy}>
-          {status.busy ? 'Saving...' : editingExistingKey ? 'Update Key' : 'Save & Activate'}
-        </button>
-      </div>
-    </div>
-  </div>
+        <label for="custom-llm-api-key">API Key</label>
+        <input
+          id="custom-llm-api-key"
+          type="password"
+          bind:value={draft.apiKey}
+          placeholder="Only if the server needs one"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+        />
+        <label for="custom-llm-display-name">Display Name</label>
+        <input
+          id="custom-llm-display-name"
+          type="text"
+          bind:value={draft.displayName}
+          placeholder="Local Ollama"
+          autocomplete="off"
+        />
+        {#snippet actions()}
+          <button type="button" class="btn" onclick={closeCustomSheet}>Cancel</button>
+          <button type="submit" class="btn btn-primary" disabled={status.busy || !draft.baseUrl.trim()}>
+            {status.busy ? 'Saving…' : 'Save & Use'}
+          </button>
+        {/snippet}
+      </Sheet>
+    {/if}
+  </Pane>
 {/if}
 
 <style>
-  .page {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-
-
-
-  .section {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    width: 100%;
-  }
-
-  .section-rows {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-
-  .separator {
-    height: 1px;
-    background: var(--border);
-    width: 100%;
-  }
-
-  .inline-btn {
-    padding: 3px 10px;
+  /* The model field sits where a pop-up button would, at the end of its row. */
+  .model-field {
+    width: 220px;
+    height: 22px;
+    padding: 0 8px;
+    border: 1px solid var(--control-border);
     border-radius: 6px;
-    border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.05);
-    color: var(--text-secondary);
-    font-size: 11px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    white-space: nowrap;
-  }
-
-  .inline-btn:hover {
-    background: var(--surface-raised);
+    background: var(--field-bg);
     color: var(--text-primary);
+    font: inherit;
+    font-size: 12px;
+    transition: border-color 0.15s ease;
   }
 
+  .model-field::placeholder {
+    color: var(--text-secondary);
+  }
+
+  /* A soft ring in place of the page-wide outline, like the sheet's fields. */
+  .model-field:focus-visible {
+    border-color: var(--accent);
+    outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    outline-offset: 0;
+  }
+
+  /* The hint is a command or a link, which has no place to break, so it may break anywhere. */
   .install-hint {
-    padding: 4px 12px;
-    font-size: 11px;
-    color: var(--text-muted);
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+    -webkit-user-select: text;
+    user-select: text;
   }
 
-  /* Custom form */
-  .custom-form {
-    padding: 14px;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .form-desc {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 12px;
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .form-group label {
+  .mark {
     font-size: 12px;
     color: var(--text-secondary);
   }
 
-  .optional {
-    color: var(--text-muted);
-    font-size: 11px;
+  .chevron {
+    display: inline-flex;
+    color: var(--text-secondary);
   }
 
-  .form-group input {
-    width: 100%;
-    padding: 8px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg-card);
-    color: var(--text-primary);
-    font-size: 12px;
-    outline: none;
-    transition: border-color 0.15s ease;
+  @media (prefers-reduced-motion: reduce) {
+    .model-field {
+      transition: none;
+    }
   }
-
-  .form-group input:focus {
-    border-color: rgba(168, 85, 247, 0.6);
-  }
-
-  .form-group input::placeholder {
-    color: var(--text-placeholder);
-  }
-
-
-
-
-  /* Model override */
-  .model-row {
-    display: flex;
-    gap: 8px;
-  }
-
-  .model-input {
-    flex: 1;
-    padding: 8px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg-card);
-    color: var(--text-primary);
-    font-size: 12px;
-    outline: none;
-    transition: border-color 0.15s ease;
-  }
-
-  .model-input:focus {
-    border-color: rgba(168, 85, 247, 0.6);
-  }
-
-  .model-input::placeholder {
-    color: var(--text-placeholder);
-  }
-
-  .apply-btn {
-    padding: 8px 16px;
-    border-radius: 8px;
-    border: none;
-    background: var(--accent);
-    color: var(--text-primary);
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.15s ease;
-    white-space: nowrap;
-  }
-
-  .apply-btn:hover:not(:disabled) {
-    background: var(--accent-hover);
-  }
-
-  .apply-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* Modal */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .modal {
-    background: var(--bg-card);
-    padding: 24px;
-    border-radius: 16px;
-    max-width: 400px;
-    width: 90%;
-    border: 1px solid var(--border);
-  }
-
-  .modal h3 {
-    margin: 0 0 8px;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .modal p {
-    margin: 0 0 16px;
-    color: var(--text-muted);
-    font-size: 13px;
-  }
-
-  .api-key-wrapper {
-    position: relative;
-    margin-bottom: 20px;
-  }
-
-  .api-key-input {
-    width: 100%;
-    padding: 10px 12px;
-    padding-right: 44px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-size: 13px;
-    outline: none;
-  }
-
-  .api-key-input:focus {
-    border-color: rgba(168, 85, 247, 0.6);
-  }
-
-  .visibility-toggle {
-    position: absolute;
-    right: 8px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 6px;
-    font-size: 14px;
-    opacity: 0.6;
-  }
-
-  .visibility-toggle:hover {
-    opacity: 1;
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 10px;
-    justify-content: flex-end;
-  }
-
-
-
-
-
-
 </style>

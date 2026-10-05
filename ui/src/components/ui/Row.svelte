@@ -16,6 +16,7 @@
     current = false,
     disabled = false,
     onclick,
+    accessory,
     trailing,
     children,
   }: {
@@ -27,6 +28,14 @@
     disabled?: boolean;
     /** Makes the main area a button. */
     onclick?: () => void;
+    /**
+     * Content at the right end of the main area, inside the button when there is
+     * an `onclick`, so a click on it is a click on the row: a status, a chevron
+     * that says the row leads to a page. It is read as part of the row's name.
+     * Nothing that can be pressed belongs here, and a button cannot hold a
+     * button, so only phrasing content; controls go in `trailing`.
+     */
+    accessory?: Snippet;
     /** Actions beside the main area. They are siblings of it, never inside the button. */
     trailing?: Snippet;
     /** Extra content under the main area, such as a progress bar. */
@@ -49,6 +58,8 @@
     <span class="row-label">{label}</span>
     {#if detail}<span class="row-detail" title={detail}>{detail}</span>{/if}
   </span>
+  <!-- Before the check, which stays at the far end of every row that has one. -->
+  {#if accessory}<span class="row-accessory">{@render accessory()}</span>{/if}
   {#if current}
     <span class="row-check"><Check size={17} aria-hidden="true" /></span>
     <span class="sr-only">In use</span>
@@ -159,6 +170,13 @@
     color: var(--text-secondary);
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .row-accessory {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 8px;
   }
 
   .row-check {

@@ -1,269 +1,275 @@
 <script lang="ts">
-  import Alert from './ui/Alert.svelte';
+  import { onMount } from 'svelte';
   import { useLifecycle } from '../../lib/lifecycle';
   import { createStatus } from '../../lib/status.svelte';
-  import { onMount } from 'svelte';
   import { safeInvoke as invoke } from '../../lib/tauri';
-  import PageHeader from './ui/PageHeader.svelte';
-  import SectionHeader from './ui/SectionHeader.svelte';
+  import { voiceCommand, type PromptName } from '../../lib/voiceCommands';
+  import Pane from '../ui/Pane.svelte';
+  import { clearDraft, getDraft, setDraft } from './promptDrafts.svelte';
+
+  /**
+   * The editor of one voice command's prompt, a page below AI Processing. It
+   * has a status of its own, so its toasts end with it and the next prompt that
+   * is opened starts clean.
+   */
+  let { name, onback }: { name: PromptName; onback: () => void } = $props();
 
   const lifecycle = useLifecycle();
   const status = createStatus(lifecycle);
+  const introId = $props.id();
 
+  /** The part of what `get_prompts` lists that the editor uses. */
   interface PromptInfo {
-    name: string;
-    title: string;
+    name: PromptName;
     description: string;
     required_placeholders: string[];
-    task_variant: string;
     content: string;
     is_override: boolean;
-    default_content: string;
   }
+
+  /**
+   * The placeholders that stand for what was said. A prompt without one never
+   * sees the transcription.
+   */
+  const TRANSCRIPTION_PLACEHOLDERS = ['{raw_text}', '{text}', '{context}'];
+
+  /**
+   * What the model goes without when one of the other placeholders is missing.
+   * Each prompt has at most one of them.
+   */
+  const LEFT_OUT: Record<string, string> = {
+    '{dictionary_terms}': "Your dictionary terms won't be sent to the model.",
+    '{tone}': "The tone you ask for won't be sent to the model.",
+    '{language}': "The language you ask for won't be sent to the model.",
+  };
 
   let prompts = $state<PromptInfo[]>([]);
-  let selectedName = $state<string>('post_process');
-  let editorContent = $state<string>('');
-  // Unsaved edits, kept per prompt so switching the selector never loses work.
-  let drafts = $state<Record<string, string>>({});
 
-  let current = $derived<PromptInfo | undefined>(prompts.find((p) => p.name === selectedName));
-  let missingPlaceholders = $derived<string[]>(
-    current ? current.required_placeholders.filter((ph) => !editorContent.includes(ph)) : []
+  let command = $derived(voiceCommand(name));
+  let current = $derived(prompts.find((prompt) => prompt.name === name));
+  // What the editor shows: the unsaved draft if there is one, otherwise what is stored.
+  let content = $derived(getDraft(name) ?? current?.content ?? '');
+  let missing = $derived(
+    current ? current.required_placeholders.filter((placeholder) => !content.includes(placeholder)) : [],
   );
-  let isDirty = $derived<boolean>(current ? editorContent !== current.content : false);
-  let isEmpty = $derived<boolean>(editorContent.trim().length === 0);
+  // The backend does not refuse a prompt without a placeholder, it leaves that value out,
+  // so the warning says which value the model will not get.
+  let missingNote = $derived(describeMissing(missing));
+  let isDirty = $derived(current ? content !== current.content : false);
+  let isEmpty = $derived(content.trim().length === 0);
 
-  onMount(loadPrompts);
-
-  async function loadPrompts() {
-    await status.run('Failed to load prompts', async () => {
-      prompts = await invoke<PromptInfo[]>('get_prompts');
-      syncEditor();
-    });
-  }
-
-  function syncEditor() {
-    editorContent = drafts[selectedName] ?? current?.content ?? '';
-  }
-
-  function selectPrompt(next: string) {
-    // Switching away used to overwrite the editor from the newly selected
-    // prompt, discarding unsaved work with no warning. Park the edit instead,
-    // so every prompt keeps its own draft until it is saved or reset.
-    if (isDirty) {
-      drafts[selectedName] = editorContent;
-    } else {
-      delete drafts[selectedName];
+  /**
+   * The line under the editor for the placeholders the text lacks, in the order the prompt requires them,
+   * and then everything the model goes without because of them; empty when none are missing.
+   */
+  function describeMissing(names: string[]): string {
+    if (names.length === 0) return '';
+    const consequences: string[] = [];
+    // Said once, however many of the transcription's placeholders are missing.
+    if (names.some((name) => TRANSCRIPTION_PLACEHOLDERS.includes(name))) {
+      consequences.push("Your transcription won't be inserted into the prompt.");
     }
-    selectedName = next;
-    // Reloading after a save must keep the banner, so the reset lives with the
-    // selection change rather than inside syncEditor.
-    status.reset();
-    syncEditor();
+    for (const name of names) {
+      if (TRANSCRIPTION_PLACEHOLDERS.includes(name)) continue;
+      // A placeholder this build has no wording for would otherwise print "undefined".
+      consequences.push(LEFT_OUT[name] ?? "It won't be sent to the model.");
+    }
+    return `Missing ${names.join(', ')}. ${consequences.join(' ')}`;
   }
 
+  onMount(() => {
+    void load();
+  });
+
+  async function refresh() {
+    prompts = await invoke<PromptInfo[]>('get_prompts');
+  }
+
+  async function load() {
+    await status.run('Failed to load prompts', refresh);
+  }
+
+  /** A draft exists exactly while the text differs from what is stored, so "Unsaved" never lingers on a reverted edit. */
+  function edit(text: string) {
+    if (current && text !== current.content) setDraft(name, text);
+    else clearDraft(name);
+  }
+
+  // After a change the prompts are read back before the draft goes, so the editor
+  // never shows the old stored text in between.
   async function save() {
+    if (!current || status.busy) return;
+    // The button is off for a blank prompt; this only guards a click that gets past it.
     if (isEmpty) {
-      status.fail('Prompt cannot be empty. Type something or click "Reset to default".');
+      status.fail("Prompt can't be empty. Type something or restore the default.");
       return;
     }
+    const text = content;
     await status.run('Failed to save', async () => {
-      await invoke('set_prompt', {
-        params: { name: selectedName, content: editorContent },
-      });
-      delete drafts[selectedName];
-      await loadPrompts();
-      status.confirm(`Saved "${current?.title ?? selectedName}"`);
+      await invoke('set_prompt', { params: { name, content: text } });
+      await refresh();
+      // Typing goes on while the save runs. What was typed after it is not saved, so it stays a draft.
+      if (getDraft(name) === text) clearDraft(name);
+      status.confirm('Saved');
     });
   }
 
-  async function reset() {
-    await status.run('Failed to reset', async () => {
-      await invoke('reset_prompt', { params: { name: selectedName } });
-      delete drafts[selectedName];
-      await loadPrompts();
-      status.confirm(`Reset "${current?.title ?? selectedName}" to default`);
+  async function restore() {
+    if (!current || status.busy) return;
+    const before = getDraft(name);
+    await status.run('Failed to restore', async () => {
+      await invoke('reset_prompt', { params: { name } });
+      await refresh();
+      // Typing goes on while the restore runs. The restore replaces what was there when it started, so text typed
+      // after that stays a draft, unless it is the restored prompt itself and there is nothing left to save.
+      const after = getDraft(name);
+      if (after === before || after === current?.content) clearDraft(name);
+      status.confirm('Restored the default prompt');
     });
   }
 </script>
 
-<div class="page">
-  <PageHeader
-    title="Prompt Templates"
-    description="Edit the Markdown prompts sent to the LLM. Changes take effect on the next recording."
-  />
-
-  <Alert error={status.error} success={status.success} />
-
-  <div class="section">
-    <SectionHeader label="PROMPT" />
-    <select
-      class="prompt-select"
-      value={selectedName}
-      onchange={(event) => selectPrompt(event.currentTarget.value)}
-    >
-      {#each prompts as p (p.name)}
-        <option value={p.name}>{p.title}{p.is_override ? ' *' : ''}</option>
-      {/each}
-    </select>
-  </div>
-
+<Pane title={command.title} {onback} backLabel="AI Processing" {status}>
   {#if current}
-    <p class="prompt-desc">{current.description}</p>
-
-    <div class="meta-row">
-      <span class="task-chip">Task: {current.task_variant}</span>
-      {#each current.required_placeholders as ph (ph)}
-        <span class="ph-chip" class:missing={missingPlaceholders.includes(ph)}>{ph}</span>
-      {/each}
-    </div>
-
-    <Alert
-      warning={missingPlaceholders.length > 0
-        ? `Missing required placeholder(s): ${missingPlaceholders.join(', ')}. Saving is allowed but the LLM call may produce incorrect output because the input text will not be substituted into the prompt.`
-        : ''}
-    />
-
-    <textarea
-      class="prompt-textarea"
-      bind:value={editorContent}
-      rows="22"
-      spellcheck="false"
-      placeholder="Type your prompt here..."
-    ></textarea>
-
-    <div class="actions">
-      <button
-        class="btn btn-md btn-secondary"
-        onclick={reset}
-        disabled={status.busy || !current.is_override}
-        title={current.is_override ? 'Delete the override and revert to the built-in default' : 'No override to reset'}
-      >
-        Reset to default
-      </button>
-      <span class="spacer"></span>
-      <button
-        class="btn btn-md btn-primary"
-        onclick={save}
-        disabled={status.busy || !isDirty || isEmpty}
-      >
-        {status.busy ? 'Saving...' : 'Save'}
-      </button>
+    <div class="editor">
+      <p class="editor-intro" id={introId}>{current.description} {command.usage}</p>
+      <textarea
+        value={content}
+        oninput={(event) => edit(event.currentTarget.value)}
+        aria-label="{command.title} prompt"
+        aria-describedby={introId}
+        spellcheck="false"
+        placeholder="Type your prompt here…"
+      ></textarea>
+      <div class="editor-footer">
+        <div class="editor-notes">
+          {#if current.required_placeholders.length > 0}
+            <p class="editor-required">
+              <span>Required:</span>
+              {#each current.required_placeholders as placeholder (placeholder)}
+                <code class:is-missing={missing.includes(placeholder)}>{placeholder}</code>
+              {/each}
+            </p>
+          {/if}
+          <!-- Always there, so that the text appearing in it is announced. -->
+          <p class="editor-missing" role="status">{missingNote}</p>
+        </div>
+        <div class="editor-actions">
+          <button
+            type="button"
+            class="btn"
+            disabled={status.busy || !current.is_override}
+            onclick={restore}
+          >
+            Restore Default
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            disabled={status.busy || !isDirty || isEmpty}
+            onclick={save}
+          >
+            Save
+          </button>
+        </div>
+      </div>
     </div>
   {/if}
-</div>
+</Pane>
 
 <style>
-  .page {
+  /* Fills what the pane leaves, and never shrinks below its content: the pane's body scrolls instead. */
+  .editor {
     display: flex;
+    flex: 1 0 auto;
     flex-direction: column;
     gap: 12px;
   }
 
-
-
-
-
-  .section {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    width: 100%;
-  }
-
-  .prompt-select {
-    width: 100%;
-    padding: 8px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg-card);
-    color: var(--text-primary);
-    font-size: 13px;
-    font-family: inherit;
-    outline: none;
-    cursor: pointer;
-    transition: border-color 0.15s ease;
-  }
-
-  .prompt-select:focus {
-    border-color: rgba(168, 85, 247, 0.6);
-  }
-
-  .prompt-desc {
-    margin: 0;
-    color: var(--text-secondary);
-    font-size: 12px;
+  .editor-intro {
+    font-size: 11.5px;
     line-height: 1.4;
-  }
-
-  .meta-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    align-items: center;
-  }
-
-  .task-chip,
-  .ph-chip {
-    display: inline-flex;
-    align-items: center;
-    padding: 3px 8px;
-    border-radius: 6px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    line-height: 1.4;
-    border: 1px solid var(--border);
-    background: var(--bg-card);
     color: var(--text-secondary);
   }
 
-  .task-chip {
-    color: var(--accent);
-    border-color: rgba(168, 85, 247, 0.4);
-  }
-
-  .ph-chip.missing {
-    color: var(--status-red-text);
-    border-color: color-mix(in srgb, var(--status-red) 50%, transparent);
-    background: color-mix(in srgb, var(--status-red) 10%, transparent);
-  }
-
-  .prompt-textarea {
+  textarea {
+    flex: 1 1 auto;
     width: 100%;
+    min-height: 140px;
     padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg-primary);
+    border: 1px solid var(--control-border);
+    border-radius: 6px;
+    background: var(--field-bg);
     color: var(--text-primary);
     font-family: var(--font-mono);
     font-size: 12px;
     line-height: 1.5;
-    outline: none;
-    resize: vertical;
-    min-height: 320px;
+    resize: none;
     transition: border-color 0.15s ease;
   }
 
-  .prompt-textarea:focus {
-    border-color: rgba(168, 85, 247, 0.6);
+  textarea::placeholder {
+    color: var(--text-secondary);
   }
 
-  .actions {
+  /* A soft ring in place of the page-wide outline, like the sheet's fields. */
+  textarea:focus-visible {
+    border-color: var(--accent);
+    outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    outline-offset: 0;
+  }
+
+  .editor-footer {
     display: flex;
-    align-items: center;
-    gap: 10px;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 8px 12px;
+  }
+
+  .editor-notes {
+    flex: 1 1 200px;
+    min-width: 0;
+  }
+
+  /* The label and each placeholder are separate items, 6px apart, however many there are. */
+  .editor-required {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 6px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-secondary);
+  }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: inherit;
+  }
+
+  .is-missing {
+    color: var(--danger);
+  }
+
+  .editor-missing {
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--danger);
+  }
+
+  .editor-missing:not(:empty) {
     margin-top: 4px;
   }
 
-  .spacer {
-    flex: 1;
+  .editor-actions {
+    display: flex;
+    flex: none;
+    gap: 8px;
+    margin-left: auto;
   }
 
-
-
-
-
-
-
+  @media (prefers-reduced-motion: reduce) {
+    textarea {
+      transition: none;
+    }
+  }
 </style>
