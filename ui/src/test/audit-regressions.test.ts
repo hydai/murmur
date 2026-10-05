@@ -333,30 +333,30 @@ describe('modal dialogs', () => {
     expect(document.activeElement).toBe(opener);
   });
 
-  it('names the add-entry dialog after its heading', async () => {
+  it('names the add-word sheet after its heading', async () => {
     mocks.invoke.mockResolvedValue({ entries: [] });
     const { target } = render(DictionaryEditor, {});
     await settle();
-    button(target, 'Add new word or correction').click();
+    target.querySelector<HTMLButtonElement>('button[aria-label="Add Word"]')!.click();
     flushSync();
     const dialog = target.querySelector<HTMLElement>('[role="dialog"]')!;
     const labelledBy = dialog.getAttribute('aria-labelledby');
     expect(labelledBy).toBeTruthy();
-    expect(target.querySelector(`#${labelledBy}`)?.textContent).toBe('Add Dictionary Entry');
+    expect(target.querySelector(`#${labelledBy}`)?.textContent).toBe('Add Word');
   });
 
-  it('focuses the first field of the add-entry dialog and wraps Shift+Tab to its last control', async () => {
+  it('focuses the first field of the add-word sheet and wraps Shift+Tab to its last control', async () => {
     mocks.invoke.mockResolvedValue({ entries: [] });
     const { target } = render(DictionaryEditor, {});
     await settle();
     const user = userEvent.setup();
-    const opener = button(target, 'Add new word or correction');
+    const opener = target.querySelector<HTMLButtonElement>('button[aria-label="Add Word"]')!;
     await user.click(opener);
     await settle();
     const dialog = target.querySelector<HTMLElement>('[role="dialog"]')!;
     expect(document.activeElement).toBe(dialog.querySelector('#term'));
     await user.tab({ shift: true });
-    expect(document.activeElement).toBe(button(dialog, 'Add Entry'));
+    expect(document.activeElement).toBe(button(dialog, 'Add Word'));
     await user.keyboard('{Escape}');
     await settle();
     expect(target.querySelector('[role="dialog"]')).toBeNull();

@@ -1,17 +1,20 @@
 <script lang="ts">
-  import Alert from './ui/Alert.svelte';
+  import { onMount, tick } from 'svelte';
+  import { Plus } from 'lucide-svelte';
   import { useLifecycle } from '../../lib/lifecycle';
   import { createStatus } from '../../lib/status.svelte';
-  import { trapFocus } from '../../lib/focus';
   import { safeInvoke as invoke } from '../../lib/tauri';
-  import { onMount } from 'svelte';
-  import { BookPlus } from 'lucide-svelte';
-  import PageHeader from './ui/PageHeader.svelte';
-  import SectionHeader from './ui/SectionHeader.svelte';
-  import ActionRow from './ui/ActionRow.svelte';
+  import Group from '../ui/Group.svelte';
+  import Pane from '../ui/Pane.svelte';
+  import Row from '../ui/Row.svelte';
+  import SearchField from '../ui/SearchField.svelte';
+  import Sheet from '../ui/Sheet.svelte';
 
   const lifecycle = useLifecycle();
   const status = createStatus(lifecycle);
+
+  // What ends an alias: the ASCII comma, the fullwidth comma (U+FF0C) and the ideographic comma (U+3001) an input method types.
+  const ALIAS_SEPARATOR = /[,\uFF0C\u3001]/;
 
   interface DictEntry {
     term: string;
@@ -19,24 +22,35 @@
     description: string | null;
   }
 
+  /** The one sheet that is open: a word to add, or a word being edited or deleted. */
+  type OpenSheet =
+    | { kind: 'add' }
+    | { kind: 'edit'; entry: DictEntry }
+    | { kind: 'delete'; entry: DictEntry };
+
   let entries = $state<DictEntry[]>([]);
   let filteredEntries = $state<DictEntry[]>([]);
   let searchQuery = $state('');
-  let showAddModal = $state(false);
-  let showEditModal = $state(false);
-  let showDeleteModal = $state(false);
-  let currentEntry = $state<DictEntry | null>(null);
+  // What is searched for: spaces around it are not part of the word.
+  let searchTerm = $derived(searchQuery.trim());
+  // False until the backend has answered once, so "No words yet" is only said of a list that is known to be empty.
+  let loaded = $state(false);
+  let sheet = $state<OpenSheet | null>(null);
   let formData = $state({
     term: '',
     aliases: '',
     description: ''
   });
+  // Why the last submit went nowhere. It shows in the sheet, and goes as soon as the word is edited.
+  let missing = $state('');
+  // The toolbar's Add Word button, for putting the focus back when what opened a sheet is gone.
+  let addButton = $state<HTMLButtonElement>();
 
   onMount(async () => {
     await loadDictionary();
   });
 
-  // filterEntries reads searchQuery and entries, so $effect tracks both.
+  // filterEntries reads searchTerm and entries, so $effect tracks both.
   $effect(filterEntries);
 
   async function loadDictionary() {
@@ -44,16 +58,17 @@
       const dict = await invoke<{ entries: DictEntry[] }>('get_dictionary');
       entries = dict.entries || [];
       filterEntries();
+      loaded = true;
     });
   }
 
   function filterEntries() {
-    if (!searchQuery.trim()) {
+    if (!searchTerm) {
       filteredEntries = entries;
       return;
     }
 
-    const query = searchQuery.toLowerCase();
+    const query = searchTerm.toLowerCase();
     filteredEntries = entries.filter((entry: DictEntry) => {
       return entry.term.toLowerCase().includes(query) ||
              entry.aliases.some((a: string) => a.toLowerCase().includes(query)) ||
@@ -61,35 +76,57 @@
     });
   }
 
-  function openAddModal() {
+  /** The line under a word: who it is also heard as, or else its note. */
+  function entryDetail(entry: DictEntry): string | undefined {
+    if (entry.aliases.length > 0) return `Also heard as: ${entry.aliases.join(', ')}`;
+    return entry.description || undefined;
+  }
+
+  function openAddSheet() {
     formData = { term: '', aliases: '', description: '' };
-    currentEntry = null;
-    showAddModal = true;
+    missing = '';
+    sheet = { kind: 'add' };
     status.reset();
   }
 
-  function openEditModal(entry: DictEntry) {
-    currentEntry = entry;
+  function openEditSheet(entry: DictEntry) {
     formData = {
       term: entry.term,
       aliases: entry.aliases.join(', '),
       description: entry.description || ''
     };
-    showEditModal = true;
+    missing = '';
+    sheet = { kind: 'edit', entry };
     status.reset();
   }
 
-  function openDeleteModal(entry: DictEntry) {
-    currentEntry = entry;
-    showDeleteModal = true;
+  /** From the edit sheet: the confirmation takes its place, so only one sheet is ever open. */
+  function openDeleteSheet() {
+    if (sheet?.kind !== 'edit') return;
+    sheet = { kind: 'delete', entry: sheet.entry };
     status.reset();
   }
 
-  function closeModals() {
-    showAddModal = false;
-    showEditModal = false;
-    showDeleteModal = false;
-    currentEntry = null;
+  /** Close the sheet. The next one to open starts from nothing typed. */
+  function dismissSheet() {
+    sheet = null;
+    void keepFocus();
+  }
+
+  /**
+   * A closing sheet gives the focus back to what opened it. A deleted word's row
+   * is gone by then, and the focus would fall to the page, so it goes to the
+   * toolbar instead, where the keyboard can carry on.
+   */
+  async function keepFocus() {
+    await tick();
+    if (!document.activeElement || document.activeElement === document.body) addButton?.focus();
+  }
+
+  /** Cancel: the sheet goes, and so does a failure it may have caused. */
+  function closeSheet() {
+    dismissSheet();
+    status.reset();
   }
 
   /** The shape both add and update send. */
@@ -97,7 +134,7 @@
     return {
       term: formData.term.trim(),
       aliases: formData.aliases
-        .split(',')
+        .split(ALIAS_SEPARATOR)
         .map((alias: string) => alias.trim())
         .filter((alias: string) => alias.length > 0),
       description: formData.description.trim() || null,
@@ -105,420 +142,195 @@
   }
 
   async function handleAdd() {
+    if (status.busy) return;
     if (!formData.term.trim()) {
-      status.fail('Term cannot be empty');
+      missing = 'Enter a word.';
       return;
     }
 
-    const term = formData.term;
-    await status.run('Failed to add entry', async () => {
+    await status.run('Failed to add word', async () => {
       await invoke('add_dictionary_entry', { params: entryParams() });
+      // A search the new word does not match would leave the list as it was, and the list changing is all the confirmation an add gets.
+      searchQuery = '';
       await loadDictionary();
-      closeModals();
-      status.confirm(`Added "${term}"`);
+      dismissSheet();
     });
   }
 
   async function handleEdit() {
+    if (status.busy) return;
     if (!formData.term.trim()) {
-      status.fail('Term cannot be empty');
+      missing = 'Enter a word.';
       return;
     }
-    if (!currentEntry) return;
+    if (sheet?.kind !== 'edit') return;
 
-    const { term: oldTerm } = currentEntry;
-    const term = formData.term;
-    await status.run('Failed to update entry', async () => {
+    const { term: oldTerm } = sheet.entry;
+    await status.run('Failed to save word', async () => {
       await invoke('update_dictionary_entry', {
         params: { old_term: oldTerm, ...entryParams() },
       });
       await loadDictionary();
-      closeModals();
-      status.confirm(`Updated "${term}"`);
+      dismissSheet();
     });
   }
 
   async function handleDelete() {
-    if (!currentEntry) return;
+    if (status.busy) return;
+    if (sheet?.kind !== 'delete') return;
 
-    const { term } = currentEntry;
-    await status.run('Failed to delete entry', async () => {
+    const { term } = sheet.entry;
+    await status.run('Failed to delete word', async () => {
       await invoke('delete_dictionary_entry', { term });
       await loadDictionary();
-      closeModals();
-      status.confirm(`Deleted "${term}"`);
+      dismissSheet();
+      status.confirm(`Deleted “${term}”`);
     });
   }
 </script>
 
-<div class="page">
-  <PageHeader title="Dictionary" description="Manage custom words and phrase corrections" />
+<Pane title="Dictionary" {status}>
+  {#snippet actions()}
+    <SearchField bind:value={searchQuery} label="Search dictionary" placeholder="Search" />
+    <button
+      type="button"
+      class="add-word"
+      aria-label="Add Word"
+      title="Add Word"
+      bind:this={addButton}
+      onclick={openAddSheet}
+    >
+      <Plus size={15} aria-hidden="true" />
+    </button>
+  {/snippet}
 
-  <Alert
-    error={showAddModal || showEditModal || showDeleteModal ? '' : status.error}
-    success={status.success}
-  />
-
-  <!-- SEARCH -->
-  <div class="search-row">
-    <input
-      type="text"
-      bind:value={searchQuery}
-      placeholder="Search dictionary..."
-      class="search-input"
-    />
-  </div>
-
-  <!-- ENTRIES -->
-  <div class="section">
-    <SectionHeader label="ENTRIES ({filteredEntries.length})" />
-    <div class="entries-list">
-      {#if filteredEntries.length === 0}
-        <div class="empty-state">
-          {#if entries.length === 0}
-            <p>No dictionary entries yet.</p>
-            <p class="hint">Add custom terms to improve transcription accuracy.</p>
-          {:else}
-            <p>No entries match your search.</p>
-          {/if}
-        </div>
-      {:else}
-        {#each filteredEntries as entry (entry.term)}
-          <div class="entry-row">
-            <div class="entry-info">
-              <span class="entry-term">{entry.term}</span>
-              {#if entry.aliases.length > 0}
-                <span class="entry-aliases">{entry.aliases.join(', ')}</span>
-              {/if}
-            </div>
-            <div class="entry-actions">
-              <button class="icon-btn" onclick={() => openEditModal(entry)} title="Edit">✎</button>
-              <button class="icon-btn danger" onclick={() => openDeleteModal(entry)} title="Delete">✕</button>
-            </div>
-          </div>
+  {#if loaded}
+    {#if entries.length === 0}
+      <div class="empty">
+        <p class="empty-title">No words yet</p>
+        <p class="empty-hint">Add names, jargon, or product terms so Murmur spells them correctly.</p>
+        <button type="button" class="btn empty-action" onclick={openAddSheet}>Add Word…</button>
+      </div>
+    {:else if filteredEntries.length === 0}
+      <div class="empty">
+        <p class="empty-hint">No words match “{searchTerm}”.</p>
+      </div>
+    {:else}
+      <!--
+        Keyed by position and word. The list is read again after every change, and a row that is
+        still there must stay, or the focus a sheet gives back to it has nowhere to go. The word
+        alone would do, but nothing refuses a second copy of one, and a key must not repeat.
+      -->
+      <Group>
+        {#each filteredEntries as entry, index (`${index}:${entry.term}`)}
+          <Row label={entry.term} detail={entryDetail(entry)} onclick={() => openEditSheet(entry)} />
         {/each}
-      {/if}
-    </div>
-  </div>
+      </Group>
+    {/if}
+  {/if}
 
-  <!-- ADD ENTRY -->
-  <div class="section">
-    <SectionHeader label="ADD ENTRY" />
-    <ActionRow label="Add new word or correction" icon={BookPlus} onclick={openAddModal} />
-  </div>
-</div>
-
-<!-- Add Modal -->
-{#if showAddModal}
-  <div class="modal-overlay" onclick={closeModals} onkeydown={(e) => e.key === 'Escape' && closeModals()} role="presentation">
-    <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') closeModals(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dictionary-add-title">
-      <h3 id="dictionary-add-title">Add Dictionary Entry</h3>
-
-      <div class="form-group">
-        <label for="term">Term *</label>
-        <input id="term" type="text" bind:value={formData.term} placeholder="e.g., Murmur" />
-      </div>
-
-      <div class="form-group">
-        <label for="aliases">Aliases (comma-separated)</label>
-        <input id="aliases" type="text" bind:value={formData.aliases} placeholder="e.g., local type, local-type" />
-      </div>
-
-      <div class="form-group">
-        <label for="description">Description (optional)</label>
-        <textarea id="description" bind:value={formData.description} placeholder="Optional notes about this term" rows="3"></textarea>
-      </div>
-
-      <Alert error={status.error} />
-
-      <div class="modal-actions">
-        <button class="btn btn-md btn-secondary" onclick={closeModals}>Cancel</button>
-        <button class="btn btn-md btn-primary" onclick={handleAdd} disabled={status.busy}>
-          {status.busy ? 'Adding...' : 'Add Entry'}
+  <!-- Inside the pane, where the tokens are. -->
+  {#if sheet?.kind === 'add' || sheet?.kind === 'edit'}
+    {@const editing = sheet.kind === 'edit'}
+    {#snippet deleteAction()}
+      <!-- Not a choice of the form, and it comes before Save, so it must not be the default button. -->
+      <button type="button" class="btn" onclick={openDeleteSheet}>Delete…</button>
+    {/snippet}
+    <Sheet
+      title={editing ? 'Edit Word' : 'Add Word'}
+      onclose={closeSheet}
+      onsubmit={editing ? handleEdit : handleAdd}
+      error={missing}
+      leading={editing ? deleteAction : undefined}
+    >
+      <label for="term">Word</label>
+      <input
+        id="term"
+        type="text"
+        bind:value={formData.term}
+        oninput={() => (missing = '')}
+        aria-required="true"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+      />
+      <label for="aliases">Also heard as</label>
+      <input
+        id="aliases"
+        type="text"
+        bind:value={formData.aliases}
+        aria-describedby="aliases-hint"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+      />
+      <p id="aliases-hint" class="hint">Separate with commas</p>
+      <label for="description">Note</label>
+      <textarea id="description" bind:value={formData.description} placeholder="Optional" rows="2"></textarea>
+      {#snippet actions()}
+        <button type="button" class="btn" onclick={closeSheet}>Cancel</button>
+        <button type="submit" class="btn btn-primary" disabled={status.busy}>
+          {editing ? 'Save' : 'Add Word'}
         </button>
-      </div>
-    </div>
-  </div>
-{/if}
-
-<!-- Edit Modal -->
-{#if showEditModal}
-  <div class="modal-overlay" onclick={closeModals} onkeydown={(e) => e.key === 'Escape' && closeModals()} role="presentation">
-    <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') closeModals(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dictionary-edit-title">
-      <h3 id="dictionary-edit-title">Edit Dictionary Entry</h3>
-
-      <div class="form-group">
-        <label for="edit-term">Term *</label>
-        <input id="edit-term" type="text" bind:value={formData.term} placeholder="e.g., Murmur" />
-      </div>
-
-      <div class="form-group">
-        <label for="edit-aliases">Aliases (comma-separated)</label>
-        <input id="edit-aliases" type="text" bind:value={formData.aliases} placeholder="e.g., local type, local-type" />
-      </div>
-
-      <div class="form-group">
-        <label for="edit-description">Description (optional)</label>
-        <textarea id="edit-description" bind:value={formData.description} placeholder="Optional notes about this term" rows="3"></textarea>
-      </div>
-
-      <Alert error={status.error} />
-
-      <div class="modal-actions">
-        <button class="btn btn-md btn-secondary" onclick={closeModals}>Cancel</button>
-        <button class="btn btn-md btn-primary" onclick={handleEdit} disabled={status.busy}>
-          {status.busy ? 'Updating...' : 'Update Entry'}
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
-
-<!-- Delete Confirmation Modal -->
-{#if showDeleteModal}
-  <div class="modal-overlay" onclick={closeModals} onkeydown={(e) => e.key === 'Escape' && closeModals()} role="presentation">
-    <div class="modal modal-small" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') closeModals(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="dictionary-delete-title">
-      <h3 id="dictionary-delete-title">Delete Entry</h3>
-      <p>Are you sure you want to delete "{currentEntry?.term}"?</p>
-
-      <Alert error={status.error} />
-
-      <div class="modal-actions">
-        <button class="btn btn-md btn-secondary" onclick={closeModals}>Cancel</button>
-        <button class="btn btn-md btn-danger" onclick={handleDelete} disabled={status.busy}>
-          {status.busy ? 'Deleting...' : 'Delete'}
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
+      {/snippet}
+    </Sheet>
+  {:else if sheet?.kind === 'delete'}
+    <!-- The title asks the question, so the sheet has no fields. -->
+    <Sheet title={`Delete “${sheet.entry.term}”?`} onclose={closeSheet} onsubmit={handleDelete}>
+      {#snippet actions()}
+        <button type="button" class="btn" onclick={closeSheet}>Cancel</button>
+        <button type="submit" class="btn btn-destructive" disabled={status.busy}>Delete</button>
+      {/snippet}
+    </Sheet>
+  {/if}
+</Pane>
 
 <style>
-  .page {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-
-
-
-  .section {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    width: 100%;
-  }
-
-  /* Search */
-  .search-row {
-    width: 100%;
-  }
-
-  .search-input {
-    width: 100%;
-    padding: 8px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg-card);
-    color: var(--text-primary);
-    font-size: 12px;
-    outline: none;
-    transition: border-color 0.15s ease;
-  }
-
-  .search-input:focus {
-    border-color: rgba(168, 85, 247, 0.6);
-  }
-
-  .search-input::placeholder {
-    color: var(--text-placeholder);
-  }
-
-  /* Entries */
-  .entries-list {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-
-  .entry-row {
-    display: flex;
+  /* The look of a pane button, as a square that holds only an icon, level with the search field beside it. */
+  .add-word {
+    display: inline-flex;
+    flex: none;
     align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
-    background: var(--bg-card);
-    border-radius: 8px;
-    min-height: 38px;
-    transition: background 0.15s ease;
-  }
-
-  .entry-row:hover {
-    background: #1a1a2e;
-  }
-
-  .entry-info {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .entry-term {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-primary);
-    white-space: nowrap;
-  }
-
-  .entry-aliases {
-    font-size: 11px;
-    color: var(--accent);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .entry-actions {
-    display: flex;
-    gap: 4px;
-    margin-left: 10px;
-  }
-
-  .icon-btn {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--border);
-    color: var(--text-muted);
+    justify-content: center;
     width: 26px;
     height: 26px;
-    border-radius: 6px;
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: var(--control-bg);
+    box-shadow: 0 0 0 .5px var(--control-border), 0 .5px 1.5px rgba(0, 0, 0, .14);
+    color: var(--text-secondary);
   }
 
-  .icon-btn:hover {
-    background: var(--surface-raised);
-    color: var(--text-primary);
-  }
-
-  .icon-btn.danger:hover {
-    background: color-mix(in srgb, var(--status-red) 20%, transparent);
-    border-color: color-mix(in srgb, var(--status-red) 50%, transparent);
-    color: var(--status-red-text);
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 32px 16px;
-    color: var(--text-muted);
-    font-size: 13px;
-  }
-
-  .empty-state p {
-    margin: 4px 0;
-  }
-
-  .empty-state .hint {
-    font-size: 12px;
-    color: var(--text-placeholder);
-  }
-
-  /* Modal shared */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
+  /* Fills what is left of the pane under the toolbar, with its text in the middle. */
+  .empty {
     display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
+    gap: 6px;
+    padding: 0 16px 32px;
+    text-align: center;
   }
 
-  .modal {
-    background: var(--bg-card);
-    padding: 24px;
-    border-radius: 16px;
-    max-width: 480px;
-    width: 90%;
-    border: 1px solid var(--border);
-    max-height: 90vh;
-    overflow-y: auto;
-  }
-
-  .modal-small {
-    max-width: 380px;
-  }
-
-  .modal h3 {
-    margin: 0 0 16px;
-    font-size: 16px;
+  .empty-title {
+    font-size: 13px;
     font-weight: 600;
-    color: var(--text-primary);
   }
 
-  .modal p {
-    margin: 0 0 16px;
-    color: var(--text-muted);
-    font-size: 13px;
-  }
-
-  .form-group {
-    margin-bottom: 12px;
-  }
-
-  .form-group label {
-    display: block;
-    margin-bottom: 4px;
-    color: var(--text-secondary);
+  .empty-hint {
+    max-width: 320px;
     font-size: 12px;
-    font-weight: 500;
+    color: var(--text-secondary);
   }
 
-  .form-group input,
-  .form-group textarea {
-    width: 100%;
-    padding: 8px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-size: 13px;
-    font-family: inherit;
-    outline: none;
-    transition: border-color 0.15s ease;
+  .empty-action {
+    margin-top: 8px;
   }
 
-  .form-group input:focus,
-  .form-group textarea:focus {
-    border-color: rgba(168, 85, 247, 0.6);
+  .hint {
+    font-size: 11.5px;
+    color: var(--text-secondary);
   }
-
-  .form-group textarea {
-    resize: vertical;
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 10px;
-    justify-content: flex-end;
-    margin-top: 16px;
-  }
-
-
-
-
-
-
-
-
-
 </style>

@@ -78,7 +78,7 @@
     {:else if activePane === 'ai'}
       <LlmConfig />
     {:else if activePane === 'dictionary'}
-      <LegacyPane><DictionaryEditor /></LegacyPane>
+      <DictionaryEditor />
     {:else if activePane === 'history'}
       <LegacyPane><HistoryPanel /></LegacyPane>
     {:else if activePane === 'about'}
