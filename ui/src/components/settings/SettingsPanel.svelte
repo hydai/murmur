@@ -6,11 +6,10 @@
   import { useLifecycle } from '../../lib/lifecycle';
   import { PANES, initialRoute, parsePane, type PaneId } from './navigation';
   import LegacyPane from './LegacyPane.svelte';
+  import GeneralConfig from './GeneralConfig.svelte';
   import ProviderConfig from './ProviderConfig.svelte';
   import DictionaryEditor from './DictionaryEditor.svelte';
   import LlmConfig from './LlmConfig.svelte';
-  import HotkeyConfig from './HotkeyConfig.svelte';
-  import OutputConfig from './OutputConfig.svelte';
   import PromptsEditor from './PromptsEditor.svelte';
   import DiagnosticsPanel from './DiagnosticsPanel.svelte';
   import AboutSection from './AboutSection.svelte';
@@ -74,7 +73,7 @@
 
   <main class="content">
     {#if activePane === 'general'}
-      <LegacyPane><HotkeyConfig /><OutputConfig /></LegacyPane>
+      <GeneralConfig />
     {:else if activePane === 'transcription'}
       <LegacyPane><ProviderConfig /></LegacyPane>
     {:else if activePane === 'ai'}

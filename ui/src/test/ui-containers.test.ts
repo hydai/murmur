@@ -170,14 +170,25 @@ describe('Toast', () => {
 describe('ShortcutField', () => {
   const setup = (props: { value?: string; disabled?: boolean } = {}) => {
     const onchange = vi.fn(); const onerror = vi.fn();
-    const { target } = render(ShortcutField, { value: 'Ctrl+`', ...props, onchange, onerror });
+    const { target } = render(ShortcutField, { value: 'Ctrl+`', label: 'Shortcut', ...props, onchange, onerror });
     return { target, onchange, onerror, field: target.querySelector<HTMLButtonElement>('.shortcut')! };
   };
   const press = (init: KeyboardEventInit) => window.dispatchEvent(new KeyboardEvent('keydown', init));
 
+  it('names the field after what it sets, ahead of the shortcut it shows', () => {
+    const { field } = setup();
+    // The key caps do not say what they are for, so the name starts with a
+    // label that only assistive technology reads.
+    expect(field.querySelector('.sr-only')?.textContent).toBe('Shortcut:');
+    expect(field.textContent).toMatch(/^Shortcut:/);
+    // It is still the name while the field waits for keys.
+    field.click(); flushSync();
+    expect(field.textContent).toMatch(/^Shortcut:\s*Type shortcut…/);
+  });
+
   it('records a new shortcut and rejects one without a modifier', async () => {
     const onchange = vi.fn(); const onerror = vi.fn();
-    const { target } = render(ShortcutField, { value: 'Ctrl+`', onchange, onerror });
+    const { target } = render(ShortcutField, { value: 'Ctrl+`', label: 'Shortcut', onchange, onerror });
     expect([...target.querySelectorAll('kbd')].map(k => k.textContent)).toEqual(['⌃', '`']);
     const field = target.querySelector<HTMLButtonElement>('.shortcut')!;
     field.click(); flushSync();
@@ -191,7 +202,7 @@ describe('ShortcutField', () => {
 
   it('cancels recording with Escape without saving', () => {
     const onchange = vi.fn(); const onerror = vi.fn();
-    const { target } = render(ShortcutField, { value: 'Ctrl+`', onchange, onerror });
+    const { target } = render(ShortcutField, { value: 'Ctrl+`', label: 'Shortcut', onchange, onerror });
     target.querySelector<HTMLButtonElement>('.shortcut')!.click(); flushSync();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); flushSync();
     expect(onchange).not.toHaveBeenCalled(); expect(onerror).not.toHaveBeenCalled();
