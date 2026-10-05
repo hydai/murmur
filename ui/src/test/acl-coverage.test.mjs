@@ -35,7 +35,7 @@ function permissionSets() {
     const list = block.match(/commands\.allow\s*=\s*\[([\s\S]*?)\]/)?.[1] ?? '';
     sets.set(identifier, [...list.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]));
   }
-  assert.ok(sets.size >= 3, `parsed ${sets.size} permission sets, expected one per window`);
+  assert.ok(sets.size >= 3, `parsed ${sets.size} permission sets, expected overlay, settings and history`);
   return sets;
 }
 
@@ -51,11 +51,15 @@ function capabilities() {
 /** App.svelte routes ?view= to exactly one component tree per window. */
 const ROUTER = 'ui/src/App.svelte';
 const WINDOW_SOURCES = {
-  // The router loads in all three, so whatever it uses every window must be
-  // granted.
+  // The router loads in both windows, so whatever it uses each must be granted.
   main: [ROUTER, 'ui/src/components/overlay'],
-  settings: [ROUTER, 'ui/src/components/settings', 'ui/src/components/ui'],
-  history: [ROUTER, 'ui/src/components/history'],
+  // History is a pane of the settings window, so it is granted here too.
+  settings: [
+    ROUTER,
+    'ui/src/components/settings',
+    'ui/src/components/ui',
+    'ui/src/components/history',
+  ],
 };
 
 /**

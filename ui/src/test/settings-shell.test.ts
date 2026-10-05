@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync } from 'svelte';
 import userEvent from '@testing-library/user-event';
+import App from '../App.svelte';
 import SettingsPanel from '../components/settings/SettingsPanel.svelte';
 import { initialRoute } from '../components/settings/navigation';
 import { render, settle, unmountAll } from './helpers';
@@ -48,7 +49,8 @@ beforeEach(() => {
       case 'get_stt_providers':
       case 'get_llm_processors':
       case 'get_prompts':
-      case 'get_diagnostic_logs': return [];
+      case 'get_diagnostic_logs':
+      case 'get_history': return [];
       case 'get_dictionary': return { entries: [] };
       default: return undefined;
     }
@@ -85,11 +87,23 @@ describe('settings shell', () => {
     expect(initialRoute('?view=settings&pane=bogus&action=check-update')).toEqual({ pane: 'general', checkUpdate: false });
   });
 
+  it('opens History for the history URLs', () => {
+    // The URL the menu bar's History gives a window that is not open yet.
+    expect(initialRoute('?view=settings&pane=history')).toEqual({ pane: 'history', checkUpdate: false });
+    // The old history window's URL lands on the same pane, whatever else it carries.
+    expect(initialRoute('?view=history')).toEqual({ pane: 'history', checkUpdate: false });
+    expect(initialRoute('?view=history&action=check-update')).toEqual({ pane: 'history', checkUpdate: false });
+    expect(initialRoute('?view=history&pane=bogus&action=check-update')).toEqual({ pane: 'history', checkUpdate: false });
+    // Only a pane that exists beats it.
+    expect(initialRoute('?view=history&pane=dictionary')).toEqual({ pane: 'dictionary', checkUpdate: false });
+    expect(initialRoute('?view=history&pane=about&action=check-update')).toEqual({ pane: 'about', checkUpdate: true });
+  });
+
   it('lists the panes in sidebar order and marks the active one', async () => {
     const { target } = render(SettingsPanel, {});
     await settle();
     const items = navItems(target);
-    expect(items.map(i => i.textContent?.trim())).toEqual(['General', 'Transcription', 'AI Processing', 'Dictionary', 'About']);
+    expect(items.map(i => i.textContent?.trim())).toEqual(['General', 'Transcription', 'AI Processing', 'Dictionary', 'History', 'About']);
     expect(items[0].getAttribute('aria-current')).toBe('page');
   });
 
@@ -113,6 +127,14 @@ describe('settings shell', () => {
     expect(mocks.check).not.toHaveBeenCalled();
   });
 
+  it('opens on History when its window URL names it', async () => {
+    window.history.replaceState(null, '', '/?view=settings&pane=history');
+    const { target } = render(SettingsPanel, {});
+    await settle();
+    expect(target.querySelector('.nav-item[aria-current="page"]')?.textContent).toContain('History');
+    expect(mocks.invoke).toHaveBeenCalledWith('get_history', expect.anything());
+  });
+
   it('runs the update check a freshly opened window asks for', async () => {
     window.history.replaceState(null, '', '/?view=settings&pane=about&action=check-update');
     const { target } = render(SettingsPanel, {});
@@ -130,6 +152,17 @@ describe('settings shell', () => {
     expect(mocks.check).toHaveBeenCalledTimes(1);
   });
 
+  it('follows a navigate event to History', async () => {
+    const { target } = render(SettingsPanel, {});
+    await settle();
+    // The page loads its entries once it is shown, not with the window.
+    expect(mocks.invoke).not.toHaveBeenCalledWith('get_history', expect.anything());
+    emit('navigate', { pane: 'history' });
+    await settle();
+    expect(target.querySelector('.nav-item[aria-current="page"]')?.textContent).toContain('History');
+    expect(mocks.invoke).toHaveBeenCalledWith('get_history', expect.anything());
+  });
+
   it('ignores a navigate event for an unknown pane', async () => {
     const { target } = render(SettingsPanel, {});
     await settle();
@@ -141,6 +174,14 @@ describe('settings shell', () => {
     await settle();
     expect(target.querySelector('.nav-item[aria-current="page"]')?.textContent).toContain('About');
     expect(mocks.check).not.toHaveBeenCalled();
+  });
+
+  it('shows the shell, on History, for the old history window URL', async () => {
+    window.history.replaceState(null, '', '/?view=history');
+    const { target } = render(App, {});
+    await settle();
+    expect(navItems(target)).toHaveLength(6);
+    expect(target.querySelector('.nav-item[aria-current="page"]')?.textContent).toContain('History');
   });
 
   it('lets the empty sidebar drag the window', async () => {
