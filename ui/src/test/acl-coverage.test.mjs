@@ -54,7 +54,7 @@ const WINDOW_SOURCES = {
   // The router loads in all three, so whatever it uses every window must be
   // granted.
   main: [ROUTER, 'ui/src/components/overlay'],
-  settings: [ROUTER, 'ui/src/components/settings'],
+  settings: [ROUTER, 'ui/src/components/settings', 'ui/src/components/ui'],
   history: [ROUTER, 'ui/src/components/history'],
 };
 
@@ -67,7 +67,11 @@ const PLUGIN_GRANTS = [
   { permission: 'clipboard-manager:allow-write-text', pattern: /plugin-clipboard-manager/ },
   { permission: 'updater:default', pattern: /plugin-updater/ },
   { permission: 'process:default', pattern: /plugin-process/ },
-  { permission: 'core:window:allow-start-dragging', pattern: /\bstartDragging\s*\(/ },
+  {
+    permission: 'core:window:allow-start-dragging',
+    // A drag region needs it as much as a startDragging() call does.
+    pattern: /\bstartDragging\s*\(|data-tauri-drag-region/,
+  },
   { permission: 'core:window:allow-close', pattern: /getCurrentWindow\(\)\.close\s*\(/ },
 ];
 

@@ -11,7 +11,7 @@
 </script>
 
 {#if view === 'settings'}
-  <SettingsPanel visible={true} />
+  <SettingsPanel />
 {:else if view === 'history'}
   <HistoryPanel />
 {:else}

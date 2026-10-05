@@ -55,6 +55,12 @@ export interface ModelProgressPayload {
   error: string | null;
 }
 
+/** Mirrors `SettingsRoute` in `crates/lt-tauri/src/main.rs`. */
+export interface NavigatePayload {
+  pane: string;
+  action?: 'check-update';
+}
+
 /** Every event the Rust side emits, and what it carries. */
 export interface AppEvents {
   'pipeline-state': PipelineStatePayload;
@@ -67,8 +73,7 @@ export interface AppEvents {
   'transcription-committed': TranscriptionPayload;
   'command-detected': CommandDetectedPayload;
   'apple-stt-model-progress': ModelProgressPayload;
-  'open-settings': void;
-  'open-about-and-check': void;
+  navigate: NavigatePayload;
   'update-available': void;
 }
 

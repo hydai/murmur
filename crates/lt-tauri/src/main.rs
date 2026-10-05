@@ -1169,30 +1169,87 @@ async fn reset_prompt(
     .map_err(|error| format!("Prompt storage task failed: {error}"))?
 }
 
-fn ensure_settings_window_open(app: &tauri::AppHandle, query: &str) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("settings") {
+/// The settings window's label. The capability and the tests name it, so it
+/// stays `settings` whatever the window is called on screen.
+const SETTINGS_WINDOW: &str = "settings";
+
+/// Where the settings window should land: a pane, and optionally something to
+/// do there. A window opened fresh reads it from its URL; one that is already
+/// open receives it as the `navigate` event's payload.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+struct SettingsRoute {
+    pane: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action: Option<&'static str>,
+}
+
+/// The query string a freshly opened settings window reads its route from.
+/// Panes and actions are fixed identifiers, so nothing needs escaping.
+fn settings_query(route: Option<SettingsRoute>) -> String {
+    let mut query = String::from("view=settings");
+    if let Some(SettingsRoute { pane, action }) = route {
+        query.push_str("&pane=");
+        query.push_str(pane);
+        if let Some(action) = action {
+            query.push_str("&action=");
+            query.push_str(action);
+        }
+    }
+    query
+}
+
+/// Brings the settings window forward, opening it if needed. With a `route`,
+/// an open window is sent there and a new one starts there.
+fn show_settings(app: &tauri::AppHandle, route: Option<SettingsRoute>) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(SETTINGS_WINDOW) {
+        // On macOS `set_focus` does nothing for a minimized window, so without
+        // this the menu items would seem dead while `navigate` still switched
+        // panes in a window nobody can see.
+        if window.is_minimized().unwrap_or(false) {
+            window.unminimize().map_err(|e| e.to_string())?;
+        }
         window.set_focus().map_err(|e| e.to_string())?;
+        if let Some(route) = route {
+            app.emit_to(SETTINGS_WINDOW, "navigate", route)
+                .map_err(|e| e.to_string())?;
+        }
         return Ok(());
     }
 
-    tauri::WebviewWindowBuilder::new(
+    let query = settings_query(route);
+    let builder = tauri::WebviewWindowBuilder::new(
         app,
-        "settings",
-        tauri::WebviewUrl::App(format!("index.html?{}", query).into()),
+        SETTINGS_WINDOW,
+        tauri::WebviewUrl::App(format!("index.html?{query}").into()),
     )
-    .title("Murmur Settings")
-    .inner_size(720.0, 560.0)
+    .title("Murmur")
+    .inner_size(760.0, 560.0)
+    .min_inner_size(640.0, 460.0)
     .resizable(true)
-    .center()
-    .build()
-    .map_err(|e| e.to_string())?;
+    .center();
+    // The title bar becomes a transparent overlay, so the page draws the whole
+    // window: the window controls float over the sidebar, which shows the
+    // window material. The page marks its own drag regions.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(20.0, 20.0))
+        .transparent(true)
+        .effects(
+            tauri::window::EffectsBuilder::new()
+                .effect(tauri::window::Effect::Sidebar)
+                .state(tauri::window::EffectState::FollowsWindowActiveState)
+                .build(),
+        );
+    builder.build().map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
 #[tauri::command]
 async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
-    ensure_settings_window_open(&app, "view=settings")
+    show_settings(&app, None)
 }
 
 // ============================================================================
@@ -1616,18 +1673,12 @@ fn main() {
                         "check_updates" => {
                             let handle = app_handle.clone();
                             tauri::async_runtime::spawn(async move {
-                                let was_open = handle.get_webview_window("settings").is_some();
-                                if let Err(e) = ensure_settings_window_open(
-                                    &handle,
-                                    "view=settings&action=check-update",
-                                ) {
+                                let route = SettingsRoute {
+                                    pane: "about",
+                                    action: Some("check-update"),
+                                };
+                                if let Err(e) = show_settings(&handle, Some(route)) {
                                     tracing::warn!("Failed to open settings window: {}", e);
-                                    return;
-                                }
-                                if was_open {
-                                    // URL query is ignored when the window already exists;
-                                    // signal the frontend to switch to About and check.
-                                    let _ = handle.emit("open-about-and-check", ());
                                 }
                             });
                         }
@@ -1734,7 +1785,12 @@ fn main() {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                    if let Err(e) = open_settings_window(handle).await {
+                    // Choosing a speech service is the first thing a new install needs.
+                    let route = SettingsRoute {
+                        pane: "transcription",
+                        action: None,
+                    };
+                    if let Err(e) = show_settings(&handle, Some(route)) {
                         tracing::warn!("Failed to auto-open settings on first launch: {}", e);
                     }
                 });
@@ -1991,5 +2047,27 @@ mod tests {
                 "{processor:?} must build without configuration"
             );
         }
+    }
+
+    #[test]
+    fn settings_routes_become_the_window_query() {
+        assert_eq!(settings_query(None), "view=settings");
+        assert_eq!(
+            settings_query(Some(SettingsRoute {
+                pane: "about",
+                action: Some("check-update")
+            })),
+            "view=settings&pane=about&action=check-update"
+        );
+    }
+
+    #[test]
+    fn a_navigate_payload_omits_a_missing_action() {
+        let payload = serde_json::to_value(SettingsRoute {
+            pane: "history",
+            action: None,
+        })
+        .unwrap();
+        assert_eq!(payload, serde_json::json!({ "pane": "history" }));
     }
 }
