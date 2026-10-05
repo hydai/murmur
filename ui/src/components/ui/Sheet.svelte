@@ -18,8 +18,8 @@
     onsubmit?: () => void;
     /** A rejected entry, shown under the fields so it is read next to what caused it. */
     error?: string;
-    /** The fields: each a label followed by its control. */
-    children: Snippet;
+    /** The fields: each a label followed by its control. A sheet that only asks a question, such as a confirmation, has none. */
+    children?: Snippet;
     /** The buttons, with the default one `type="submit"` so Enter reaches it. */
     actions: Snippet;
     /** Left of the actions, for a button that is not one of the choices, such as Delete. */
@@ -68,7 +68,7 @@
   >
     <form onsubmit={submit}>
       <h2 id={titleId}>{title}</h2>
-      <div class="sheet-fields">{@render children()}</div>
+      {#if children}<div class="sheet-fields">{@render children()}</div>{/if}
       {#if error}<p class="sheet-error" role="alert">{error}</p>{/if}
       <div class="sheet-footer">
         {#if leading}<div class="sheet-leading">{@render leading()}</div>{/if}

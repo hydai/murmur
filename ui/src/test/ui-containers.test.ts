@@ -124,6 +124,23 @@ describe('Sheet', () => {
     }
   });
 
+  it('needs no fields: a sheet that only asks shows its title and actions, with the focus on the first action', () => {
+    const { target } = render(Sheet, {
+      title: 'Delete “Tauri”?',
+      onclose: vi.fn(),
+      // A raw snippet has one root element, so the two buttons share one.
+      actions: snippet('<span><button type="button">Cancel</button><button type="submit">Delete</button></span>'),
+    });
+    const dialog = target.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(target.querySelector(`#${dialog.getAttribute('aria-labelledby')}`)?.textContent).toBe('Delete “Tauri”?');
+    expect(button(dialog, 'Cancel').type).toBe('button');
+    expect(button(dialog, 'Delete').type).toBe('submit');
+    // Nothing is rendered for the fields, not even their container.
+    expect(dialog.querySelector('.sheet-fields')).toBeNull();
+    // The first control to tab to is the first action.
+    expect(document.activeElement).toBe(button(dialog, 'Cancel'));
+  });
+
   it('puts the error under the fields and a leading action before the buttons', () => {
     const props = {
       title: 'Edit Word',
