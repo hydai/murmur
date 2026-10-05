@@ -1,25 +1,43 @@
 <script lang="ts">
-  import Alert from './ui/Alert.svelte';
+  import { onMount } from 'svelte';
+  import { Check, Cloud, Laptop, Server } from 'lucide-svelte';
   import { useLifecycle } from '../../lib/lifecycle';
   import { createStatus } from '../../lib/status.svelte';
-  import { trapFocus } from '../../lib/focus';
   import { safeInvoke as invoke } from '../../lib/tauri';
-  import { onMount } from 'svelte';
-  import PageHeader from './ui/PageHeader.svelte';
-  import SectionHeader from './ui/SectionHeader.svelte';
-  import StatusRow from './ui/StatusRow.svelte';
-  import ActionRow from './ui/ActionRow.svelte';
-  import { groupSttProviders, type Provider } from './providerGroups';
+  import Group from '../ui/Group.svelte';
+  import Pane from '../ui/Pane.svelte';
+  import Row from '../ui/Row.svelte';
+  import Select from '../ui/Select.svelte';
+  import Sheet from '../ui/Sheet.svelte';
+  import ApiKeySheet from './ApiKeySheet.svelte';
+  import {
+    orderedSttProviders,
+    sttProviderAction,
+    sttProviderDetail,
+    sttProviderDisabled,
+    type Provider,
+    type ProviderAction,
+  } from './providerGroups';
 
   const lifecycle = useLifecycle();
   const status = createStatus(lifecycle);
 
+  /** The providers whose row in the settings group is an API key. */
+  const KEYED_PROVIDERS = ['elevenlabs', 'openai', 'groq'];
+
+  const ACTION_LABELS: Record<Exclude<ProviderAction, null>, string> = {
+    download: 'Download',
+    'add-key': 'Add API Key…',
+    'set-up': 'Set Up…',
+  };
+
   let providers = $state<Provider[]>([]);
   let currentProvider = $state('');
-  let showApiKeyModal = $state(false);
+
+  // API key sheet: which service it is for and whether it replaces a key. The key
+  // itself lives in the sheet, so it is gone when the sheet is.
+  let showApiKeySheet = $state(false);
   let selectedProvider = $state<Provider | null>(null);
-  let apiKeyInput = $state('');
-  let showApiKey = $state(false);
   let editingExistingKey = $state(false);
 
   // Apple STT locale state
@@ -30,24 +48,33 @@
   let elevenlabsLanguages = $state<[string, string][]>([]);
   let elevenlabsLanguage = $state('auto');
 
-  // Custom STT endpoint state
-  let showCustomSttSection = $state(false);
+  // Custom STT endpoint: what is saved, and the sheet's own copy of it. The
+  // rows show the saved values, so typing in the sheet changes nothing behind
+  // it, and a sheet that is cancelled leaves no half-typed address on the page.
+  let showCustomSttSheet = $state(false);
   let customSttBaseUrl = $state('');
   let customSttDisplayName = $state('');
-  let customSttApiKey = $state('');
   let customSttModel = $state('');
   let customSttLanguage = $state('');
+  let draft = $state({ baseUrl: '', apiKey: '', model: '', language: '', displayName: '' });
+
   let modelDownloadProgress = $state(0);
   let modelDownloading = $state(false);
   let downloadStatus = $state<'' | 'checking' | 'downloading' | 'success' | 'already_installed' | 'error'>('');
   let downloadError = $state('');
   let downloadStartTime = $state(0);
 
-  // Derived: group providers by type
-  let providerGroups = $derived(groupSttProviders(providers));
-  let localProviders = $derived(providerGroups.localProviders);
-  let cloudProviders = $derived(providerGroups.cloudProviders);
-  let customProvider = $derived(providerGroups.customProvider);
+  let orderedProviders = $derived(orderedSttProviders(providers));
+  let activeProvider = $derived(providers.find((provider) => provider.id === currentProvider));
+  let downloadPercent = $derived(Math.round(modelDownloadProgress * 100));
+  let appleSttLocaleOptions = $derived([
+    { value: 'auto', label: 'Automatic' },
+    ...appleSttLocales.map((locale) => ({ value: locale, label: locale })),
+  ]);
+  // The backend calls the automatic choice "Auto-detect"; the Apple Speech menu says "Automatic", so this one does too.
+  let elevenlabsLanguageOptions = $derived(
+    elevenlabsLanguages.map(([value, label]) => ({ value, label: value === 'auto' ? 'Automatic' : label })),
+  );
 
   onMount(() => {
     void initialize().catch((err) => { status.fail(`Failed to initialize providers: ${err}`); });
@@ -133,15 +160,15 @@
       customSttDisplayName = config.http_stt_config?.custom_display_name || '';
       customSttModel = config.http_stt_config?.custom_model || '';
       customSttLanguage = config.http_stt_config?.language || '';
-      if (currentProvider === 'custom_stt') {
-        showCustomSttSection = true;
-      }
     } catch (err) {
       status.fail(`Failed to load config: ${err}`);
     }
   }
 
-  /** Switch the pipeline over and load whatever extras the provider needs. */
+  /**
+   * Switch the pipeline over and load whatever extras the provider needs.
+   * The check that moves to the new row is the confirmation, so there is no toast.
+   */
   async function activate(provider: Provider) {
     await status.run('Failed to switch provider', async () => {
       await invoke('set_stt_provider', { provider: provider.id });
@@ -152,7 +179,6 @@
       if (provider.id === 'elevenlabs') {
         await loadElevenLabsLanguages();
       }
-      status.confirm(`Switched to ${provider.name}`);
     });
   }
 
@@ -162,46 +188,49 @@
 
     // An unconfigured provider needs its form before it can be activated.
     if (providerId === 'custom_stt' && !provider.configured) {
-      showCustomSttSection = true;
+      openCustomSttSheet();
       return;
     }
     if (provider.model_status === 'not_installed') {
-      status.fail('Speech model not installed. Click "Download Model" first.');
+      status.fail('Download the speech model first.');
       return;
     }
     if (provider.model_status === 'unavailable') {
-      status.fail('This provider requires macOS 26 or later.');
+      status.fail('Apple Speech requires macOS 26 or later.');
       return;
     }
     if (provider.requires_api_key && !provider.configured) {
-      selectedProvider = provider;
-      showApiKeyModal = true;
-      editingExistingKey = false;
-      apiKeyInput = '';
+      openApiKeySheet(provider, false);
       return;
     }
 
     await activate(provider);
   }
 
-  function editApiKey(provider: Provider) {
-    selectedProvider = provider;
-    showApiKeyModal = true;
-    editingExistingKey = true;
-    apiKeyInput = '';
+  function runAction(provider: Provider, action: Exclude<ProviderAction, null>) {
+    if (action === 'download') {
+      void downloadModel(provider);
+    } else if (action === 'add-key') {
+      openApiKeySheet(provider, false);
+    } else {
+      openCustomSttSheet();
+    }
   }
 
-  async function saveApiKey() {
-    if (!apiKeyInput.trim()) {
-      status.fail('API key cannot be empty');
-      return;
-    }
+  function openApiKeySheet(provider: Provider, existing: boolean) {
+    selectedProvider = provider;
+    editingExistingKey = existing;
+    showApiKeySheet = true;
+  }
+
+  /** The sheet refuses an empty key before it gets here, and hands the key over as typed. */
+  async function saveApiKey(apiKey: string) {
+    if (status.busy) return;
     if (!selectedProvider) return;
 
     const provider = selectedProvider;
-    const updating = editingExistingKey;
     await status.run('Failed to save API key', async () => {
-      await invoke('save_api_key', { provider: provider.id, apiKey: apiKeyInput });
+      await invoke('save_api_key', { provider: provider.id, apiKey });
       // Activating shares activate()'s per-provider loads, or the language
       // selector stays hidden until Settings is reopened.
       await invoke('set_stt_provider', { provider: provider.id });
@@ -209,51 +238,22 @@
       if (provider.id === 'elevenlabs') {
         await loadElevenLabsLanguages();
       }
-      showApiKeyModal = false;
+      dismissApiKeySheet();
       await loadProviders();
-      status.confirm(updating
-        ? `Updated API key for ${provider.name}`
-        : `Configured and activated ${provider.name}`);
+      status.confirm('API key saved');
     });
   }
 
-  function closeModal() {
-    showApiKeyModal = false;
-    apiKeyInput = '';
-    showApiKey = false;
+  /** Close the sheet; the key typed into it goes with it. */
+  function dismissApiKeySheet() {
+    showApiKeySheet = false;
     editingExistingKey = false;
+  }
+
+  /** Cancel: the sheet goes, and so does a failure it may have caused. */
+  function closeApiKeySheet() {
+    dismissApiKeySheet();
     status.reset();
-  }
-
-  function toggleApiKeyVisibility() {
-    showApiKey = !showApiKey;
-  }
-
-  function getProviderStatus(provider: Provider): 'green' | 'yellow' | 'red' | 'none' {
-    if (provider.model_status === 'unavailable') return 'red';
-    if (currentProvider === provider.id) return 'green';
-    if (provider.configured || (!provider.requires_api_key && provider.model_status === 'installed')) return 'yellow';
-    if (provider.requires_api_key && !provider.configured) return 'red';
-    return 'none';
-  }
-
-  function getProviderStatusText(provider: Provider): string {
-    if (provider.model_status === 'unavailable') return 'macOS 26+';
-    if (currentProvider === provider.id) return 'Active';
-    if (provider.configured) return 'Configured';
-    if (!provider.requires_api_key && provider.model_status === 'installed') return 'Ready';
-    if (!provider.requires_api_key && provider.model_status === 'not_installed') return 'Not Installed';
-    if (provider.requires_api_key && !provider.configured) return 'Not Configured';
-    return 'Available';
-  }
-
-  function getProviderValue(provider: Provider): string {
-    switch (provider.provider_type) {
-      case 'local': return 'on-device';
-      case 'streaming': return 'streaming';
-      case 'batch': return 'batch';
-      default: return provider.provider_type;
-    }
   }
 
   async function downloadModel(provider: Provider) {
@@ -284,25 +284,47 @@
     }
   }
 
-  async function changeElevenLabsLanguage(event: Event) {
-    const target = event.target as HTMLSelectElement;
-    const language = target.value;
-    elevenlabsLanguage = language;
-
+  // The Select waits for the promise before it lines the element up with the
+  // page's value, so a language the backend refuses goes back to what was saved.
+  async function changeElevenLabsLanguage(language: string): Promise<void> {
     await status.run('Failed to set language', async () => {
       await invoke('set_elevenlabs_language', { language });
-      const displayName = elevenlabsLanguages.find(([code]) => code === language)?.[1] ?? language;
-      status.confirm(`Language set to ${displayName}`);
+      elevenlabsLanguage = language;
     });
   }
 
-  async function saveCustomSttEndpoint() {
-    const baseUrl = customSttBaseUrl.trim();
-    const displayName = customSttDisplayName.trim();
-    const model = customSttModel.trim();
-    const language = customSttLanguage.trim();
-    const apiKey = customSttApiKey.trim();
+  function openCustomSttSheet() {
+    draft = {
+      baseUrl: customSttBaseUrl,
+      apiKey: '',
+      model: customSttModel,
+      language: customSttLanguage,
+      displayName: customSttDisplayName,
+    };
+    showCustomSttSheet = true;
+  }
 
+  /** Close the sheet and forget what was typed in it, the key included. */
+  function dismissCustomSttSheet() {
+    showCustomSttSheet = false;
+    draft = { baseUrl: '', apiKey: '', model: '', language: '', displayName: '' };
+  }
+
+  /** Cancel: the sheet goes, and so does a failure it may have caused. */
+  function closeCustomSttSheet() {
+    dismissCustomSttSheet();
+    status.reset();
+  }
+
+  async function saveCustomSttEndpoint() {
+    if (status.busy) return;
+    const baseUrl = draft.baseUrl.trim();
+    const displayName = draft.displayName.trim();
+    const model = draft.model.trim();
+    const language = draft.language.trim();
+    const apiKey = draft.apiKey.trim();
+
+    // The sheet's button is off without a Base URL; this only guards a submit that gets past it.
     if (!baseUrl) {
       status.fail('Base URL is required for custom STT endpoint');
       return;
@@ -330,9 +352,9 @@
       customSttModel = model;
       customSttLanguage = language;
 
+      dismissCustomSttSheet();
       await loadProviders();
-      customSttApiKey = '';
-      status.confirm(`Custom STT endpoint activated: ${displayName || baseUrl}`);
+      status.confirm('Custom endpoint saved');
     });
   }
 
@@ -344,467 +366,310 @@
     }
   }
 
-  async function changeAppleSttLocale(event: Event) {
-    const target = event.target as HTMLSelectElement;
-    const locale = target.value;
-    appleSttLocale = locale;
-
+  async function changeAppleSttLocale(locale: string): Promise<void> {
     await status.run('Failed to set locale', async () => {
       await invoke('set_apple_stt_locale', { locale });
+      appleSttLocale = locale;
       await loadProviders();
-      status.confirm(`Language set to ${locale === 'auto' ? 'Auto-detect' : locale}`);
     });
+  }
+
+  function providerIcon(provider: Provider) {
+    if (provider.id === 'custom_stt') return Server;
+    return provider.provider_type === 'local' ? Laptop : Cloud;
+  }
+
+  function actionName(provider: Provider, action: Exclude<ProviderAction, null>): string {
+    switch (action) {
+      case 'download': return `Download speech model for ${provider.name}`;
+      case 'add-key': return `Add API Key for ${provider.name}`;
+      default: return `Set up ${provider.name}`;
+    }
   }
 </script>
 
-<div class="provider-page">
-  <PageHeader title="STT Providers" description="Configure speech-to-text engines for voice input" />
-
-  <Alert error={status.error} success={status.success} />
-
-  <!-- LOCAL ON-DEVICE -->
-  {#if localProviders.length > 0}
-    <div class="section">
-      <SectionHeader label="LOCAL ON-DEVICE" />
-      <div class="section-rows">
-        {#each localProviders as provider (provider.id)}
-          <StatusRow
-            label={provider.name}
-            value={getProviderValue(provider)}
-            status={getProviderStatus(provider)}
-            statusText={getProviderStatusText(provider)}
-            onclick={() => selectProvider(provider.id)}
-          >
-            {#if provider.model_status === 'not_installed'}
-              <button class="inline-btn" onclick={(e) => { e.stopPropagation(); downloadModel(provider); }} disabled={modelDownloading}>
-                {modelDownloading ? 'Downloading...' : 'Download'}
-              </button>
-            {/if}
-            {#if provider.requires_api_key && provider.configured}
-              <button class="inline-btn" onclick={(e) => { e.stopPropagation(); editApiKey(provider); }}>
-                Edit Key
-              </button>
-            {/if}
-          </StatusRow>
-
-          <!-- Download progress inline -->
-          {#if provider.id === 'apple_stt' && (modelDownloading || downloadStatus)}
-            <div class="download-inline">
-              {#if downloadStatus === 'checking'}
-                <span class="download-msg">Checking model availability...</span>
-              {:else if downloadStatus === 'downloading'}
-                <span class="download-msg">Downloading — {Math.round(modelDownloadProgress * 100)}%</span>
-              {/if}
-              {#if modelDownloading}
-                <div class="progress-bar-bg">
-                  <div class="progress-bar-fill" style="width: {modelDownloadProgress * 100}%"></div>
-                </div>
-              {/if}
-              {#if downloadStatus === 'success'}
-                <span class="download-ok">Model downloaded successfully</span>
-              {:else if downloadStatus === 'already_installed'}
-                <span class="download-ok">Model already installed</span>
-              {:else if downloadStatus === 'error'}
-                <span class="download-err">{downloadError || 'Download failed'}</span>
-              {/if}
-            </div>
-          {/if}
-
-          <!-- Locale selector for active Apple STT -->
-          {#if currentProvider === provider.id && provider.id === 'apple_stt' && appleSttLocales.length > 0}
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="locale-row" onclick={(e) => e.stopPropagation()}>
-              <label for="apple-stt-locale">Language</label>
-              <select id="apple-stt-locale" value={appleSttLocale} onchange={changeAppleSttLocale}>
-                <option value="auto">Auto-detect</option>
-                {#each appleSttLocales as locale (locale)}
-                  <option value={locale}>{locale}</option>
-                {/each}
-              </select>
-            </div>
-          {/if}
-        {/each}
-      </div>
-    </div>
-  {/if}
-
-  <!-- CLOUD API -->
-  {#if cloudProviders.length > 0}
-    <div class="section">
-      <SectionHeader label="CLOUD API" />
-      <div class="section-rows">
-        {#each cloudProviders as provider (provider.id)}
-          <StatusRow
-            label={provider.name}
-            value={getProviderValue(provider)}
-            status={getProviderStatus(provider)}
-            statusText={getProviderStatusText(provider)}
-            onclick={() => selectProvider(provider.id)}
-          >
-            {#if provider.requires_api_key && provider.configured}
-              <button class="inline-btn" onclick={(e) => { e.stopPropagation(); editApiKey(provider); }}>
-                Edit Key
-              </button>
-            {/if}
-          </StatusRow>
-
-          <!-- Language selector for active ElevenLabs -->
-          {#if currentProvider === provider.id && provider.id === 'elevenlabs' && elevenlabsLanguages.length > 0}
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="locale-row" onclick={(e) => e.stopPropagation()}>
-              <label for="elevenlabs-language">Language</label>
-              <select id="elevenlabs-language" value={elevenlabsLanguage} onchange={changeElevenLabsLanguage}>
-                {#each elevenlabsLanguages as [code, name] (code)}
-                  <option value={code}>{name}</option>
-                {/each}
-              </select>
-            </div>
-          {/if}
-        {/each}
-      </div>
-    </div>
-  {/if}
-
-  <!-- CUSTOM ENDPOINT -->
-  <div class="section">
-    <SectionHeader label="CUSTOM ENDPOINT" />
-    {#if customProvider && (customProvider.configured || currentProvider === customProvider.id)}
-      <div class="section-rows">
-        <StatusRow
-          label={customProvider.name}
-          value={getProviderValue(customProvider)}
-          status={getProviderStatus(customProvider)}
-          statusText={getProviderStatusText(customProvider)}
-          onclick={() => selectProvider(customProvider.id)}
-        >
-          {#if customProvider.configured}
-            <button class="inline-btn" onclick={(e) => { e.stopPropagation(); showCustomSttSection = true; }}>
-              Edit
+<Pane title="Transcription" {status}>
+  {#if orderedProviders.length > 0}
+    <Group title="Service">
+      {#each orderedProviders as provider (provider.id)}
+        {@const action = sttProviderAction(provider)}
+        {@const downloadShown = provider.id === 'apple_stt' && (modelDownloading || downloadStatus !== '')}
+        {#snippet rowAction()}
+          {#if action}
+            <button
+              type="button"
+              class="btn btn-small"
+              aria-label={actionName(provider, action)}
+              disabled={action === 'download' && modelDownloading}
+              onclick={() => runAction(provider, action)}
+            >
+              {ACTION_LABELS[action]}
             </button>
           {/if}
-        </StatusRow>
-      </div>
-    {/if}
-    <ActionRow
-      label={customProvider?.configured ? 'Edit custom Whisper-compatible endpoint' : 'Add custom Whisper-compatible endpoint'}
-      onclick={() => { showCustomSttSection = !showCustomSttSection; }}
-    />
-
-    {#if showCustomSttSection}
-      <div class="custom-form">
-        <p class="form-desc">Connect to any OpenAI-compatible Whisper endpoint (whisper.cpp, faster-whisper, LocalAI, etc.)</p>
-        <div class="form-group">
-          <label for="custom-stt-base-url">Base URL</label>
-          <input id="custom-stt-base-url" type="text" bind:value={customSttBaseUrl} placeholder="http://localhost:8080/v1" />
-        </div>
-        <div class="form-group">
-          <label for="custom-stt-api-key">API Key <span class="optional">(optional for local)</span></label>
-          <input id="custom-stt-api-key" type="password" bind:value={customSttApiKey} placeholder="API key (if required)" />
-        </div>
-        <div class="form-group">
-          <label for="custom-stt-model">Model <span class="optional">(default: whisper-1)</span></label>
-          <input id="custom-stt-model" type="text" bind:value={customSttModel} placeholder="whisper-1" />
-        </div>
-        <div class="form-group">
-          <label for="custom-stt-language">Language <span class="optional">(optional, ISO-639-1)</span></label>
-          <input id="custom-stt-language" type="text" bind:value={customSttLanguage} placeholder="auto-detect" />
-        </div>
-        <div class="form-group">
-          <label for="custom-stt-display-name">Display Name <span class="optional">(optional)</span></label>
-          <input id="custom-stt-display-name" type="text" bind:value={customSttDisplayName} placeholder="e.g., Local Whisper" />
-        </div>
-        <button class="btn btn-block btn-primary" onclick={saveCustomSttEndpoint} disabled={status.busy || !customSttBaseUrl.trim()}>
-          {status.busy ? 'Saving...' : 'Save & Activate'}
-        </button>
-      </div>
-    {/if}
-  </div>
-</div>
-
-<!-- API Key Modal -->
-{#if showApiKeyModal}
-  <div class="modal-overlay" onclick={closeModal} onkeydown={(e) => e.key === 'Escape' && closeModal()} role="presentation">
-    <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') closeModal(); e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="stt-api-key-title">
-      <h3 id="stt-api-key-title">{editingExistingKey ? 'Update' : 'Configure'} {selectedProvider?.name}</h3>
-      <p>{editingExistingKey ? 'Enter a new API key:' : 'Enter your API key to enable this provider:'}</p>
-
-      <div class="api-key-wrapper">
-        <input
-          type={showApiKey ? 'text' : 'password'}
-          bind:value={apiKeyInput}
-          placeholder="API Key"
-          class="api-key-input"
-          onkeydown={(e) => e.key === 'Enter' && saveApiKey()}
+        {/snippet}
+        {#snippet rowDownload()}
+          <div class="download">
+            {#if downloadStatus === 'checking'}
+              <p class="download-text">Checking model availability…</p>
+            {:else if downloadStatus === 'downloading'}
+              <p class="download-text">Downloading… {downloadPercent}%</p>
+            {:else if downloadStatus === 'success' || downloadStatus === 'already_installed'}
+              <p class="download-text" role="status">
+                <span class="download-done"><Check size={13} aria-hidden="true" /></span>
+                {downloadStatus === 'success' ? 'Model downloaded' : 'Model already installed'}
+              </p>
+            {:else if downloadStatus === 'error'}
+              <p class="download-text download-error" role="alert">{downloadError || 'Download failed'}</p>
+            {/if}
+            {#if modelDownloading}
+              <div
+                class="progress"
+                role="progressbar"
+                aria-label="Speech model download"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={downloadPercent}
+              >
+                <div class="progress-fill" style:width="{downloadPercent}%"></div>
+              </div>
+            {/if}
+          </div>
+        {/snippet}
+        <!-- A Row reserves room for each snippet it is given, so they go in only when they have something to show. -->
+        <Row
+          label={provider.name}
+          detail={sttProviderDetail(provider, customSttBaseUrl)}
+          icon={providerIcon(provider)}
+          current={currentProvider === provider.id}
+          disabled={sttProviderDisabled(provider)}
+          onclick={() => selectProvider(provider.id)}
+          trailing={action ? rowAction : undefined}
+          children={downloadShown ? rowDownload : undefined}
         />
-        <button class="visibility-toggle" onclick={toggleApiKeyVisibility} type="button">
-          {showApiKey ? '👁️' : '👁️‍🗨️'}
-        </button>
-      </div>
+      {/each}
+    </Group>
+  {/if}
 
-      <div class="modal-actions">
-        <button class="btn btn-md btn-secondary" onclick={closeModal}>Cancel</button>
-        <button class="btn btn-md btn-primary" onclick={saveApiKey} disabled={status.busy}>
-          {status.busy ? 'Saving...' : editingExistingKey ? 'Update Key' : 'Save & Activate'}
+  <!-- What the service in use needs, under its own name. -->
+  {#if activeProvider}
+    {@const provider = activeProvider}
+    {#if provider.id === 'apple_stt'}
+      <Group title={provider.name}>
+        {#if appleSttLocales.length > 0}
+          <Row label="Language">
+            {#snippet trailing()}
+              <Select
+                value={appleSttLocale}
+                options={appleSttLocaleOptions}
+                label="Language"
+                onchange={changeAppleSttLocale}
+              />
+            {/snippet}
+          </Row>
+        {/if}
+        <Row label="Speech model">
+          {#snippet trailing()}
+            {#if provider.model_status === 'installed'}
+              <span class="installed">
+                <span class="installed-icon"><Check size={15} aria-hidden="true" /></span>
+                Installed
+              </span>
+            {:else}
+              <button
+                type="button"
+                class="btn btn-small"
+                aria-label={`Download speech model for ${provider.name}`}
+                disabled={modelDownloading || provider.model_status !== 'not_installed'}
+                onclick={() => downloadModel(provider)}
+              >
+                Download
+              </button>
+            {/if}
+          {/snippet}
+        </Row>
+      </Group>
+    {:else if KEYED_PROVIDERS.includes(provider.id)}
+      <Group title={provider.name}>
+        <Row label="API key" detail={provider.configured ? 'Saved' : undefined}>
+          {#snippet trailing()}
+            <button
+              type="button"
+              class="btn btn-small"
+              aria-label={provider.configured ? `Change API key for ${provider.name}` : `Add API Key for ${provider.name}`}
+              onclick={() => openApiKeySheet(provider, provider.configured)}
+            >
+              {provider.configured ? 'Change…' : 'Add API Key…'}
+            </button>
+          {/snippet}
+        </Row>
+        {#if provider.id === 'elevenlabs' && elevenlabsLanguages.length > 0}
+          <Row label="Language">
+            {#snippet trailing()}
+              <Select
+                value={elevenlabsLanguage}
+                options={elevenlabsLanguageOptions}
+                label="Language"
+                onchange={changeElevenLabsLanguage}
+              />
+            {/snippet}
+          </Row>
+        {/if}
+      </Group>
+    {:else if provider.id === 'custom_stt'}
+      <Group title={provider.name}>
+        <Row label="Endpoint" detail={provider.configured ? customSttBaseUrl : undefined}>
+          {#snippet trailing()}
+            <button
+              type="button"
+              class="btn btn-small"
+              aria-label={provider.configured ? `Edit endpoint of ${provider.name}` : `Set up ${provider.name}`}
+              onclick={openCustomSttSheet}
+            >
+              {provider.configured ? 'Edit…' : 'Set Up…'}
+            </button>
+          {/snippet}
+        </Row>
+      </Group>
+    {/if}
+  {/if}
+
+  <!-- Inside the pane, where the tokens are. -->
+  {#if showApiKeySheet && selectedProvider}
+    <ApiKeySheet
+      providerName={selectedProvider.name}
+      mode={editingExistingKey ? 'change' : 'add'}
+      busy={status.busy}
+      onsave={saveApiKey}
+      onclose={closeApiKeySheet}
+    />
+  {/if}
+
+  {#if showCustomSttSheet}
+    <Sheet title="Custom Endpoint" onclose={closeCustomSttSheet} onsubmit={saveCustomSttEndpoint}>
+      <label for="custom-stt-base-url">Base URL</label>
+      <input
+        id="custom-stt-base-url"
+        type="text"
+        bind:value={draft.baseUrl}
+        placeholder="http://localhost:8080/v1"
+        aria-required="true"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+      />
+      <label for="custom-stt-api-key">API Key</label>
+      <input
+        id="custom-stt-api-key"
+        type="password"
+        bind:value={draft.apiKey}
+        placeholder="Only if the server needs one"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+      />
+      <label for="custom-stt-model">Model</label>
+      <input
+        id="custom-stt-model"
+        type="text"
+        bind:value={draft.model}
+        placeholder="whisper-1"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+      />
+      <label for="custom-stt-language">Language</label>
+      <input
+        id="custom-stt-language"
+        type="text"
+        bind:value={draft.language}
+        placeholder="Automatic"
+        aria-describedby="custom-stt-language-hint"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+      />
+      <p id="custom-stt-language-hint" class="hint">ISO-639-1 code, e.g. en</p>
+      <label for="custom-stt-display-name">Display Name</label>
+      <input
+        id="custom-stt-display-name"
+        type="text"
+        bind:value={draft.displayName}
+        placeholder="Local Whisper"
+        autocomplete="off"
+      />
+      {#snippet actions()}
+        <button type="button" class="btn" onclick={closeCustomSttSheet}>Cancel</button>
+        <button type="submit" class="btn btn-primary" disabled={status.busy || !draft.baseUrl.trim()}>
+          {status.busy ? 'Saving…' : 'Save & Use'}
         </button>
-      </div>
-    </div>
-  </div>
-{/if}
+      {/snippet}
+    </Sheet>
+  {/if}
+</Pane>
 
 <style>
-  .provider-page {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  /* Alerts */
-
-
-
-  /* Sections */
-  .section {
+  /* The Apple Speech row's download, under its text. */
+  .download {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    width: 100%;
   }
 
-  .section-rows {
+  .download-text {
     display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-
-  /* Inline buttons (inside StatusRow) */
-  .inline-btn {
-    padding: 3px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.05);
+    align-items: center;
+    gap: 5px;
+    font-size: 11.5px;
     color: var(--text-secondary);
-    font-size: 11px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    white-space: nowrap;
   }
 
-  .inline-btn:hover:not(:disabled) {
-    background: var(--surface-raised);
-    color: var(--text-primary);
+  /* --success is for the check mark only, never for text. */
+  .download-done {
+    display: inline-flex;
+    flex: none;
+    color: var(--success);
   }
 
-  .inline-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+  .download-error {
+    color: var(--danger);
   }
 
-  /* Download progress */
-  .download-inline {
-    padding: 6px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .download-msg {
-    font-size: 11px;
-    color: var(--text-muted);
-  }
-
-  .download-ok {
-    font-size: 11px;
-    color: var(--status-green);
-  }
-
-  .download-err {
-    font-size: 11px;
-    color: var(--status-red);
-  }
-
-  .progress-bar-bg {
+  .progress {
     height: 4px;
-    background: var(--border);
-    border-radius: 2px;
     overflow: hidden;
+    border-radius: 2px;
+    background: var(--fill-selected);
   }
 
-  .progress-bar-fill {
+  .progress-fill {
     height: 100%;
-    background: var(--accent);
     border-radius: 2px;
+    background: var(--accent);
     transition: width 0.3s ease;
   }
 
-  /* Locale selector row */
-  .locale-row {
-    display: flex;
+  .installed {
+    display: inline-flex;
     align-items: center;
-    gap: 10px;
-    padding: 6px 12px;
-  }
-
-  .locale-row label {
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-
-  .locale-row select {
-    padding: 4px 8px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: var(--bg-card);
-    color: var(--text-primary);
-    font-size: 12px;
-    cursor: pointer;
-    outline: none;
-  }
-
-  .locale-row select:focus {
-    border-color: rgba(168, 85, 247, 0.6);
-  }
-
-  /* Custom endpoint form */
-  .custom-form {
-    padding: 14px;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .form-desc {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 12px;
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .form-group label {
+    gap: 5px;
     font-size: 12px;
     color: var(--text-secondary);
   }
 
-  .optional {
-    color: var(--text-muted);
-    font-size: 11px;
+  .installed-icon {
+    display: inline-flex;
+    flex: none;
+    color: var(--success);
   }
 
-  .form-group input {
-    width: 100%;
-    padding: 8px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg-card);
-    color: var(--text-primary);
-    font-size: 12px;
-    outline: none;
-    transition: border-color 0.15s ease;
+  .hint {
+    font-size: 11.5px;
+    color: var(--text-secondary);
   }
 
-  .form-group input:focus {
-    border-color: rgba(168, 85, 247, 0.6);
+  @media (prefers-reduced-motion: reduce) {
+    .progress-fill {
+      transition: none;
+    }
   }
-
-  .form-group input::placeholder {
-    color: var(--text-placeholder);
-  }
-
-
-
-
-  /* Modal */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .modal {
-    background: var(--bg-card);
-    padding: 24px;
-    border-radius: 16px;
-    max-width: 400px;
-    width: 90%;
-    border: 1px solid var(--border);
-  }
-
-  .modal h3 {
-    margin: 0 0 8px;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .modal p {
-    margin: 0 0 16px;
-    color: var(--text-muted);
-    font-size: 13px;
-  }
-
-  .api-key-wrapper {
-    position: relative;
-    margin-bottom: 20px;
-  }
-
-  .api-key-input {
-    width: 100%;
-    padding: 10px 12px;
-    padding-right: 44px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-size: 13px;
-    outline: none;
-  }
-
-  .api-key-input:focus {
-    border-color: rgba(168, 85, 247, 0.6);
-  }
-
-  .visibility-toggle {
-    position: absolute;
-    right: 8px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 6px;
-    font-size: 14px;
-    opacity: 0.6;
-  }
-
-  .visibility-toggle:hover {
-    opacity: 1;
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 10px;
-    justify-content: flex-end;
-  }
-
-
-
-
-
-
 </style>
