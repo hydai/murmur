@@ -7,7 +7,7 @@ import Row from '../components/ui/Row.svelte';
 import Select from '../components/ui/Select.svelte';
 import Switch from '../components/ui/Switch.svelte';
 import RowHarness from './RowHarness.svelte';
-import { render, unmountAll } from './helpers';
+import { render, settle, unmountAll } from './helpers';
 
 afterEach(async () => {
   await unmountAll();
@@ -113,6 +113,48 @@ describe('Select', () => {
   it('shows the current value, not just the first option', () => {
     const { target } = render(Select, { value: 'none', options, label: 'Chinese characters', onchange: vi.fn() });
     expect(target.querySelector('select')!.value).toBe('none');
+  });
+
+  /** What a user does to the native element, which then shows the pick whether or not anyone accepts it. */
+  const pick = async (select: HTMLSelectElement, value: string) => {
+    select.value = value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+  };
+
+  it('goes back to the current value when the parent does not accept the pick', async () => {
+    const onchange = vi.fn();
+    const { target } = render(Select, { value: 'traditional', options, label: 'Chinese characters', onchange });
+    const select = target.querySelector<HTMLSelectElement>('select')!;
+    await pick(select, 'none');
+    expect(onchange).toHaveBeenCalledWith('none');
+    expect(select.value).toBe('traditional');
+  });
+
+  it('keeps the pick while the parent is still deciding, then goes back if it was refused', async () => {
+    let answer!: () => void;
+    const onchange = vi.fn(() => new Promise<void>(resolve => { answer = () => resolve(); }));
+    const { target } = render(Select, { value: 'traditional', options, label: 'Chinese characters', onchange });
+    const select = target.querySelector<HTMLSelectElement>('select')!;
+    await pick(select, 'none');
+    expect(select.value).toBe('none');
+    answer();
+    await settle();
+    expect(select.value).toBe('traditional');
+  });
+
+  it('keeps a pick the parent accepted, reading the value only after it has answered', async () => {
+    // The parent accepts by changing what it holds. A getter does that without a reactive parent.
+    let held = 'traditional';
+    const { target } = render(Select, {
+      get value() { return held; },
+      options,
+      label: 'Chinese characters',
+      onchange: async (next: string) => { held = next; },
+    });
+    const select = target.querySelector<HTMLSelectElement>('select')!;
+    await pick(select, 'none');
+    expect(select.value).toBe('none');
   });
 });
 

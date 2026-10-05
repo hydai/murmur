@@ -3,12 +3,18 @@
 
   let {
     value,
+    label,
     disabled = false,
     onchange,
     onerror,
   }: {
     /** The stored form, such as `Cmd+Shift+K`. */
     value: string;
+    /**
+     * What the field sets, such as `Shortcut`. Assistive technology reads it
+     * ahead of the keys, which do not say what they are for.
+     */
+    label: string;
     disabled?: boolean;
     /** The shortcut that was typed, in its stored form. */
     onchange: (hotkey: string) => void;
@@ -55,6 +61,8 @@
   onclick={start}
   onblur={() => (recording = false)}
 >
+  <!-- Starts the button's name: "Shortcut: ⌃ `", or "Shortcut: Type shortcut…" while it waits for keys. -->
+  <span class="sr-only">{label}:</span>
   <!-- Always in the page, so that assistive technology notices the text arriving. -->
   <span class="shortcut-status" aria-live="polite">{#if recording}Type shortcut…{/if}</span>
   {#if !recording}

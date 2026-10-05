@@ -7,7 +7,7 @@ import AboutSection from '../components/settings/AboutSection.svelte';
 import ProviderConfig from '../components/settings/ProviderConfig.svelte';
 import HistoryPanel from '../components/history/HistoryPanel.svelte';
 import DictionaryEditor from '../components/settings/DictionaryEditor.svelte';
-import OutputConfig from '../components/settings/OutputConfig.svelte';
+import GeneralConfig from '../components/settings/GeneralConfig.svelte';
 import PromptsEditor from '../components/settings/PromptsEditor.svelte';
 import DiagnosticsPanel from '../components/settings/DiagnosticsPanel.svelte';
 import StatusRowHarness from './StatusRowHarness.svelte';
@@ -381,31 +381,30 @@ describe('provider page initialization', () => {
 describe('history opt-out', () => {
   it('shows the saved-history state and toggles it through the backend', async () => {
     mocks.invoke.mockImplementation(async command => command === 'get_config'
-      ? { output_mode: 'clipboard', save_history: true }
+      ? { hotkey: 'Ctrl+`', output_mode: 'clipboard', save_history: true }
       : undefined);
-    const { target } = render(OutputConfig, {});
+    const { target } = render(GeneralConfig, {});
     await settle();
-    const row = button(target, 'Save transcription history');
-    expect(row.textContent).toContain('On');
-    row.click();
-    await settle();
+    const toggle = () => target.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Save transcription history"]')!;
+    expect(toggle().getAttribute('aria-checked')).toBe('true');
+    toggle().click(); await settle();
     expect(mocks.invoke).toHaveBeenCalledWith('set_save_history', { enabled: false });
-    expect(button(target, 'Save transcription history').textContent).toContain('Off');
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
   });
 });
 
 describe('chinese conversion setting', () => {
   it('shows the active conversion and switches it through the backend', async () => {
     mocks.invoke.mockImplementation(async command => command === 'get_config'
-      ? { output_mode: 'clipboard', save_history: true, chinese_conversion: 'traditional' }
+      ? { hotkey: 'Ctrl+`', output_mode: 'clipboard', save_history: true, chinese_conversion: 'traditional' }
       : undefined);
-    const { target } = render(OutputConfig, {});
+    const { target } = render(GeneralConfig, {});
     await settle();
-    expect(button(target, 'Traditional Chinese (Taiwan)').textContent).toContain('Active');
-    button(target, 'No conversion').click();
-    await settle();
+    const select = target.querySelector<HTMLSelectElement>('select[aria-label="Chinese characters"]')!;
+    expect(select.value).toBe('traditional');
+    select.value = 'none'; select.dispatchEvent(new Event('change', { bubbles: true })); await settle();
     expect(mocks.invoke).toHaveBeenCalledWith('set_chinese_conversion', { mode: 'none' });
-    expect(button(target, 'No conversion').textContent).toContain('Active');
+    expect(select.value).toBe('none');
   });
 });
 
