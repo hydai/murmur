@@ -75,7 +75,7 @@
     {#if activePane === 'general'}
       <GeneralConfig />
     {:else if activePane === 'transcription'}
-      <LegacyPane><ProviderConfig /></LegacyPane>
+      <ProviderConfig />
     {:else if activePane === 'ai'}
       <LegacyPane><LlmConfig /><PromptsEditor /></LegacyPane>
     {:else if activePane === 'dictionary'}
