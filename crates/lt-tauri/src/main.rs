@@ -1825,6 +1825,41 @@ mod tests {
         }
     }
 
+    /// Mirrors `ui/src/test/shortcut.test.ts`: the strings listed here are the ones that test
+    /// expects the shortcut recorder to build. `set_hotkey` saves only what this parser
+    /// accepts, so a recorder string that fails here could never be saved. Change both together.
+    #[test]
+    fn the_backend_parses_every_shortcut_the_recorder_builds() {
+        for hotkey in [
+            "Ctrl+`",
+            "Cmd+Shift+Space",
+            "Cmd+Ctrl+Alt+Shift+K",
+            "Ctrl+Shift+=",
+            "Cmd+Shift+1",
+            "Alt+K",
+            "Alt+E",
+            "Cmd+ArrowUp",
+            "Ctrl+Numpad1",
+            "Ctrl+-",
+            "Ctrl+=",
+            "Ctrl+[",
+            "Ctrl+]",
+            "Ctrl+\\",
+            "Ctrl+;",
+            "Ctrl+'",
+            "Ctrl+,",
+            "Ctrl+.",
+            "Ctrl+/",
+        ] {
+            if let Err(error) = hotkey.parse::<Shortcut>() {
+                panic!("the recorder builds `{hotkey}`, which set_hotkey rejects: {error}");
+            }
+        }
+
+        // The parser splits on `+`, so a literal `+` key is an empty token and never parses.
+        assert!("Ctrl+Shift++".parse::<Shortcut>().is_err());
+    }
+
     #[test]
     fn a_provider_counts_as_configured_once_its_key_is_present() {
         let mut config = AppConfig::default();

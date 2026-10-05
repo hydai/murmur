@@ -37,3 +37,89 @@
   --font-body: 'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: 'SF Mono', ui-monospace, 'Cascadia Code', monospace;
 }
+
+/*
+ * Native macOS look: system font, system-style colours, light and dark.
+ *
+ * Scoped to .ui-v2 so the pages still on the tokens above keep their look;
+ * a page opts in by wearing the class. Several names repeat the ones above
+ * on purpose, so a v2 page sees the new value while the rest do not.
+ */
+.ui-v2 {
+  color-scheme: light dark;
+
+  /* Fonts */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Surfaces */
+  --window-bg: #F5F5F7;
+  --sidebar-bg: #E9E9EC;
+  --group-bg: #FFFFFF;
+  --separator: rgba(0, 0, 0, .08);
+  --fill-selected: rgba(0, 0, 0, .06);
+
+  /* Text */
+  --text-primary: #1D1D1F;
+  --text-secondary: #6E6E73;
+
+  /*
+   * Brand blue marks selection and the primary action. The fill keeps the
+   * deeper blue in dark mode too: white text on the lighter dark-mode
+   * --accent would only reach 2.6:1.
+   */
+  --accent: #1C74B8;
+  --accent-fill: #1C74B8;
+  --on-accent: #FFFFFF;
+
+  /* Controls */
+  --control-bg: #FFFFFF;
+  --control-border: rgba(0, 0, 0, .16);
+  --field-bg: #FFFFFF;
+  --switch-off: rgba(0, 0, 0, .16);
+
+  /*
+   * Red is for real errors and deletion. --danger-fill carries white text in
+   * both modes (5.38:1).
+   */
+  --danger: #D70015;
+  --danger-fill: #D70015;
+  --success: #248A3D;
+  --warning: #B25000;
+
+  /* Layers above the content */
+  --sheet-backdrop: rgba(0, 0, 0, .16);
+  --toast-bg: rgba(36, 36, 38, .92);
+  --toast-fg: #FFFFFF;
+
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+}
+
+@media (prefers-color-scheme: dark) {
+  .ui-v2 {
+    --window-bg: #1E1E1E;
+    --sidebar-bg: #2B2B2D;
+    --group-bg: #2A2A2C;
+    --separator: rgba(255, 255, 255, .08);
+    --fill-selected: rgba(255, 255, 255, .09);
+
+    --text-primary: #F2F2F7;
+    --text-secondary: #98989F;
+
+    --accent: #4BA8E8;
+
+    --control-bg: #48484A;
+    --control-border: rgba(255, 255, 255, .08);
+    --field-bg: #1C1C1E;
+    --switch-off: rgba(255, 255, 255, .22);
+
+    --danger: #FF6961;
+    --success: #30D158;
+    --warning: #FF9F0A;
+
+    --sheet-backdrop: rgba(0, 0, 0, .35);
+    --toast-bg: rgba(235, 235, 240, .95);
+    --toast-fg: #1D1D1F;
+  }
+}
