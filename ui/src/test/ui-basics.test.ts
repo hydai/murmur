@@ -72,6 +72,41 @@ describe('Row', () => {
     expect(target.querySelector('.row > .row-extra .progress')).not.toBeNull();
     expect(target.querySelector('.row-main .progress')).toBeNull();
   });
+
+  it('puts an accessory at the end of the button, so a click on it is a click on the row', async () => {
+    const select = vi.fn();
+    const { target } = render(RowHarness, { select, edit: vi.fn(), accessory: true });
+    const accessory = target.querySelector('button.row-main .row-accessory .accessory-content')!;
+    expect(accessory.textContent).toBe('Edited');
+    // Still no button inside a button, with the trailing control beside the main area as before.
+    expect(target.querySelector('button button')).toBeNull();
+    await userEvent.setup().click(accessory);
+    expect(select).toHaveBeenCalledTimes(1);
+    // It is part of the button, not a sibling beside it, which is what a click on it relies on.
+    expect(target.querySelector('.row > .row-accessory')).toBeNull();
+  });
+
+  it('reads the accessory as part of the row, and leaves the trailing control beside it', () => {
+    const { target } = render(RowHarness, { select: vi.fn(), edit: vi.fn(), accessory: true });
+    expect(target.querySelector('.row-main')?.textContent).toContain('Cloud provider');
+    expect(target.querySelector('.row-main')?.textContent).toContain('Edited');
+    expect(target.querySelector('.row > .row-trailing button')?.textContent).toBe('Edit key');
+    expect(target.querySelector('.row-main .row-trailing')).toBeNull();
+  });
+
+  it('shows the accessory of a row that is not a button, and keeps the check at the far end', () => {
+    const accessory = createRawSnippet(() => ({ render: () => '<span class="accessory-content">Edited</span>' }));
+    const { target } = render(Row, { label: 'Shortcut', accessory, current: true });
+    expect(target.querySelector('div.row-main .row-accessory .accessory-content')).not.toBeNull();
+    const accessoryBox = target.querySelector('.row-accessory')!;
+    const check = target.querySelector('.row-check')!;
+    expect(accessoryBox.compareDocumentPosition(check) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('has no accessory box when there is no accessory', () => {
+    const { target } = render(Row, { label: 'Shortcut', onclick: vi.fn() });
+    expect(target.querySelector('.row-accessory')).toBeNull();
+  });
 });
 
 describe('Switch', () => {

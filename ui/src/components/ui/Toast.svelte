@@ -17,7 +17,19 @@
 {#if error}
   <div class="toast toast-error" role="alert">
     <span class="toast-text">{error}</span>
-    <button type="button" class="toast-dismiss" aria-label="Dismiss" onclick={() => ondismiss()}>
+    <!--
+      Pressing it with the mouse must not move the focus: a failure that comes from a
+      sheet is shown above the sheet, and focus pulled out of it would leave Escape,
+      Enter and the Tab trap with nothing to reach. The click still goes through, and
+      the keyboard is unaffected.
+    -->
+    <button
+      type="button"
+      class="toast-dismiss"
+      aria-label="Dismiss"
+      onmousedown={(event) => event.preventDefault()}
+      onclick={() => ondismiss()}
+    >
       <X size={14} aria-hidden="true" />
     </button>
   </div>
@@ -32,13 +44,15 @@
   /*
    * Pinned to the bottom of the pane, so it stays put while the content
    * scrolls, and centred by its auto margins rather than a transform.
+   * It stacks above a sheet's backdrop (z-index 20), so a failure that comes
+   * from a sheet stays visible, and can be dismissed, while the sheet is open.
    */
   .toast {
     position: absolute;
     right: 0;
     bottom: 16px;
     left: 0;
-    z-index: 10;
+    z-index: 30;
     display: flex;
     align-items: center;
     gap: 8px;

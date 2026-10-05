@@ -10,7 +10,6 @@
   import ProviderConfig from './ProviderConfig.svelte';
   import DictionaryEditor from './DictionaryEditor.svelte';
   import LlmConfig from './LlmConfig.svelte';
-  import PromptsEditor from './PromptsEditor.svelte';
   import DiagnosticsPanel from './DiagnosticsPanel.svelte';
   import AboutSection from './AboutSection.svelte';
   import HistoryPanel from '../history/HistoryPanel.svelte';
@@ -77,7 +76,7 @@
     {:else if activePane === 'transcription'}
       <ProviderConfig />
     {:else if activePane === 'ai'}
-      <LegacyPane><LlmConfig /><PromptsEditor /></LegacyPane>
+      <LlmConfig />
     {:else if activePane === 'dictionary'}
       <LegacyPane><DictionaryEditor /></LegacyPane>
     {:else if activePane === 'history'}
