@@ -80,7 +80,7 @@
     {:else if activePane === 'dictionary'}
       <DictionaryEditor />
     {:else if activePane === 'history'}
-      <LegacyPane><HistoryPanel /></LegacyPane>
+      <HistoryPanel onnavigate={(pane) => (activePane = pane)} />
     {:else if activePane === 'about'}
       <LegacyPane>
         <AboutSection

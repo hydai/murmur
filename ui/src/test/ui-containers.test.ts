@@ -6,6 +6,7 @@ import SearchField from '../components/ui/SearchField.svelte';
 import Sheet from '../components/ui/Sheet.svelte';
 import ShortcutField from '../components/ui/ShortcutField.svelte';
 import Toast from '../components/ui/Toast.svelte';
+import { trapFocus } from '../lib/focus';
 import { createStatus } from '../lib/status.svelte';
 import { MISSING_MODIFIER_MESSAGE } from '../lib/shortcut';
 import PaneHarness from './PaneHarness.svelte';
@@ -124,6 +125,83 @@ describe('Sheet', () => {
     }
   });
 
+  describe('when the focus has gone to the page', () => {
+    // As after a press on something that cannot take focus, or on a button that was disabled while it held the focus.
+    const loseFocus = () => (document.activeElement as HTMLElement).blur();
+
+    it('still closes on Escape, once, and keeps the key from anything behind the sheet', async () => {
+      const behind = vi.fn();
+      document.body.addEventListener('keydown', behind);
+      try {
+        const onclose = vi.fn();
+        render(SheetHarness, { onclose, onsubmit: vi.fn() });
+        loseFocus();
+        expect(document.activeElement).toBe(document.body);
+        await userEvent.setup().keyboard('{Escape}');
+        expect(onclose).toHaveBeenCalledTimes(1);
+        expect(behind).not.toHaveBeenCalled();
+      } finally {
+        document.body.removeEventListener('keydown', behind);
+      }
+    });
+
+    it('brings Tab back to the first field, and Shift+Tab to the last control', async () => {
+      // One on each side of the sheet, so that a Tab nobody catches would land on one of them.
+      const before = document.createElement('button');
+      before.textContent = 'Before the sheet';
+      document.body.prepend(before);
+      const { target } = render(SheetHarness, { onclose: vi.fn(), onsubmit: vi.fn() });
+      const after = document.createElement('button');
+      after.textContent = 'After the sheet';
+      document.body.append(after);
+      const dialog = target.querySelector<HTMLElement>('[role="dialog"]')!;
+      const user = userEvent.setup();
+
+      loseFocus();
+      await user.tab();
+      expect(document.activeElement).toBe(dialog.querySelector('#term'));
+
+      loseFocus();
+      await user.tab({ shift: true });
+      expect(document.activeElement).toBe(button(dialog, 'Add Word'));
+    });
+
+    it('lets a Tab inside the sheet move on by itself, and wraps it only at the ends, once', async () => {
+      const { target } = render(SheetHarness, { onclose: vi.fn(), onsubmit: vi.fn() });
+      const dialog = target.querySelector<HTMLElement>('[role="dialog"]')!;
+      const user = userEvent.setup();
+      expect(document.activeElement).toBe(dialog.querySelector('#term'));
+      await user.tab();
+      expect(document.activeElement).toBe(button(dialog, 'Cancel'));
+      await user.tab();
+      expect(document.activeElement).toBe(button(dialog, 'Add Word'));
+      // The last control: one Tab wraps to the first field, and no more than one.
+      await user.tab();
+      expect(document.activeElement).toBe(dialog.querySelector('#term'));
+    });
+
+    it('ignores an Escape that belongs to an input method, whether it reaches the window or the page', () => {
+      const onclose = vi.fn();
+      render(SheetHarness, { onclose, onsubmit: vi.fn() });
+      loseFocus();
+      const press = (source: EventTarget, { isComposing = false, keyCode = 27 } = {}) => {
+        const event = new KeyboardEvent('keydown', { key: 'Escape', isComposing, bubbles: true });
+        // jsdom leaves keyCode out of the init dictionary, so it has to be defined on the event itself.
+        Object.defineProperty(event, 'keyCode', { get: () => keyCode });
+        source.dispatchEvent(event);
+      };
+      for (const source of [window, document.body]) {
+        press(source, { isComposing: true });
+        press(source, { keyCode: 229 });
+      }
+      expect(onclose).not.toHaveBeenCalled();
+      // The same keys without an input method still close it, so the guard is the only difference.
+      press(window);
+      press(document.body);
+      expect(onclose).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('needs no fields: a sheet that only asks shows its title and actions, with the focus on the first action', () => {
     const { target } = render(Sheet, {
       title: 'Delete “Tauri”?',
@@ -162,6 +240,69 @@ describe('Sheet', () => {
     expect(precedes(button(form, 'Delete…'), button(form, 'Save'))).toBe(true);
 
     expect(render(Sheet, props).target.querySelector('.sheet-error')).toBeNull();
+  });
+});
+
+describe('trapFocus', () => {
+  const key = (init: KeyboardEventInit) => new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+  const blur = () => (document.activeElement as HTMLElement).blur();
+
+  it('pulls a Tab from outside into the node while it is there, and stops once it is destroyed', () => {
+    const opener = document.createElement('button');
+    const node = document.createElement('div');
+    node.innerHTML = '<button id="first">First</button><button id="last">Last</button>';
+    document.body.append(opener, node);
+    opener.focus();
+    const action = trapFocus(node) as { destroy(): void };
+    // The listener is on the document, so a failed assertion must not leave it behind for the tests after this one.
+    try {
+      const first = node.querySelector<HTMLElement>('#first')!;
+      const last = node.querySelector<HTMLElement>('#last')!;
+      expect(document.activeElement).toBe(first);
+
+      blur();
+      const forward = key({ key: 'Tab' });
+      document.body.dispatchEvent(forward);
+      expect(forward.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(first);
+
+      blur();
+      const backward = key({ key: 'Tab', shiftKey: true });
+      document.body.dispatchEvent(backward);
+      expect(backward.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(last);
+
+      // Other keys are none of its business.
+      blur();
+      const other = key({ key: 'a' });
+      document.body.dispatchEvent(other);
+      expect(other.defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(document.body);
+
+      action.destroy();
+      expect(document.activeElement).toBe(opener);
+      const released = key({ key: 'Tab' });
+      document.body.dispatchEvent(released);
+      expect(released.defaultPrevented).toBe(false);
+    } finally {
+      action.destroy();
+    }
+  });
+
+  it('takes the node itself when it holds nothing to tab to', () => {
+    const node = document.createElement('div');
+    document.body.append(node);
+    const action = trapFocus(node) as { destroy(): void };
+    try {
+      expect(document.activeElement).toBe(node);
+      blur();
+      const tab = key({ key: 'Tab' });
+      document.body.dispatchEvent(tab);
+      expect(tab.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(node);
+    } finally {
+      action.destroy();
+    }
   });
 });
 
