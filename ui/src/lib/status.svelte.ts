@@ -47,7 +47,7 @@ export function createStatus(lifecycle: Lifecycle) {
     },
 
     /** Show a confirmation that clears itself. */
-    confirm(message: string, clearAfterMs = 3000) {
+    confirm(message: string, clearAfterMs = 2000) {
       success = message;
       lifecycle.timeout(() => {
         success = '';

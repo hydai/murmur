@@ -71,6 +71,15 @@ describe('createStatus', () => {
     expect(status.success).toBe('');
   });
 
+  it('confirms for two seconds by default', () => {
+    const delays: number[] = [];
+    const { lifecycle } = fakeLifecycle();
+    const timeout = lifecycle.timeout;
+    lifecycle.timeout = (cb, delay, key) => { delays.push(delay); timeout(cb, delay, key); };
+    createStatus(lifecycle as never).confirm('Saved');
+    expect(delays).toEqual([2000]);
+  });
+
   it('only auto-clears a failure when asked to', () => {
     const { lifecycle, fire, pendingKeys } = fakeLifecycle();
     const status = createStatus(lifecycle as never);

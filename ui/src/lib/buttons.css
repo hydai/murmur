@@ -90,3 +90,67 @@
 .btn-danger-outline:hover:not(:disabled) {
   background: color-mix(in srgb, var(--status-red) 15%, transparent);
 }
+
+/*
+ * Native-style buttons, scoped to .ui-v2 so the legacy buttons above keep
+ * working until every page has moved over.
+ *
+ * .btn is the plain button, 28px tall; .btn-small is 22px. The intent is a
+ * colour modifier. The legacy rules above still load and share these class
+ * names, so where one outranks a v2 rule (the primary hover colour) or would
+ * otherwise show through (cursor, weight), the rule below sets it explicitly.
+ */
+
+.ui-v2 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--control-bg);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 .5px var(--control-border), 0 .5px 1.5px rgba(0, 0, 0, .14);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.ui-v2 .btn-small {
+  height: 22px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.ui-v2 .btn-primary {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  box-shadow: none;
+}
+
+/*
+ * Native buttons do not change colour under the pointer. This also outranks
+ * the legacy primary hover rule, which would turn the button purple.
+ */
+.ui-v2 .btn-primary:hover:not(:disabled) {
+  background: var(--accent-fill);
+}
+
+.ui-v2 .btn-destructive {
+  background: var(--danger-fill);
+  color: var(--on-accent);
+  box-shadow: none;
+}
+
+.ui-v2 .btn:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.ui-v2 :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
