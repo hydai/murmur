@@ -230,6 +230,7 @@ describe('history snapshots', () => {
   it('keeps all remaining records after deleting from a partially loaded list', async () => {
     let records = Array.from({ length: 100 }, (_, i) => ({ id: `${i}`, final_text: `Entry ${i}`, timestamp_ms: 0, processing_time_ms: 0 }));
     mocks.invoke.mockImplementation(async (command, args) => {
+      if (command === 'get_config') return { save_history: true };
       if (command === 'get_history') return records.slice(args.offset, args.offset + args.limit);
       if (command === 'delete_history_entry') records = records.filter(entry => entry.id !== args.id);
     });
@@ -237,7 +238,7 @@ describe('history snapshots', () => {
     await settle();
     target.querySelector<HTMLButtonElement>('button[title="Delete"]')!.click();
     await settle();
-    button(target, 'Load more').click();
+    button(target, 'Load More').click();
     await settle();
     expect(target.querySelectorAll('.entry-card')).toHaveLength(99);
     expect([...target.querySelectorAll('.entry-text')].map(element => element.textContent)).toEqual(records.map(entry => entry.final_text));
@@ -246,19 +247,20 @@ describe('history snapshots', () => {
   it('retries the same snapshot size after a failed load and avoids insertion duplicates', async () => {
     let records = Array.from({ length: 120 }, (_, i) => ({ id: `${i}`, final_text: `Entry ${i}`, timestamp_ms: 0, processing_time_ms: 0 }));
     let failNext = false;
-    mocks.invoke.mockImplementation(async (_command, args) => {
+    mocks.invoke.mockImplementation(async (command, args) => {
+      if (command === 'get_config') return { save_history: true };
       if (failNext) { failNext = false; throw new Error('Temporary read failure'); }
       return records.slice(args.offset, args.offset + args.limit);
     });
     const { target } = render(HistoryPanel, {});
     await settle();
     failNext = true;
-    button(target, 'Load more').click();
+    button(target, 'Load More').click();
     await settle();
     records = [{ id: 'new', final_text: 'Newest entry', timestamp_ms: 0, processing_time_ms: 0 }, ...records];
-    button(target, 'Load more').click();
+    button(target, 'Load More').click();
     await settle();
-    const requests = mocks.invoke.mock.calls.map(([, args]) => args);
+    const requests = mocks.invoke.mock.calls.filter(([command]) => command === 'get_history').map(([, args]) => args);
     expect(requests).toEqual([{ offset: 0, limit: 50 }, { offset: 0, limit: 100 }, { offset: 0, limit: 100 }]);
     expect(target.querySelectorAll('.entry-card')).toHaveLength(100);
     expect(target.querySelector('.entry-text')?.textContent).toBe('Newest entry');
@@ -270,6 +272,7 @@ describe('history snapshots', () => {
     const first = deferred<unknown[]>();
     const second = deferred<unknown[]>();
     mocks.invoke.mockImplementation(async (command, args) => {
+      if (command === 'get_config') return { save_history: true };
       if (command === 'get_history') return [];
       return args.query === 'first' ? first.promise : second.promise;
     });
@@ -317,14 +320,14 @@ describe('modal dialogs', () => {
     const { target } = render(HistoryPanel, {});
     await settle();
     const user = userEvent.setup();
-    const opener = button(target, 'Clear All');
+    const opener = button(target, 'Clear');
     await user.click(opener);
     await settle();
     const dialog = target.querySelector<HTMLElement>('[role="dialog"]')!;
     expect(dialog).not.toBeNull();
     expect(document.activeElement).toBe(button(dialog, 'Cancel'));
     await user.tab();
-    expect(document.activeElement).toBe(dialog.querySelector('.btn-danger'));
+    expect(document.activeElement).toBe(dialog.querySelector('.btn-destructive'));
     await user.tab();
     expect(document.activeElement).toBe(button(dialog, 'Cancel'));
     await user.keyboard('{Escape}');

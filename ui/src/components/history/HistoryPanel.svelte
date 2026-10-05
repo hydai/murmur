@@ -1,42 +1,67 @@
 <script lang="ts">
-  import Alert from '../settings/ui/Alert.svelte';
-  import { safeInvoke as invoke } from '../../lib/tauri';
-  import { trapFocus } from '../../lib/focus';
+  import { onMount, tick } from 'svelte';
+  import { Copy, Trash2 } from 'lucide-svelte';
   import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-  import { onMount } from 'svelte';
   import { useLifecycle } from '../../lib/lifecycle';
   import { createStatus } from '../../lib/status.svelte';
+  import { safeInvoke as invoke } from '../../lib/tauri';
+  import type { PaneId } from '../settings/navigation';
+  import Group from '../ui/Group.svelte';
+  import Pane from '../ui/Pane.svelte';
+  import Row from '../ui/Row.svelte';
+  import SearchField from '../ui/SearchField.svelte';
+  import Sheet from '../ui/Sheet.svelte';
+  import { formatProcessingTime, groupByDay, showsOriginal, type HistoryEntry } from './historyGroups';
 
-  interface HistoryEntry {
-    id: string;
-    timestamp_ms: number;
-    raw_text?: string;
-    final_text: string;
-    command_name?: string;
-    processing_time_ms: number;
-  }
+  let { onnavigate }: {
+    /** Where the pane sends the user, such as General for the setting that turns saving on. */
+    onnavigate?: (pane: PaneId) => void;
+  } = $props();
 
   let entries: HistoryEntry[] = $state([]);
   let searchQuery = $state('');
   let loading = $state(false);
+  // False until the backend has answered once, so "No transcription history yet" is only said of a history that is known to be empty.
+  let loaded = $state(false);
+  // Only a history that is known to be off says so; one that could not be asked is taken to be on.
+  let savingOff = $state(false);
   let showClearModal = $state(false);
   let expandedId: string | null = $state(null);
   let visibleLimit = $state(50);
   let mutating = $state(false);
   let hasMore = $state(true);
+  // The toolbar's search field, for putting the focus back when what held it is gone.
+  let searchSlot = $state<HTMLElement>();
   const PAGE_SIZE = 50;
 
   const MAX_ENTRIES = 500;
+  // The interface is English whatever language the system is set to, so the days and the times are too.
+  const LOCALE = 'en-US';
   const lifecycle = useLifecycle();
-  // Only the banners come from the shared helper: `loading` here also guards a
+  // Only the toast comes from the shared helper: `loading` here also guards a
   // debounced, cancellable request, which status.run's unconditional reset
   // would break.
   const status = createStatus(lifecycle);
   let requestId = 0;
 
+  // Worked out again whenever the entries change, with the day they are measured from.
+  const groups = $derived(groupByDay(entries, new Date(), LOCALE));
+
   onMount(async () => {
+    // Not waited for: the list does not depend on it.
+    void loadSavingState();
     await loadHistory();
   });
+
+  async function loadSavingState() {
+    try {
+      const config = await invoke<{ save_history?: boolean } | null>('get_config');
+      if (lifecycle.disposed) return;
+      savingOff = config?.save_history === false;
+    } catch (err) {
+      console.warn('Failed to read the history setting:', err);
+    }
+  }
 
   async function loadHistory(limit = PAGE_SIZE) {
     const request = ++requestId;
@@ -52,6 +77,7 @@
       entries = result || [];
       visibleLimit = limit;
       hasMore = !query && entries.length === limit && limit < MAX_ENTRIES;
+      loaded = true;
     } catch (err) {
       if (lifecycle.disposed || request !== requestId) return;
       status.fail(`Failed to load history: ${err}`);
@@ -73,9 +99,10 @@
   }
 
   async function copyText(text: string) {
+    status.reset();
     try {
       await writeText(text);
-      status.confirm('Copied to clipboard', 2000);
+      status.confirm('Copied');
     } catch (err) {
       status.fail(`Failed to copy: ${err}`);
     }
@@ -83,22 +110,26 @@
 
   async function deleteEntry(id: string) {
     if (loading || mutating) return;
+    // A keyboard user is on one of the entry's own buttons, and a deleted entry takes the focus with it.
+    const fromList = document.activeElement?.closest('.entry-card') != null;
     mutating = true;
     loading = true;
     requestId++;
+    status.reset();
     try {
       await invoke('delete_history_entry', { id });
       if (lifecycle.disposed) return;
       entries = entries.filter(entry => entry.id !== id);
       if (expandedId === id) expandedId = null;
       await loadHistory(visibleLimit);
-      status.confirm('Entry deleted', 2000);
+      status.confirm('Deleted');
     } catch (err) {
       status.fail(`Failed to delete: ${err}`);
     } finally {
       mutating = false;
       loading = false;
     }
+    if (fromList) void keepFocus();
   }
 
   async function clearAll() {
@@ -107,6 +138,7 @@
     loading = true;
     requestId++;
     lifecycle.cancelTimeout('search');
+    status.reset();
     try {
       await invoke('clear_history');
       if (lifecycle.disposed) return;
@@ -115,7 +147,9 @@
       hasMore = false;
       expandedId = null;
       showClearModal = false;
-      status.confirm('History cleared', 2000);
+      status.confirm('History cleared');
+      // Clear… is disabled now, so the sheet cannot give the focus back to it.
+      void keepFocus();
     } catch (err) {
       status.fail(`Failed to clear history: ${err}`);
     } finally {
@@ -124,364 +158,301 @@
     }
   }
 
+  function openClear() {
+    status.reset();
+    showClearModal = true;
+  }
+
+  /** Cancel: the sheet goes, and so does a failure it may have caused. */
+  function closeClear() {
+    showClearModal = false;
+    status.reset();
+  }
+
+  /**
+   * What held the focus can be gone, or disabled, when an action ends, and the focus then
+   * falls to the page. The search field is the nearest place the keyboard can carry on from.
+   */
+  async function keepFocus() {
+    await tick();
+    const active = document.activeElement;
+    if (!active || active === document.body || (active instanceof HTMLButtonElement && active.disabled)) {
+      searchSlot?.querySelector('input')?.focus();
+    }
+  }
+
   function toggleExpand(id: string) {
     expandedId = expandedId === id ? null : id;
   }
 
-  function formatTime(timestamp_ms: number): string {
-    const date = new Date(timestamp_ms);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-    const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-
-    if (diffDays === 0) return `Today ${time}`;
-    if (diffDays === 1) return `Yesterday ${time}`;
-    if (diffDays < 7) return `${diffDays}d ago ${time}`;
-    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) + ` ${time}`;
-  }
+  const clock = (timestamp_ms: number) =>
+    new Date(timestamp_ms).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
 </script>
 
-<div class="history-panel">
-  <div class="header">
-    <h2>History</h2>
-    {#if entries.length > 0}
-      <button class="btn btn-lg btn-danger-outline" onclick={() => { showClearModal = true; }}>
-        Clear All
-      </button>
-    {/if}
-  </div>
-
-  <Alert error={status.error} success={status.success} />
-
-  <div class="search-box">
-    <input
-      type="text"
-      bind:value={searchQuery}
-      disabled={mutating}
-      oninput={onSearchInput}
-      placeholder="Search transcriptions..."
-      class="search-input"
-    />
-  </div>
-
-  {#if loading && entries.length === 0}
-    <div class="loading-state">Loading history...</div>
-  {:else if entries.length === 0}
-    <div class="empty-state">
-      {#if searchQuery.trim()}
-        <p>No transcriptions match your search.</p>
-      {:else}
-        <p>No transcription history yet.</p>
-        <p class="hint">Completed transcriptions will appear here.</p>
-      {/if}
+<Pane title="History" {status}>
+  {#snippet actions()}
+    <!-- The wrapper is how `keepFocus` finds the field. It takes no part in the layout. -->
+    <div class="search-slot" bind:this={searchSlot}>
+      <SearchField
+        bind:value={searchQuery}
+        label="Search history"
+        placeholder="Search"
+        disabled={mutating}
+        oninput={onSearchInput}
+      />
     </div>
-  {:else}
-    <div class="entries-list">
-      {#each entries as entry (entry.id)}
-        <div class="entry-card">
-          <div class="entry-header">
-            <span class="entry-time">{formatTime(entry.timestamp_ms)}</span>
-            <div class="entry-meta">
-              {#if entry.command_name}
-                <span class="command-badge">{entry.command_name}</span>
-              {/if}
-              <span class="processing-time">{entry.processing_time_ms}ms</span>
-            </div>
-          </div>
+    <button type="button" class="btn btn-small" disabled={entries.length === 0} onclick={openClear}>Clear…</button>
+  {/snippet}
 
-          <div class="entry-text">{entry.final_text}</div>
+  {#if savingOff}
+    <Group>
+      <Row label="History saving is off" detail="New transcriptions aren't saved.">
+        {#snippet trailing()}
+          <button type="button" class="btn btn-small" onclick={() => onnavigate?.('general')}>
+            Turn On in General
+          </button>
+        {/snippet}
+      </Row>
+    </Group>
+  {/if}
 
-          {#if entry.raw_text}
-            <button class="btn-link" onclick={() => toggleExpand(entry.id)}>
-              {expandedId === entry.id ? 'Hide raw' : 'Show raw transcription'}
-            </button>
-            {#if expandedId === entry.id}
-              <div class="raw-text">{entry.raw_text}</div>
-            {/if}
-          {/if}
-
-          <div class="entry-actions">
-            <button class="btn-icon" onclick={() => copyText(entry.final_text)} title="Copy">
-              📋
-            </button>
-            <button class="btn-icon is-danger" onclick={() => deleteEntry(entry.id)} title="Delete" disabled={loading || mutating}>
-              ✕
-            </button>
-          </div>
+  {#if loaded}
+    {#if entries.length === 0}
+      <div class="empty">
+        {#if searchQuery.trim()}
+          <p class="empty-hint">No transcriptions match your search.</p>
+        {:else}
+          <p class="empty-title">No transcription history yet.</p>
+          <p class="empty-hint">Completed transcriptions will appear here.</p>
+        {/if}
+      </div>
+    {:else}
+      {#each groups as group (group.label)}
+        <div class="day-section">
+          <h2 class="day">{group.label}</h2>
+          <Group>
+            {#each group.entries as entry (entry.id)}
+              {@const original = showsOriginal(entry)}
+              <article class="entry-card">
+                <p class="entry-text">{entry.final_text}</p>
+                <p class="entry-meta">
+                  {clock(entry.timestamp_ms)}
+                  {#if entry.command_name}
+                    · <span class="entry-command">{entry.command_name}</span>
+                  {/if}
+                  · {formatProcessingTime(entry.processing_time_ms)}
+                  {#if original}
+                    · <button type="button" class="entry-toggle" onclick={() => toggleExpand(entry.id)}>
+                      {expandedId === entry.id ? 'Hide original' : 'Show original'}
+                    </button>
+                  {/if}
+                </p>
+                {#if original && expandedId === entry.id}
+                  <div class="entry-original">
+                    <p class="entry-original-title">Original</p>
+                    <p class="entry-original-text">{entry.raw_text}</p>
+                  </div>
+                {/if}
+                <!-- Always in the page, only dimmed: a hidden button could not be reached with the keyboard. -->
+                <div class="entry-actions">
+                  <button
+                    type="button"
+                    class="entry-action"
+                    title="Copy"
+                    aria-label="Copy"
+                    onclick={() => copyText(entry.final_text)}
+                  >
+                    <Copy size={13} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    class="entry-action entry-delete"
+                    title="Delete"
+                    aria-label="Delete"
+                    onclick={() => deleteEntry(entry.id)}
+                  >
+                    <Trash2 size={13} aria-hidden="true" />
+                  </button>
+                </div>
+              </article>
+            {/each}
+          </Group>
         </div>
       {/each}
 
       {#if hasMore && !searchQuery.trim()}
-        <button class="btn btn-lg btn-secondary load-more" onclick={loadMore} disabled={loading}>
-          {loading ? 'Loading...' : 'Load more'}
-        </button>
+        <button type="button" class="btn load-more" onclick={loadMore}>Load More</button>
       {/if}
-    </div>
+    {/if}
   {/if}
-</div>
 
-<!-- Clear All Confirmation Modal -->
-{#if showClearModal}
-  <div class="modal-overlay" onclick={() => { showClearModal = false; }} onkeydown={(e: KeyboardEvent) => e.key === 'Escape' && (showClearModal = false)} role="presentation">
-
-    <div class="modal modal-small" onclick={(e: MouseEvent) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') showClearModal = false; e.stopPropagation(); }} use:trapFocus role="dialog" tabindex="-1" aria-modal="true" aria-label="Clear all history">
-      <h3>Clear All History</h3>
-      <p>Are you sure you want to delete all transcription history? This cannot be undone.</p>
-
-      <div class="modal-actions">
-        <button class="btn btn-lg btn-secondary" onclick={() => { showClearModal = false; }}>Cancel</button>
-        <button class="btn btn-lg btn-danger" onclick={clearAll} disabled={loading}>
-          {loading ? 'Clearing...' : 'Clear All'}
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
+  <!-- Inside the pane, where the tokens are. -->
+  {#if showClearModal}
+    <Sheet title="Clear all history?" onclose={closeClear} onsubmit={clearAll}>
+      <p class="sheet-message">This deletes every saved transcription and can't be undone.</p>
+      {#snippet actions()}
+        <button type="button" class="btn" onclick={closeClear}>Cancel</button>
+        <button type="submit" class="btn btn-destructive" disabled={loading}>Clear History</button>
+      {/snippet}
+    </Sheet>
+  {/if}
+</Pane>
 
 <style>
-  .history-panel {
-    padding: 20px;
-    max-width: 800px;
-    height: 100vh;
-    overflow-y: auto;
-    box-sizing: border-box;
+  /* Only there to be found; the search field is laid out as if it stood in the toolbar itself. */
+  .search-slot {
+    display: contents;
   }
 
-  .header {
+  /* Fills what is left of the pane under the toolbar, with its text in the middle. */
+  .empty {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-  }
-
-  h2 {
-    margin: 0;
-    font-size: 24px;
-    font-weight: bold;
-    color: var(--text-primary);
-  }
-
-
-
-
-  .search-box {
-    margin-bottom: 20px;
-  }
-
-  .search-input {
-    width: 100%;
-    padding: 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(0, 0, 0, 0.3);
-    color: var(--text-primary);
-    font-size: 14px;
-    box-sizing: border-box;
-  }
-
-  .search-input:focus {
-    outline: none;
-    border-color: rgba(59, 130, 246, 0.6);
-  }
-
-  .loading-state {
-    text-align: center;
-    padding: 60px 20px;
-    color: rgba(255, 255, 255, 0.5);
-    font-size: 14px;
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 60px 20px;
-    color: rgba(255, 255, 255, 0.6);
-  }
-
-  .empty-state p {
-    margin: 8px 0;
-  }
-
-  .empty-state .hint {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.4);
-  }
-
-  .entries-list {
-    display: flex;
+    flex: 1 1 auto;
     flex-direction: column;
-    gap: 12px;
-    padding-bottom: 20px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 0 16px 32px;
+    text-align: center;
+  }
+
+  .empty-title {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .empty-hint {
+    max-width: 320px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .day {
+    margin-bottom: 7px;
+    padding: 0 4px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
   }
 
   .entry-card {
-    padding: 16px;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--surface-raised);
-    transition: all 0.2s ease;
     position: relative;
+    padding: 9px 12px 10px;
+    transition: background-color 0.15s ease;
   }
 
   .entry-card:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.2);
-  }
-
-  .entry-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 10px;
-  }
-
-  .entry-time {
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.5);
-  }
-
-  .entry-meta {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .command-badge {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 10px;
-    background: rgba(59, 130, 246, 0.2);
-    border: 1px solid rgba(59, 130, 246, 0.4);
-    color: #93c5fd;
-  }
-
-  .processing-time {
-    font-size: 11px;
-    color: rgba(255, 255, 255, 0.35);
+    background: var(--fill-selected);
   }
 
   .entry-text {
-    font-size: 14px;
-    color: var(--text-primary);
-    line-height: 1.6;
-    margin-bottom: 8px;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .btn-link {
-    background: none;
-    border: none;
-    color: rgba(59, 130, 246, 0.8);
-    font-size: 12px;
-    cursor: pointer;
-    padding: 0;
-    margin-bottom: 8px;
-  }
-
-  .btn-link:hover {
-    color: #3b82f6;
-    text-decoration: underline;
-  }
-
-  .raw-text {
+    /* Room for Copy and Delete, which sit over the corner, so the text never runs under them. */
+    padding-right: 56px;
     font-size: 13px;
-    color: rgba(255, 255, 255, 0.5);
-    background: rgba(0, 0, 0, 0.2);
-    padding: 10px 12px;
-    border-radius: 6px;
-    margin-bottom: 8px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
     white-space: pre-wrap;
-    word-break: break-word;
   }
 
+  .entry-meta {
+    margin-top: 3px;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--text-secondary);
+  }
+
+  .entry-command {
+    display: inline-block;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: var(--fill-selected);
+    color: var(--text-primary);
+    line-height: 16px;
+  }
+
+  /* The label is the command as the backend names it, in lower case. */
+  .entry-command::first-letter {
+    text-transform: uppercase;
+  }
+
+  .entry-toggle {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+  }
+
+  .entry-original {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--window-bg);
+  }
+
+  .entry-original-title {
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+
+  .entry-original-text {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  /* Dimmed, not hidden, until the pointer is over the entry or the keyboard is inside it. */
   .entry-actions {
+    position: absolute;
+    top: 8px;
+    right: 10px;
     display: flex;
-    gap: 8px;
-    justify-content: flex-end;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
   }
 
-  .btn-icon {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--surface-raised);
-    color: rgba(255, 255, 255, 0.7);
-    width: 32px;
-    height: 32px;
-    border-radius: 6px;
-    font-size: 14px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    display: flex;
+  .entry-card:hover .entry-actions,
+  .entry-card:focus-within .entry-actions {
+    opacity: 1;
+  }
+
+  /* The look of a pane button, as a square that holds only an icon. */
+  .entry-action {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
+    width: 22px;
+    height: 22px;
     padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: var(--control-bg);
+    box-shadow: 0 0 0 .5px var(--control-border), 0 .5px 1.5px rgba(0, 0, 0, .14);
+    color: var(--text-secondary);
   }
 
-  .btn-icon:hover {
-    background: var(--surface-raised);
-    color: var(--text-primary);
+  .entry-delete:hover {
+    color: var(--danger);
   }
-
-  .btn-icon.is-danger:hover {
-    background: color-mix(in srgb, var(--status-red) 20%, transparent);
-    border-color: color-mix(in srgb, var(--status-red) 50%, transparent);
-    color: var(--status-red-text);
-  }
-
-
-
-
-
-
-
-
 
   .load-more {
+    /* The pane body is a column that scrolls, and a button that may shrink would be squeezed once the list is long. */
+    flex: none;
     align-self: center;
   }
 
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
+  .sheet-message {
+    font-size: 12px;
+    color: var(--text-secondary);
   }
 
-  .modal {
-    background: #1f2937;
-    padding: 24px;
-    border-radius: 16px;
-    max-width: 500px;
-    width: 90%;
-    border: 1px solid var(--surface-raised);
-  }
-
-  .modal-small {
-    max-width: 400px;
-  }
-
-  .modal h3 {
-    margin: 0 0 20px 0;
-    font-size: 20px;
-    color: var(--text-primary);
-  }
-
-  .modal p {
-    margin: 0 0 20px 0;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 14px;
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 12px;
-    justify-content: flex-end;
+  @media (prefers-reduced-motion: reduce) {
+    .entry-card,
+    .entry-actions {
+      transition: none;
+    }
   }
 </style>

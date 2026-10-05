@@ -28,6 +28,10 @@
 
   const titleId = $props.id();
 
+  // Heard on the window, not on the dialog. A press on a part of the page that cannot take
+  // focus, or a button that is disabled while it holds the focus, leaves the focus on the
+  // body, and a key pressed there never passes through the dialog. In the capture phase the
+  // sheet also sees Escape before anything behind it does.
   function onkeydown(event: KeyboardEvent) {
     if (event.key !== 'Escape') return;
     // An input method cancels its candidate list with Escape. That press is the
@@ -47,13 +51,15 @@
   }
 
   // Pressing a part of the page that cannot take focus moves focus to the body,
-  // and from there Escape, Enter and the Tab trap no longer reach the sheet.
-  // Only a press on the backdrop itself is cancelled; the sheet's own fields
-  // keep their default behaviour.
+  // and from there Enter, and typing, no longer reach the sheet (Escape and Tab
+  // still do, above and in trapFocus). Only a press on the backdrop itself is
+  // cancelled; the sheet's own fields keep their default behaviour.
   function keepFocus(event: MouseEvent) {
     if (event.target === event.currentTarget) event.preventDefault();
   }
 </script>
+
+<svelte:window onkeydowncapture={onkeydown} />
 
 <!-- Clicking the backdrop does nothing on purpose: closing there would throw away what was typed. -->
 <div class="sheet-backdrop" role="presentation" onmousedown={keepFocus}>
@@ -64,7 +70,6 @@
     aria-labelledby={titleId}
     tabindex="-1"
     use:trapFocus
-    {onkeydown}
   >
     <form onsubmit={submit}>
       <h2 id={titleId}>{title}</h2>
