@@ -1,13 +1,18 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { useLifecycle } from '../../lib/lifecycle';
   import { getVersion } from '@tauri-apps/api/app';
   import { check } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
-  import { Settings, Shield, Cpu, ExternalLink, RefreshCw } from 'lucide-svelte';
-  import PageHeader from './ui/PageHeader.svelte';
-  import SectionHeader from './ui/SectionHeader.svelte';
-  import StatusRow from './ui/StatusRow.svelte';
+  import { ChevronRight, ExternalLink, LoaderCircle } from 'lucide-svelte';
+  import glyph from '../../assets/murmur-glyph.png';
+  import Group from '../ui/Group.svelte';
+  import Pane from '../ui/Pane.svelte';
+  import Row from '../ui/Row.svelte';
+  import DiagnosticsPanel from './DiagnosticsPanel.svelte';
+
+  /** The step an error came from: asking for an update, or downloading and installing the one that was found. */
+  type UpdatePhase = 'check' | 'install';
 
   type UpdateState =
     | { kind: 'idle' }
@@ -16,7 +21,20 @@
     | { kind: 'available'; version: string; body: string | null }
     | { kind: 'downloading'; progress: number; total: number }
     | { kind: 'ready' }
-    | { kind: 'error'; message: string };
+    | { kind: 'error'; message: string; phase: UpdatePhase };
+
+  /** What the error row says went wrong, by the step that failed. */
+  const ERROR_LABELS: Record<UpdatePhase, string> = {
+    check: "Couldn't check for updates",
+    install: "Couldn't install the update",
+  };
+
+  const REPOSITORY = 'https://github.com/hydai/murmur';
+  const LINKS = [
+    { label: 'Source Code on GitHub', url: REPOSITORY },
+    { label: 'Release Notes', url: `${REPOSITORY}/releases` },
+    { label: 'Report an Issue', url: `${REPOSITORY}/issues` },
+  ];
 
   let {
     pendingCheck = false,
@@ -28,6 +46,13 @@
 
   let appVersion = $state('');
   let updateState: UpdateState = $state({ kind: 'idle' });
+
+  // The Diagnostics Log takes the place of the whole pane, so there is one
+  // heading on screen and the toolbar's back arrow leads here. This component
+  // stays where it is, so what it knows about updates is kept meanwhile.
+  let showingDiagnostics = $state(false);
+  // The Troubleshooting group, for putting the focus back on its row.
+  let troubleshooting = $state<HTMLElement>();
 
   // Holds the update object so we can call download/install on it
   let pendingUpdate: Awaited<ReturnType<typeof check>> = $state(null);
@@ -56,7 +81,11 @@
   $effect(() => {
     if (pendingCheck) {
       onCheckConsumed();
-      untrack(() => { void checkForUpdates(); });
+      untrack(() => {
+        // The check and its answer are shown on About itself, so an open log gives way to them.
+        if (showingDiagnostics) void closeDiagnostics();
+        void checkForUpdates();
+      });
     }
   });
 
@@ -81,7 +110,7 @@
         updateState = { kind: 'up-to-date' };
       }
     } catch (e) {
-      updateState = { kind: 'error', message: String(e) };
+      updateState = { kind: 'error', message: String(e), phase: 'check' };
     }
   }
 
@@ -103,7 +132,7 @@
       });
       if (!lifecycle.disposed) updateState = { kind: 'ready' };
     } catch (e) {
-      updateState = { kind: 'error', message: String(e) };
+      updateState = { kind: 'error', message: String(e), phase: 'install' };
     }
   }
 
@@ -118,243 +147,227 @@
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
+
+  /** How much of the download has come, as a share of a total that may not be known yet. */
+  function downloadShare(progress: number, total: number): number {
+    return total > 0 ? Math.min(100, (progress / total) * 100) : 0;
+  }
+
+  function openLink(url: string) {
+    window.open(url, '_blank');
+  }
+
+  /**
+   * Back from the log. The pane was rebuilt, and the row that opened the log went
+   * with the old one, which leaves the focus on the page. Its new button takes the
+   * focus, so the keyboard carries on from where it left.
+   */
+  async function closeDiagnostics() {
+    showingDiagnostics = false;
+    await tick();
+    troubleshooting?.querySelector<HTMLElement>('.row-main')?.focus();
+  }
 </script>
 
-<div class="page">
-  <PageHeader title="About" description="Application information and updates" />
-
-  <SectionHeader label="APPLICATION" />
-  <div class="app-card">
-    <div class="app-row">
-      <Settings size={14} color="var(--text-muted)" />
-      <span class="app-row-label">Murmur</span>
-      <span class="spacer"></span>
-      <span class="version-tag">v{appVersion}</span>
-    </div>
-    <div class="card-separator"></div>
-    <div class="app-row">
-      <Shield size={14} color="var(--text-muted)" />
-      <span class="app-row-text">Privacy-first voice typing</span>
-    </div>
-    <div class="app-row">
-      <Cpu size={14} color="var(--text-muted)" />
-      <span class="app-row-text">On-device processing</span>
-    </div>
-  </div>
-
-  <SectionHeader label="UPDATES" />
-  {#if updateState.kind === 'idle'}
-    <button class="btn btn-fixed btn-primary" onclick={checkForUpdates}>Check for Updates</button>
-
-  {:else if updateState.kind === 'checking'}
-    <div class="status-card">
-      <RefreshCw size={14} color="var(--text-secondary)" class="spin" />
-      <span class="status-text">Checking for updates...</span>
+{#if showingDiagnostics}
+  <DiagnosticsPanel onback={closeDiagnostics} />
+{:else}
+  <Pane title="About">
+    <div class="app">
+      <div class="glyph"><img src={glyph} alt="" width="64" height="64" /></div>
+      <p class="app-name">Murmur</p>
+      <p class="app-version">{appVersion ? `Version ${appVersion}` : 'Version'}</p>
     </div>
 
-  {:else if updateState.kind === 'up-to-date'}
-    <StatusRow
-      label="Up to date"
-      status="green"
-      statusText="Latest"
-    />
-    <button class="btn btn-fixed btn-secondary" onclick={checkForUpdates}>Check Again</button>
-
-  {:else if updateState.kind === 'available'}
-    <StatusRow
-      label="Version {updateState.version} available"
-      status="yellow"
-      statusText="New"
-    />
-    {#if updateState.body}
-      <div class="release-notes">{updateState.body}</div>
-    {/if}
-    <button class="btn btn-fixed btn-primary" onclick={downloadAndInstall}>Download & Install</button>
-
-  {:else if updateState.kind === 'downloading'}
-    <div class="download-section">
-      <span class="download-label">Downloading update...</span>
-      <div class="progress-bar">
-        <div
-          class="progress-fill"
-          style="width: {updateState.total > 0 ? (updateState.progress / updateState.total) * 100 : 0}%"
-        ></div>
-      </div>
-      {#if updateState.total > 0}
-        <span class="progress-text">
-          {formatBytes(updateState.progress)} / {formatBytes(updateState.total)}
-        </span>
+    <Group title="Software Update">
+      {#if updateState.kind === 'idle'}
+        <Row label="Software Update">
+          {#snippet trailing()}
+            <button type="button" class="btn btn-small" onclick={checkForUpdates}>Check for Updates</button>
+          {/snippet}
+        </Row>
+      {:else if updateState.kind === 'checking'}
+        <Row label="Checking for updates…">
+          {#snippet accessory()}
+            <span class="spinner"><LoaderCircle size={16} aria-hidden="true" /></span>
+          {/snippet}
+        </Row>
+      {:else if updateState.kind === 'up-to-date'}
+        <Row label="Murmur is up to date">
+          {#snippet trailing()}
+            <button type="button" class="btn btn-small" onclick={checkForUpdates}>Check Again</button>
+          {/snippet}
+        </Row>
+      {:else if updateState.kind === 'available'}
+        <Row label="Version {updateState.version} is available">
+          {#snippet trailing()}
+            <button type="button" class="btn btn-small btn-primary" onclick={downloadAndInstall}>
+              Download and Install
+            </button>
+          {/snippet}
+        </Row>
+        {#if updateState.body}
+          <!--
+            A box that scrolls has to take the focus itself, or the keyboard could not reach
+            what is below its edge. A named region is how that is announced; the rule below
+            only knows widgets, and a box of text is not one.
+          -->
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+          <div class="release-notes" role="region" aria-label="Release notes" tabindex="0">{updateState.body}</div>
+        {/if}
+      {:else if updateState.kind === 'downloading'}
+        {@const download = updateState}
+        {@const share = downloadShare(download.progress, download.total)}
+        <Row
+          label="Downloading update…"
+          detail={download.total > 0 ? `${formatBytes(download.progress)} of ${formatBytes(download.total)}` : undefined}
+        >
+          <!-- Without a total there is no share to claim, so the bar says nothing of one. -->
+          <div
+            class="progress"
+            role="progressbar"
+            aria-label="Update download"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={download.total > 0 ? Math.round(share) : undefined}
+          >
+            <div class="progress-fill" style:width="{share}%"></div>
+          </div>
+        </Row>
+      {:else if updateState.kind === 'ready'}
+        <Row label="Restart Murmur to finish updating">
+          {#snippet trailing()}
+            <button type="button" class="btn btn-small btn-primary" onclick={restartApp}>Restart Now</button>
+          {/snippet}
+        </Row>
+      {:else if updateState.kind === 'error'}
+        <Row label={ERROR_LABELS[updateState.phase]} detail={updateState.message}>
+          {#snippet trailing()}
+            <button type="button" class="btn btn-small" onclick={checkForUpdates}>Try Again</button>
+          {/snippet}
+        </Row>
       {/if}
+    </Group>
+
+    <Group title="Links">
+      {#each LINKS as link (link.url)}
+        <Row label={link.label} onclick={() => openLink(link.url)}>
+          <!-- Not a control, so inside the button: the whole width of the row opens the link. -->
+          {#snippet accessory()}
+            <span class="accessory-icon"><ExternalLink size={14} aria-hidden="true" /></span>
+          {/snippet}
+        </Row>
+      {/each}
+    </Group>
+
+    <!-- Wrapped so that its row can be found when the pane is rebuilt on coming back from the log. -->
+    <div bind:this={troubleshooting}>
+      <Group title="Troubleshooting">
+        <Row label="Diagnostics Log" detail="Recent warnings and errors" onclick={() => (showingDiagnostics = true)}>
+          {#snippet accessory()}
+            <span class="accessory-icon"><ChevronRight size={16} aria-hidden="true" /></span>
+          {/snippet}
+        </Row>
+      </Group>
     </div>
-
-  {:else if updateState.kind === 'ready'}
-    <StatusRow
-      label="Update installed"
-      status="green"
-      statusText="Ready"
-    />
-    <button class="btn btn-fixed btn-primary" onclick={restartApp}>Restart Now</button>
-
-  {:else if updateState.kind === 'error'}
-    <StatusRow
-      label="Update failed"
-      value={updateState.message}
-      status="red"
-      statusText="Error"
-    />
-    <button class="btn btn-fixed btn-secondary" onclick={checkForUpdates}>Retry</button>
-  {/if}
-
-  <SectionHeader label="LINKS" />
-  <div class="section-rows">
-    <StatusRow
-      label="GitHub"
-      onclick={() => window.open('https://github.com/hydai/murmur', '_blank')}
-    >
-      <ExternalLink size={12} color="var(--text-muted)" />
-    </StatusRow>
-    <StatusRow
-      label="Releases"
-      onclick={() => window.open('https://github.com/hydai/murmur/releases', '_blank')}
-    >
-      <ExternalLink size={12} color="var(--text-muted)" />
-    </StatusRow>
-    <StatusRow
-      label="Report Issue"
-      onclick={() => window.open('https://github.com/hydai/murmur/issues', '_blank')}
-    >
-      <ExternalLink size={12} color="var(--text-muted)" />
-    </StatusRow>
-  </div>
-</div>
+  </Pane>
+{/if}
 
 <style>
-  .page {
+  .app {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-  }
-
-  .app-card {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    background: var(--bg-card);
-    border-radius: 8px;
-    padding: 12px 14px;
-  }
-
-  .app-row {
-    display: flex;
     align-items: center;
-    gap: 10px;
-    height: 30px;
+    padding-top: 4px;
   }
 
-  .app-row-label {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-primary);
+  /*
+   * The picture has a white ground of its own, so it sits on a white tile in
+   * dark mode too, where a bare square would show its corners.
+   */
+  .glyph {
+    width: 64px;
+    height: 64px;
+    overflow: hidden;
+    border-radius: 15px;
+    background: #fff;
+    box-shadow: 0 0 0 .5px var(--separator), 0 1px 3px rgba(0, 0, 0, .18);
   }
 
-  .app-row-text {
-    font-size: 12px;
-    color: var(--text-secondary);
-  }
-
-  .spacer {
-    flex: 1;
-  }
-
-  .version-tag {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-secondary);
-  }
-
-  .card-separator {
-    height: 1px;
-    background: var(--border);
+  .glyph img {
+    display: block;
     width: 100%;
-    margin: 4px 0;
+    height: 100%;
   }
 
-  .status-card {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    height: 38px;
-    padding: 0 12px;
-    background: var(--bg-card);
-    border-radius: 8px;
+  .app-name {
+    margin-top: 10px;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.3;
   }
 
-  .status-text {
-    font-size: 13px;
+  .app-version {
+    margin-top: 3px;
+    font-size: 12px;
+    line-height: 1.3;
     color: var(--text-secondary);
   }
 
-  :global(.spin) {
+  .spinner {
+    display: inline-flex;
+    color: var(--text-secondary);
     animation: spin 1s linear infinite;
   }
 
   @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .release-notes {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    max-height: 120px;
     padding: 10px 12px;
-    font-size: 12px;
-    color: var(--text-secondary);
-    max-height: 100px;
     overflow-y: auto;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
     white-space: pre-wrap;
   }
 
-  .download-section {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 12px 14px;
-    background: var(--bg-card);
-    border-radius: 8px;
+  /* An outset ring would be clipped by the group's rounded edge. */
+  .release-notes:focus-visible {
+    outline-offset: -2px;
   }
 
-  .download-label {
-    font-size: 12px;
-    color: var(--text-secondary);
-  }
-
-  .progress-bar {
+  .progress {
     height: 4px;
-    background: var(--border);
-    border-radius: 2px;
     overflow: hidden;
+    border-radius: 2px;
+    background: var(--fill-selected);
   }
 
   .progress-fill {
     height: 100%;
-    background: var(--accent);
     border-radius: 2px;
+    background: var(--accent);
     transition: width 0.3s ease;
   }
 
-  .progress-text {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-muted);
+  .accessory-icon {
+    display: inline-flex;
+    color: var(--text-secondary);
   }
 
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation: none;
+    }
 
-
-
-
-  .section-rows {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
+    .progress-fill {
+      transition: none;
+    }
   }
 </style>
