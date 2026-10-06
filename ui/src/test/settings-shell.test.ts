@@ -4,7 +4,9 @@ import userEvent from '@testing-library/user-event';
 import App from '../App.svelte';
 import SettingsPanel from '../components/settings/SettingsPanel.svelte';
 import { initialRoute } from '../components/settings/navigation';
-import { render, settle, unmountAll } from './helpers';
+import { resetDrafts } from '../components/settings/promptDrafts.svelte';
+import { VOICE_COMMANDS } from '../lib/voiceCommands';
+import { button, render, settle, unmountAll } from './helpers';
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(), listen: vi.fn(), check: vi.fn(), startDragging: vi.fn(), writeText: vi.fn(),
@@ -41,15 +43,35 @@ const CONFIG = {
   http_llm_config: null,
 };
 
+/** A prompt as `get_prompts` lists it; the backend has one for each voice command. */
+const prompt = (name: string) => ({
+  name,
+  description: `About ${name}.`,
+  required_placeholders: [] as string[],
+  content: `content of ${name}`,
+  is_override: false,
+});
+
+/** What the backend keeps of the prompts, which `set_prompt` marks as edited the way the real one does. */
+let prompts: ReturnType<typeof prompt>[];
+
 beforeEach(() => {
   listeners = new Map();
-  mocks.invoke.mockReset().mockImplementation(async (command: string) => {
+  // An unsaved prompt draft belongs to the window, so one test's would be on show in the next.
+  resetDrafts();
+  prompts = VOICE_COMMANDS.map((command) => prompt(command.prompt));
+  mocks.invoke.mockReset().mockImplementation(async (command: string, args?: any) => {
     switch (command) {
       case 'get_config': return CONFIG;
       case 'get_stt_providers':
       case 'get_llm_processors':
-      case 'get_prompts':
       case 'get_history': return [];
+      case 'get_prompts': return prompts.map((entry) => ({ ...entry }));
+      case 'set_prompt':
+        prompts = prompts.map((entry) => (entry.name === args.params.name
+          ? { ...entry, content: args.params.content, is_override: true }
+          : entry));
+        return undefined;
       case 'get_dictionary': return { entries: [] };
       default: return undefined;
     }
@@ -73,6 +95,27 @@ afterEach(async () => {
 /** The sidebar entries, in order. */
 const navItems = (target: Element) =>
   [...target.querySelectorAll<HTMLElement>('nav[aria-label="Settings"] .nav-item')];
+
+/** The sidebar entry called `label`. */
+function navItem(target: Element, label: string): HTMLElement {
+  const found = navItems(target).find(item => item.textContent?.trim() === label);
+  expect(found, `sidebar item ${label}`).toBeDefined();
+  return found!;
+}
+
+/** What the open pane shows, the sidebar apart. */
+const pane = (target: Element) => target.querySelector('main')!;
+const heading = (target: Element) => pane(target).querySelector('h1')?.textContent;
+const groupTitles = (target: Element) =>
+  [...pane(target).querySelectorAll('.group-title')].map(title => title.textContent);
+const editor = (target: Element) => pane(target).querySelector<HTMLTextAreaElement>('textarea')!;
+const called = (command: string) => mocks.invoke.mock.calls.filter(([name]) => name === command);
+
+function fill(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  input.value = value;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  flushSync();
+}
 
 describe('settings shell', () => {
   it('resolves the initial pane from the window URL', () => {
@@ -186,5 +229,151 @@ describe('settings shell', () => {
   it('lets the empty sidebar drag the window', async () => {
     const { target } = render(SettingsPanel, {});
     expect(target.querySelector('nav[aria-label="Settings"]')?.getAttribute('data-tauri-drag-region')).toBe('deep');
+  });
+});
+
+describe('settings shell: the sidebar item of the pane that is shown', () => {
+  it('leaves a prompt editor for the AI Processing list, with the focus on the sidebar item', async () => {
+    const { target } = render(SettingsPanel, {});
+    await settle();
+    const user = userEvent.setup();
+    await user.click(navItem(target, 'AI Processing')); await settle();
+    button(pane(target), 'Shorten').click(); await settle();
+    expect(heading(target)).toBe('Shorten');
+    const processorLoads = called('get_llm_processors').length;
+
+    // The user is typing in the editor when they press the item.
+    editor(target).focus();
+    const item = navItem(target, 'AI Processing');
+    await user.click(item); await settle();
+    expect(heading(target)).toBe('AI Processing');
+    expect(groupTitles(target)).toContain('Voice Commands');
+    expect(pane(target).querySelector('textarea')).toBeNull();
+    expect(item.getAttribute('aria-current')).toBe('page');
+    // Back would put the focus on the Shorten row. Here the user is on the sidebar, and stays there.
+    expect(document.activeElement).toBe(item);
+    // The pane was not rebuilt: what it knew of the processors is not asked for again.
+    expect(called('get_llm_processors')).toHaveLength(processorLoads);
+  });
+
+  it('leaves the Diagnostics Log for About from the keyboard, and About keeps what it knew', async () => {
+    mocks.check.mockResolvedValue(null);
+    const { target } = render(SettingsPanel, {});
+    await settle();
+    navItem(target, 'About').click(); await settle();
+    button(pane(target), 'Check for Updates').click(); await settle();
+    button(pane(target), 'Diagnostics Log').click(); await settle();
+    expect(heading(target)).toBe('Diagnostics Log');
+
+    const item = navItem(target, 'About');
+    item.focus();
+    await userEvent.setup().keyboard('{Enter}'); await settle();
+    expect(heading(target)).toBe('About');
+    expect(groupTitles(target)).toEqual(['Software Update', 'Links', 'Troubleshooting']);
+    // Back would put the focus on the Diagnostics Log row.
+    expect(document.activeElement).toBe(item);
+    // The page was not rebuilt: the update check it had run is still its answer, and was not run again.
+    expect(pane(target).textContent).toContain('Murmur is up to date');
+    expect(mocks.check).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves History as it is, with the search that was typed and what it found', async () => {
+    vi.useFakeTimers();
+    const entries = ['apple pie', 'banana'].map((text, index) => ({
+      id: `${index}`, final_text: text, timestamp_ms: Date.now(), processing_time_ms: 0,
+    }));
+    const working = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command: string, args?: any) => {
+      switch (command) {
+        case 'get_history': return entries;
+        case 'search_history': return entries.filter(entry => entry.final_text.includes(args.query));
+        default: return working(command, args);
+      }
+    });
+    const { target } = render(SettingsPanel, {});
+    await settle();
+    navItem(target, 'History').click(); await settle();
+    const search = pane(target).querySelector<HTMLInputElement>('input[type="search"]')!;
+    const shown = () => [...pane(target).querySelectorAll('.entry-text')].map(text => text.textContent);
+    fill(search, 'app');
+    await vi.advanceTimersByTimeAsync(300); await settle();
+    expect(shown()).toEqual(['apple pie']);
+    const loads = [called('get_history').length, called('search_history').length];
+
+    navItem(target, 'History').click(); await settle();
+    // Past the search's own delay, so a reload that waited for it would show.
+    await vi.advanceTimersByTimeAsync(1000); await settle();
+    expect(pane(target).querySelector('input[type="search"]')).toBe(search);
+    expect(search.value).toBe('app');
+    expect(shown()).toEqual(['apple pie']);
+    expect([called('get_history').length, called('search_history').length]).toEqual(loads);
+  });
+
+  it('leaves a pane that is at its top level alone, and a page opened afterwards is not closed', async () => {
+    mocks.check.mockResolvedValue(null);
+    const { target } = render(SettingsPanel, {});
+    await settle();
+
+    navItem(target, 'AI Processing').click(); await settle();
+    const reads = () => ['get_config', 'get_llm_processors', 'get_prompts'].map(command => called(command).length);
+    const before = reads();
+    navItem(target, 'AI Processing').click(); await settle();
+    expect(reads()).toEqual(before);
+    expect(groupTitles(target)).toContain('Voice Commands');
+    button(pane(target), 'Shorten').click(); await settle();
+    expect(heading(target)).toBe('Shorten');
+
+    navItem(target, 'About').click(); await settle();
+    button(pane(target), 'Check for Updates').click(); await settle();
+    navItem(target, 'About').click(); await settle();
+    expect(pane(target).textContent).toContain('Murmur is up to date');
+    expect(mocks.check).toHaveBeenCalledTimes(1);
+    button(pane(target), 'Diagnostics Log').click(); await settle();
+    expect(heading(target)).toBe('Diagnostics Log');
+  });
+
+  it('keeps a prompt draft that was typed before the editor was left from the sidebar', async () => {
+    const { target } = render(SettingsPanel, {});
+    await settle();
+    navItem(target, 'AI Processing').click(); await settle();
+    button(pane(target), 'Shorten').click(); await settle();
+    fill(editor(target), 'work in progress'); await settle();
+
+    navItem(target, 'AI Processing').click(); await settle();
+    expect(heading(target)).toBe('AI Processing');
+    expect(button(pane(target), 'Shorten').closest('.row')?.textContent).toContain('Unsaved');
+    button(pane(target), 'Shorten').click(); await settle();
+    expect(editor(target).value).toBe('work in progress');
+  });
+
+  it('marks a prompt that was saved in the editor as Edited once the editor is left from the sidebar', async () => {
+    const { target } = render(SettingsPanel, {});
+    await settle();
+    navItem(target, 'AI Processing').click(); await settle();
+    button(pane(target), 'Shorten').click(); await settle();
+    fill(editor(target), 'edited'); await settle();
+    button(pane(target), 'Save').click(); await settle();
+
+    navItem(target, 'AI Processing').click(); await settle();
+    expect(heading(target)).toBe('AI Processing');
+    const row = button(pane(target), 'Shorten').closest('.row');
+    expect(row?.textContent).toContain('Edited');
+    expect(row?.textContent).not.toContain('Unsaved');
+  });
+
+  it('still switches to another pane from a page below, and shows a pane afresh when it is chosen again', async () => {
+    const { target } = render(SettingsPanel, {});
+    await settle();
+    navItem(target, 'AI Processing').click(); await settle();
+    button(pane(target), 'Shorten').click(); await settle();
+    expect(heading(target)).toBe('Shorten');
+
+    navItem(target, 'Dictionary').click(); await settle();
+    expect(navItem(target, 'Dictionary').getAttribute('aria-current')).toBe('page');
+    expect(heading(target)).toBe('Dictionary');
+
+    navItem(target, 'AI Processing').click(); await settle();
+    expect(heading(target)).toBe('AI Processing');
+    expect(groupTitles(target)).toContain('Voice Commands');
   });
 });

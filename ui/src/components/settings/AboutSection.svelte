@@ -37,9 +37,16 @@
   ];
 
   let {
+    home = 0,
     pendingCheck = false,
     onCheckConsumed = () => {},
   }: {
+    /**
+     * How many times the sidebar item of this pane has been pressed again while
+     * it was on show. A change after the pane is mounted, and not the value it
+     * is mounted with, takes an open log back to About.
+     */
+    home?: number;
     pendingCheck?: boolean;
     onCheckConsumed?: () => void;
   } = $props();
@@ -87,6 +94,15 @@
         void checkForUpdates();
       });
     }
+  });
+
+  let seenHome = untrack(() => home);
+
+  $effect(() => {
+    if (home === seenHome) return;
+    seenHome = home;
+    // As on Back, but the focus stays on the sidebar item that was pressed.
+    showingDiagnostics = false;
   });
 
   async function checkForUpdates() {

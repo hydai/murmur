@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { ChevronRight, Cloud, Laptop, Server, Terminal } from 'lucide-svelte';
   import { useLifecycle } from '../../lib/lifecycle';
   import { createStatus } from '../../lib/status.svelte';
@@ -21,6 +21,13 @@
   } from './llmProcessors';
   import { hasDraft } from './promptDrafts.svelte';
   import PromptsEditor from './PromptsEditor.svelte';
+
+  /**
+   * `home` counts how many times the sidebar item of this pane has been pressed
+   * again while it was on show. A change after the pane is mounted, and not the
+   * value it is mounted with, takes an open editor back to the list.
+   */
+  let { home = 0 }: { home?: number } = $props();
 
   const lifecycle = useLifecycle();
   const status = createStatus(lifecycle);
@@ -79,6 +86,14 @@
     // Each reports its own failure, and the voice commands do not wait for the
     // processors, whose list costs a probe of each command-line tool.
     void Promise.all([loadProcessors(), loadConfig(), loadPrompts()]);
+  });
+
+  let seenHome = untrack(() => home);
+
+  $effect(() => {
+    if (home === seenHome) return;
+    seenHome = home;
+    untrack(goHome);
   });
 
   async function loadProcessors() {
@@ -247,12 +262,26 @@
     if (modelInput.trim() !== savedModel) void saveModel();
   }
 
-  /** Back from a prompt: it may have been saved or restored there, so its mark is read again. */
+  /** Back from a prompt: the list is shown again, and the focus goes to the row that opened it. */
   function closeEditor() {
+    void focusRow(leaveEditor());
+  }
+
+  /**
+   * The sidebar item of this pane was pressed again. With an editor open, the
+   * list is shown again as on Back, but the focus stays on the item that was
+   * pressed. With none open, there is nothing to leave and nothing is read.
+   */
+  function goHome() {
+    if (editing) leaveEditor();
+  }
+
+  /** Close the editor, and say which prompt it was. It may have been saved or restored there, so its mark is read again. */
+  function leaveEditor(): PromptName | null {
     const opened = editing;
     editing = null;
     void loadPrompts();
-    void focusRow(opened);
+    return opened;
   }
 
   /**
