@@ -25,7 +25,8 @@ Privacy-first BYOK (Bring Your Own Key) voice typing application built with Taur
 ### Interface
 
 - Native macOS settings window that follows light and dark mode
-- System tray with configurable global hotkey (default `Ctrl+``)
+- Menu bar icon with a configurable global hotkey (default `` Ctrl+` ``)
+- Recording capsule at the bottom of the screen while you dictate (can be turned off in General)
 - Transcription history with search and persistent storage
 - Output to clipboard, keyboard simulation, or both
 - Audio cues for recording start/stop and errors
@@ -62,8 +63,8 @@ murmur/
 ├── ui/                           # Svelte 5 + TypeScript frontend
 │   └── src/
 │       ├── components/
+│       │   ├── capsule/          # RecordingCapsule (recording indicator)
 │       │   ├── history/          # HistoryPanel (transcription history with search)
-│       │   ├── overlay/          # FloatingOverlay, WaveformIndicator, TranscriptionView
 │       │   ├── settings/         # SettingsPanel (Murmur window: sidebar + six panes)
 │       │   └── ui/               # Shared components (Pane, Group, Row, Sheet, ...)
 │       └── lib/                  # Tauri IPC wrapper
