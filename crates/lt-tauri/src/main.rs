@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod capsule;
 mod diagnostics;
 mod events;
 mod permissions;
@@ -63,15 +64,38 @@ fn register_recording_shortcut(app: &tauri::AppHandle, shortcut: Shortcut) -> Re
                 let state = app.state::<AppState>();
                 let result = toggle_recording(app.clone(), state).await;
                 if let Err(message) = result {
-                    tracing::warn!("Shortcut action failed: {message}");
-                    let _ = app.emit(
-                        "pipeline-error",
-                        serde_json::json!({ "message": message, "recoverable": true }),
-                    );
+                    report_toggle_failure(&app, message).await;
                 }
             });
         })
         .map_err(|error| format!("Failed to register shortcut: {error}"))
+}
+
+/// The hotkey and the menu bar run `toggle_recording` with no caller to read
+/// its error. When it fails (no API key, say) the pipeline never started and
+/// has nothing to report, so the failure goes out as a `pipeline-error` and the
+/// capsule shows it, unless the person has turned the indicator off. A config
+/// that cannot be read counts as the indicator on (`capsule::failure_context`):
+/// every press fails then, and the capsule is where the person sees why. The
+/// window comes up before the error goes out, so the frontend's countdown,
+/// which starts when the error arrives, runs alongside the hide scheduled here.
+async fn report_toggle_failure(app: &tauri::AppHandle, message: String) {
+    tracing::warn!("Toggling the recording failed: {message}");
+    if let Some(window) = app.get_webview_window(capsule::CAPSULE_WINDOW) {
+        let config = app.state::<AppState>().store.config.read().await;
+        if let Err(error) = &config {
+            tracing::warn!(
+                "Showing the failure with the default recording capsule settings: {error}"
+            );
+        }
+        let (context, enabled) = capsule::failure_context(config.as_ref().map_err(String::as_str));
+        app.state::<capsule::Capsule>()
+            .toggle_failed(&window, context, enabled);
+    }
+    let _ = app.emit(
+        "pipeline-error",
+        serde_json::json!({ "message": message, "recoverable": true }),
+    );
 }
 
 impl shortcuts::Registry for tauri::AppHandle {
@@ -824,7 +848,7 @@ async fn set_hotkey(
 
 #[tauri::command]
 async fn start_pipeline(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     tracing::info!("Starting pipeline");
@@ -928,6 +952,14 @@ async fn start_pipeline(
         .set_chinese_conversion(config.chinese_conversion)
         .await;
     *pipeline.get_dictionary().lock().await = state.store.dictionary.read().await?;
+
+    // The capsule is worded from the same snapshot, and its switch read from
+    // it, so a setting changed meanwhile cannot make it disagree with the
+    // recording it shows.
+    app.state::<capsule::Capsule>().prepare(
+        capsule::CapsuleContext::from_config(&config),
+        config.show_recording_indicator,
+    );
 
     // Start the pipeline
     pipeline.start(stt).await.map_err(|e| {
@@ -1623,6 +1655,14 @@ fn main() {
             set_elevenlabs_language
         ])
         .setup(move |app| {
+            // The forwarder drives the capsule, so the capsule is managed first.
+            app.manage(capsule::Capsule::default());
+            // The capsule only shows: a click on it goes to the app beneath.
+            if let Some(window) = app.get_webview_window(capsule::CAPSULE_WINDOW) {
+                if let Err(error) = window.set_ignore_cursor_events(true) {
+                    tracing::warn!("Failed to make the recording capsule click-through: {error}");
+                }
+            }
             app.manage(events::spawn(
                 app.handle().clone(),
                 event_rx,
@@ -1659,7 +1699,7 @@ fn main() {
                                 if let Err(message) =
                                     toggle_recording(app_handle.clone(), state).await
                                 {
-                                    tracing::warn!("Tray action failed: {message}");
+                                    report_toggle_failure(&app_handle, message).await;
                                 }
                             });
                         }

@@ -1,8 +1,9 @@
 use lt_core::HistoryEntry;
 use lt_pipeline::{PipelineEvent, PipelineState};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tokio::sync::{broadcast, mpsc};
 
+use crate::capsule::{self, Capsule};
 use crate::{rebuild_tray_menu, sound, storage::HistoryStore};
 
 #[derive(Clone, serde::Serialize)]
@@ -91,6 +92,12 @@ pub(crate) fn spawn(
                         PipelineState::Error => "error",
                     };
 
+                    // The capsule fades in when it hears `pipeline-state:
+                    // recording`, so its window has to be on screen first.
+                    if state == PipelineState::Recording {
+                        start_capsule(&app_clone);
+                    }
+
                     let _ = app_clone.emit(
                         "pipeline-state",
                         PipelineStateEvent {
@@ -119,6 +126,10 @@ pub(crate) fn spawn(
                     if let Err(e) = rebuild_tray_menu(&app_clone, is_recording) {
                         tracing::warn!("Failed to update tray menu: {}", e);
                     }
+
+                    // After the emits: the capsule times its fade-out from the
+                    // events it has heard, and the window must outlast it.
+                    capsule_state_changed(&app_clone, state);
                 }
                 PipelineEvent::AudioLevel {
                     rms,
@@ -204,6 +215,8 @@ pub(crate) fn spawn(
                 } => {
                     tracing::error!("Pipeline error: {} (recoverable: {})", message, recoverable);
 
+                    app_clone.state::<Capsule>().error_reported();
+
                     let _ = app_clone.emit(
                         "pipeline-error",
                         ErrorEvent {
@@ -242,6 +255,31 @@ fn capture_signal(state: PipelineState) -> Option<bool> {
         | PipelineState::Done
         | PipelineState::Error
         | PipelineState::Idle => Some(false),
+    }
+}
+
+/// Puts the capsule up for the recording that is starting, worded from the
+/// settings `start_pipeline` prepared from this recording's config snapshot, so
+/// the forwarder reads no file here. The capsule is an extra: with no window
+/// for it, the recording goes on without it.
+fn start_capsule(app: &tauri::AppHandle) {
+    let controller = app.state::<Capsule>();
+    let Some((context, enabled)) = controller.take_prepared() else {
+        tracing::warn!("Recording capsule skipped: the recording began without its settings");
+        return;
+    };
+    let Some(window) = app.get_webview_window(capsule::CAPSULE_WINDOW) else {
+        tracing::warn!("Recording capsule skipped: its window is missing");
+        return;
+    };
+    controller.recording_started(&window, context, enabled);
+}
+
+/// Tells the capsule the pipeline entered `state`; the ending of a session
+/// starts the clock on hiding its window.
+fn capsule_state_changed(app: &tauri::AppHandle, state: PipelineState) {
+    if let Some(window) = app.get_webview_window(capsule::CAPSULE_WINDOW) {
+        app.state::<Capsule>().state_changed(&window, state);
     }
 }
 
