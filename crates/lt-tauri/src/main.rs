@@ -1355,6 +1355,43 @@ fn create_recording_icon(original_bytes: &[u8], _width: u32, _height: u32) -> Ve
     tinted
 }
 
+/// Menu-bar menu entries as `(id, label)` in display order; `None` is a
+/// separator. `on_menu_event` dispatches on the ids, so they stay fixed when
+/// the wording changes.
+fn tray_menu_items(is_recording: bool) -> [Option<(&'static str, &'static str)>; 6] {
+    [
+        Some((
+            "toggle_recording",
+            if is_recording {
+                "Stop Recording"
+            } else {
+                "Start Recording"
+            },
+        )),
+        Some(("open_settings", "Settings…")),
+        Some(("open_history", "History…")),
+        None,
+        Some(("check_updates", "Check for Updates…")),
+        Some(("quit", "Quit Murmur")),
+    ]
+}
+
+/// The one place the menu-bar menu is built, so the menu installed at startup
+/// and the one rebuilt when recording starts or stops cannot drift apart.
+fn build_tray_menu(
+    app: &tauri::AppHandle,
+    is_recording: bool,
+) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    let mut menu = MenuBuilder::new(app);
+    for entry in tray_menu_items(is_recording) {
+        menu = match entry {
+            Some((id, label)) => menu.item(&MenuItemBuilder::with_id(id, label).build(app)?),
+            None => menu.separator(),
+        };
+    }
+    menu.build()
+}
+
 /// Helper function to rebuild tray menu with updated recording state
 fn rebuild_tray_menu(
     app: &tauri::AppHandle,
@@ -1362,31 +1399,7 @@ fn rebuild_tray_menu(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tray = app.tray_by_id("main-tray").ok_or("Tray not found")?;
 
-    // Build menu items
-    let toggle_item = MenuItemBuilder::with_id(
-        "toggle_recording",
-        if is_recording {
-            "Stop Recording"
-        } else {
-            "Start Recording"
-        },
-    )
-    .build(app)?;
-
-    let settings_item = MenuItemBuilder::with_id("open_settings", "Open Settings").build(app)?;
-    let history_item = MenuItemBuilder::with_id("open_history", "History").build(app)?;
-    let update_item = MenuItemBuilder::with_id("check_updates", "Check for Updates").build(app)?;
-    let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-
-    let menu = MenuBuilder::new(app)
-        .item(&toggle_item)
-        .item(&settings_item)
-        .item(&history_item)
-        .separator()
-        .item(&update_item)
-        .item(&quit_item)
-        .build()?;
-
+    let menu = build_tray_menu(app, is_recording)?;
     tray.set_menu(Some(menu))?;
 
     // Update tooltip to reflect recording state
@@ -1605,23 +1618,7 @@ fn main() {
             let icon = tauri::image::Image::new(&icon_bytes, width, height);
 
             // Build initial menu
-            let toggle_item =
-                MenuItemBuilder::with_id("toggle_recording", "Start Recording").build(app)?;
-            let settings_item =
-                MenuItemBuilder::with_id("open_settings", "Open Settings").build(app)?;
-            let history_item = MenuItemBuilder::with_id("open_history", "History").build(app)?;
-            let update_item =
-                MenuItemBuilder::with_id("check_updates", "Check for Updates").build(app)?;
-            let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-
-            let menu = MenuBuilder::new(app)
-                .item(&toggle_item)
-                .item(&settings_item)
-                .item(&history_item)
-                .separator()
-                .item(&update_item)
-                .item(&quit_item)
-                .build()?;
+            let menu = build_tray_menu(app.handle(), false)?;
 
             // Create tray icon
             let _tray = TrayIconBuilder::with_id("main-tray")
@@ -2064,5 +2061,47 @@ mod tests {
         })
         .unwrap();
         assert_eq!(payload, serde_json::json!({ "pane": "history" }));
+    }
+
+    #[test]
+    fn the_tray_menu_uses_macos_wording() {
+        let labels: Vec<_> = tray_menu_items(false)
+            .iter()
+            .map(|item| item.map(|(_, label)| label))
+            .collect();
+        assert_eq!(
+            labels,
+            vec![
+                Some("Start Recording"),
+                Some("Settings…"),
+                Some("History…"),
+                None,
+                Some("Check for Updates…"),
+                Some("Quit Murmur")
+            ]
+        );
+        assert_eq!(
+            tray_menu_items(true)[0],
+            Some(("toggle_recording", "Stop Recording"))
+        );
+    }
+
+    #[test]
+    fn the_tray_menu_keeps_the_ids_its_handler_matches() {
+        let ids: Vec<_> = tray_menu_items(false)
+            .iter()
+            .flatten()
+            .map(|(id, _)| *id)
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "toggle_recording",
+                "open_settings",
+                "open_history",
+                "check_updates",
+                "quit"
+            ]
+        );
     }
 }
