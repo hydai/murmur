@@ -229,7 +229,6 @@
     {/if}
   {/if}
 
-  <!-- Inside the pane, where the tokens are. -->
   {#if sheet?.kind === 'add' || sheet?.kind === 'edit'}
     {@const editing = sheet.kind === 'edit'}
     {#snippet deleteAction()}

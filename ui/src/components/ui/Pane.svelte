@@ -26,7 +26,7 @@
   const headingId = $props.id();
 </script>
 
-<section class="pane ui-v2" aria-labelledby={headingId}>
+<section class="pane" aria-labelledby={headingId}>
   <header class="toolbar" data-tauri-drag-region="deep">
     {#if onback}
       <button

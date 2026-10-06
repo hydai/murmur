@@ -1,9 +1,9 @@
 :root {
-  font-family: var(--font-body);
+  font-family: var(--font-ui);
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: dark;
+  color-scheme: light dark;
   color: var(--text-primary);
   background-color: transparent;
 

@@ -286,7 +286,6 @@
     {/if}
   {/if}
 
-  <!-- Inside the pane, where the tokens are. -->
   {#if showClearModal}
     <Sheet title="Clear all history?" onclose={closeClear} onsubmit={clearAll}>
       <p class="sheet-message">This deletes every saved transcription and can't be undone.</p>

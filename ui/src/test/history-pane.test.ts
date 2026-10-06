@@ -588,8 +588,7 @@ describe('History pane: clearing', () => {
     expect(document.activeElement).toBe(button(dialog(target)!, 'Cancel'));
     // Asking is not clearing.
     expect(called('clear_history')).toHaveLength(0);
-    // Inside the pane, where the tokens are.
-    expect(target.querySelector('.pane.ui-v2 [role="dialog"]')).not.toBeNull();
+    expect(target.querySelector('.pane [role="dialog"]')).not.toBeNull();
   });
 
   it('clears every entry after confirming, and says so', async () => {

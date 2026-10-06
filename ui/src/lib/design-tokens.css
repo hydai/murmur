@@ -1,53 +1,5 @@
+/* Native macOS look: system font, system-style colours, light and dark. */
 :root {
-  /* Accent */
-  --accent: #A855F7;
-  --accent-hover: #9333EA;
-  --accent-muted: rgba(168, 85, 247, 0.1);
-
-  /* Backgrounds */
-  --bg-primary: #0F0F1A;
-  --bg-sidebar: #0B0B14;
-  --bg-card: #14141F;
-  --bg-nav-active: #1C1230;
-  --bg-title-bar: #12122A;
-
-  /* Borders */
-  --border: #1E1E2E;
-
-  /* Raised surfaces (secondary buttons, hover fills) */
-  --surface-raised: rgba(255, 255, 255, 0.1);
-  --surface-raised-hover: rgba(255, 255, 255, 0.15);
-
-  /* Status */
-  --status-green: #22C55E;
-  --status-red: #EF4444;
-  --status-yellow: #EAB308;
-  /* Readable on the translucent status backgrounds. */
-  --status-green-text: #86EFAC;
-  --status-red-text: #FCA5A5;
-  --status-yellow-text: #FDE68A;
-
-  /* Text */
-  --text-primary: #FFFFFF;
-  --text-secondary: #A1A1AA;
-  --text-muted: #71717A;
-  --text-placeholder: #3F3F50;
-
-  /* Fonts */
-  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-mono: 'SF Mono', ui-monospace, 'Cascadia Code', monospace;
-}
-
-/*
- * Native macOS look: system font, system-style colours, light and dark.
- *
- * Scoped to .ui-v2 so the pages still on the tokens above keep their look;
- * a page opts in by wearing the class. Several names repeat the ones above
- * on purpose, so a v2 page sees the new value while the rest do not.
- */
-.ui-v2 {
-  color-scheme: light dark;
-
   /* Fonts */
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
@@ -91,13 +43,10 @@
   --sheet-backdrop: rgba(0, 0, 0, .16);
   --toast-bg: rgba(36, 36, 38, .92);
   --toast-fg: #FFFFFF;
-
-  font-family: var(--font-ui);
-  color: var(--text-primary);
 }
 
 @media (prefers-color-scheme: dark) {
-  .ui-v2 {
+  :root {
     --window-bg: #1E1E1E;
     --sidebar-bg: #2B2B2D;
     --group-bg: #2A2A2C;

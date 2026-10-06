@@ -399,7 +399,6 @@
       </Group>
     </div>
 
-    <!-- Inside the pane, where the tokens are. -->
     {#if showApiKeySheet && keyProcessor}
       <ApiKeySheet
         providerName={keyProcessor.name}

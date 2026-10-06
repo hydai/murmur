@@ -533,7 +533,6 @@
     {/if}
   {/if}
 
-  <!-- Inside the pane, where the tokens are. -->
   {#if showApiKeySheet && selectedProvider}
     <ApiKeySheet
       providerName={selectedProvider.name}
