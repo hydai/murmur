@@ -941,7 +941,7 @@ async fn start_pipeline(
 
 #[tauri::command]
 async fn stop_pipeline(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     tracing::info!("Stopping pipeline");
@@ -953,11 +953,18 @@ async fn stop_pipeline(
         format!("Failed to stop pipeline: {}", e)
     })?;
 
+    // Stop closes the microphone but changes no state: the pipeline stays in
+    // Recording or Transcribing until the transcript is in, so report it here.
+    let _ = app.emit(
+        "recording-state",
+        serde_json::json!({ "is_recording": false }),
+    );
+
     tracing::info!("Pipeline stopped successfully");
     Ok(())
 }
 
-/// Shared by the hotkey, the tray, and the overlay button.
+/// Shared by the hotkey and the menu bar.
 #[tauri::command]
 async fn toggle_recording(
     app: tauri::AppHandle,
