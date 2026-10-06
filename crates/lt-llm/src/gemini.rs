@@ -6,7 +6,7 @@ static SPEC: CliSpec = CliSpec {
     binary: "gemini",
     display_name: "Gemini CLI",
     default_model: DEFAULT_MODEL,
-    install_hint: "Please install gemini-cli: https://github.com/google/generative-ai-cli",
+    install_hint: "Please install Gemini CLI: npm install -g @google/gemini-cli",
     args: |prompt, model| {
         vec![
             "-p".into(),

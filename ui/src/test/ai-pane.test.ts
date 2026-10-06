@@ -283,8 +283,8 @@ describe('AI Processing pane: services', () => {
     backend({ processors: [P.gemini(false), P.copilot(false), P.apple()], config: { llm_processor: 'apple_llm' } });
     const target = await open();
     const hints = {
-      'Gemini CLI': 'Install from: https://github.com/google/generative-ai-cli',
-      'Copilot CLI': 'Install: npm install -g @githubnext/github-copilot-cli',
+      'Gemini CLI': 'Install: npm install -g @google/gemini-cli',
+      'Copilot CLI': 'Install: npm install -g @github/copilot',
     };
     for (const [name, hint] of Object.entries(hints)) {
       const row = service(target, name);

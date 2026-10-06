@@ -111,8 +111,8 @@ test('describes a command-line tool by whether it is installed, and leaves how t
 });
 
 test('hints how to install a command-line tool that is not installed', () => {
-  assert.equal(llmProcessorHint(gemini(false)), 'Install from: https://github.com/google/generative-ai-cli');
-  assert.equal(llmProcessorHint(copilot(false)), 'Install: npm install -g @githubnext/github-copilot-cli');
+  assert.equal(llmProcessorHint(gemini(false)), 'Install: npm install -g @google/gemini-cli');
+  assert.equal(llmProcessorHint(copilot(false)), 'Install: npm install -g @github/copilot');
 });
 
 test('has no hint for a tool that is installed, a tool it has none for, or anything that is not a tool', () => {
@@ -188,8 +188,8 @@ test('never disables a cloud service or a custom endpoint, whatever the backend 
 });
 
 test('gives the install hint of each tool, and none for anything else', () => {
-  assert.equal(installHint('gemini'), 'Install from: https://github.com/google/generative-ai-cli');
-  assert.equal(installHint('copilot'), 'Install: npm install -g @githubnext/github-copilot-cli');
+  assert.equal(installHint('gemini'), 'Install: npm install -g @google/gemini-cli');
+  assert.equal(installHint('copilot'), 'Install: npm install -g @github/copilot');
   assert.equal(installHint('apple_llm'), '');
   assert.equal(installHint('claude_api'), '');
   assert.equal(installHint(''), '');
