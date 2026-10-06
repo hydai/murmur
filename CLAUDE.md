@@ -41,13 +41,14 @@ cargo tauri build
 - `crates/lt-pipeline/` - Pipeline orchestration, state machine, voice command detection
 - `crates/lt-stt/` - STT providers (ElevenLabs, OpenAI, Groq, Custom, Apple wrapper)
 - `crates/lt-stt-apple/` - Swift FFI bridge for Apple SpeechTranscriber (on-device STT)
-- `crates/lt-tauri/` - Tauri app, system tray, IPC commands
+- `crates/lt-tauri/` - Tauri app, menu bar, IPC commands
 - `crates/lt-tauri/src/storage.rs` - Serialized document transactions; file I/O runs on blocking workers
 - `crates/lt-tauri/src/events.rs` - One app-lifetime pipeline event forwarder
+- `crates/lt-tauri/src/capsule.rs` - Places, shows, and hides the recording capsule window (label `main`)
 - `crates/lt-tauri/permissions/default.toml` - ACL command allowlist (update when adding IPC commands)
 - `ui/` - Svelte 5 + TypeScript frontend
+- `ui/src/components/capsule/` - RecordingCapsule (the recording indicator) and its capsuleState reducer
 - `ui/src/components/history/` - HistoryPanel (transcription history with search)
-- `ui/src/components/overlay/` - FloatingOverlay (main UI), WaveformIndicator, TranscriptionView
 - `ui/src/components/settings/` - SettingsPanel (the single Murmur window: a sidebar plus six panes, History included)
 - `ui/src/components/ui/` - Shared components (Pane, Group, Row, Sheet, Select, Switch, Toast, SearchField, ShortcutField)
 - `ui/src/lib/tauri.ts` - `safeInvoke()` wrapper that guards against IPC readiness
@@ -64,7 +65,6 @@ cargo tauri build
 ### Frontend (Svelte 5)
 - Use `safeInvoke()` from `ui/src/lib/tauri.ts` instead of raw `invoke()` — it guards against Tauri IPC not being ready
 - Event listeners from Tauri use `listen()` from `@tauri-apps/api/event` — always clean up with unlisten in `onDestroy`
-- Window operations use `getCurrentWindow()` and `LogicalSize` from `@tauri-apps/api/window`
 - Settings and History share one Murmur window (760×560, min 640×460)
 
 ### LLM Model Configuration
@@ -103,15 +103,18 @@ cargo tauri build
 
 ### Tauri Events
 - Rust emits events like `audio-level`, `recording-state`, `pipeline-state`
-- Additional events: `apple-stt-model-progress`, `transcription-partial`, `transcription-committed`, `pipeline-result`, `pipeline-error`, `command-detected`
-- The frontend listens for these in `FloatingOverlay.svelte`'s `onMount`
+- Additional events: `apple-stt-model-progress`, `transcription-partial`, `transcription-committed`, `pipeline-result`, `pipeline-error`, `command-detected`, `capsule-context`
+- `RecordingCapsule.svelte` listens in its `onMount` for `pipeline-state`, `recording-state`, `command-detected`, `pipeline-result`, `pipeline-error`, `capsule-context`, and `audio-level`
+- `recording-state`'s `is_recording` means the microphone is open: `true` when Recording begins, `false` once Stop closes it and on Processing, Done, Error, and Idle; Transcribing leaves the last value standing (`capture_signal` in `events.rs`, `stop_pipeline` in `main.rs`)
+- `capsule-context` (payload `{ shortcut, output_mode, save_history }`) goes to the `main` window only, just before the capsule is shown
 - `navigate` (payload `{ pane, action? }`) goes to the settings window only: `show_settings` in `main.rs` emits it to a window that is already open (a new window reads the same route from its URL), and `SettingsPanel.svelte` listens for it
 
 ### Pipeline State Machine
 - States: Idle → Recording → Transcribing → Processing → Done / Error
 - Reference: `crates/lt-pipeline/src/state.rs`
 - Startup failure rolls back to Error. Terminal STT events stop capture before final processing; `reset()` cancels and joins session tasks before returning to Idle.
-- Hotkey, tray, and the overlay button all call `toggle_recording`, which picks Start / Stop / Cancel from `recording::toggle_action(state, is_capturing)`; Cancel runs `reset()`, so a session that is finishing or processing can always be abandoned.
+- The hotkey and the menu bar call `toggle_recording`, which picks Start / Stop / Cancel from `recording::toggle_action(state, is_capturing)`; Cancel runs `reset()`, so a session that is finishing or processing can always be abandoned.
+- A toggle that fails (no API key, say) goes through `report_toggle_failure` in `main.rs`, which always emits `pipeline-error` and, unless the indicator is off or a recording is already under way, brings the capsule up to show it for 4 s.
 - Create the event forwarder once in app setup, never once per recording. Reset accumulated event data when Recording begins.
 - OpenAI, Groq, and Custom STT share the bounded HTTP worker in `crates/lt-stt/src/http.rs`.
 
@@ -142,9 +145,18 @@ cargo tauri build
 ### Settings Window
 - One Murmur window (label `settings`) with a sidebar and six panes: General, Transcription, AI Processing, Dictionary, History, About
 - Component files are in `ui/src/components/settings/`, except History's `HistoryPanel.svelte` in `ui/src/components/history/`; shared components are in `ui/src/components/ui/`
+- General's Recording group has the "Show recording indicator" switch (`set_show_recording_indicator`), which turns the recording capsule on or off
 - Voice Commands rows in AI Processing open the prompt editor (`PromptsEditor.svelte`)
 - About includes the auto-updater (`@tauri-apps/plugin-updater`); the Diagnostics Log is a subpage of About
 - Colors and fonts come from the tokens in `ui/src/lib/design-tokens.css`, which follow the system light/dark appearance; brand blue marks selection and primary actions: light mode uses `#1C74B8` for both, dark mode uses `#4BA8E8` for selection text and icons and keeps `#1C74B8` for the fills of primary buttons and switches
+
+### Recording Capsule
+- `RecordingCapsule.svelte` is what the `main` window shows (a different window from the Murmur window, label `settings`): a dark capsule with a timer and level bars while recording, then the pipeline's progress and how it ended. `tauri.conf.json` declares the window as 440×72, transparent, always on top, and never focusable, and `main.rs` makes it click-through
+- Rust alone shows and hides the window (`crates/lt-tauri/src/capsule.rs`), so a capsule that misbehaves in the webview cannot stay on screen. When a recording starts it places the window at the bottom centre of the work area of the display under the pointer (computed in points), sends `capsule-context`, and shows it, all before `pipeline-state: recording` is emitted, because the capsule fades in on that event
+- The window hides after the session ends: Done 1.5 s and Idle 1 s (4 s for either if the session reported an error), Error 4 s. A new recording cancels a pending hide. `HIDE_AFTER_MS` in `capsuleState.ts` is the same schedule (the capsule's 200 ms fade-out ends as the window hides), so change both together
+- The frontend only draws content and animation and calls no IPC; the `main` window's capability grants only `core:default`
+- Never call `set_focus()` on `main`: the window never takes focus, so the text the pipeline types goes to the app the user is working in
+- `AppConfig.show_recording_indicator` (default true) is read once per recording, from the config snapshot `start_pipeline` configures the recording with (it hands the capsule its context and this switch through `Capsule::prepare`), so a change applies from the next recording; off keeps the capsule from showing, a failed toggle's error included (a config.toml that cannot be read counts as on, so that failure still shows)
 
 ## Common Pitfalls
 

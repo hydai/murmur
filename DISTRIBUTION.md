@@ -36,7 +36,7 @@ This document covers the build, packaging, and distribution process for Murmur o
 tauri = {
   version = "2.10.2",
   features = [
-    "tray-icon",      # System tray integration
+    "tray-icon",      # Menu bar icon
     "image-png",      # PNG icon support
     "macos-private-api" # Transparent windows (not App Store compatible)
   ]
@@ -109,7 +109,7 @@ When mounted, the .dmg shows:
 5. **First Launch**:
    - System prompts for microphone permission
    - System prompts for accessibility permission
-   - App opens with overlay window
+   - App opens the Murmur window on its Transcription pane
    - User configures API keys via Settings (menu bar → Settings…)
 
 ### Permission Prompts
@@ -201,13 +201,13 @@ open /Applications/Murmur.app
 # 4. Configure API key (e.g., ElevenLabs)
 # 5. Press Cmd+Shift+Space
 # 6. Speak into microphone
-# 7. Verify transcription appears in overlay
+# 7. Verify the recording capsule appears at the bottom of the screen while recording
 # 8. Verify text appears in clipboard (Cmd+V)
 # 9. Test voice command: "translate to Chinese: hello world"
 # 10. Verify translation in clipboard
 
 # Quit cleanly
-# Click system tray icon → Quit
+# Click the menu bar icon → Quit Murmur
 ```
 
 ## Troubleshooting
