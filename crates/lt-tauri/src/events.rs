@@ -99,19 +99,23 @@ pub(crate) fn spawn(
                         },
                     );
 
-                    // Also emit recording-state for compatibility
+                    // recording-state says whether the microphone is open.
+                    if let Some(open) = capture_signal(state) {
+                        let _ = app_clone.emit(
+                            "recording-state",
+                            serde_json::json!({
+                                "is_recording": open
+                            }),
+                        );
+                    }
+
+                    // Update tray menu to reflect recording state. The tray
+                    // follows the session, not the microphone, so Transcribing
+                    // still counts as recording.
                     let is_recording = matches!(
                         state,
                         PipelineState::Recording | PipelineState::Transcribing
                     );
-                    let _ = app_clone.emit(
-                        "recording-state",
-                        serde_json::json!({
-                            "is_recording": is_recording
-                        }),
-                    );
-
-                    // Update tray menu to reflect recording state
                     if let Err(e) = rebuild_tray_menu(&app_clone, is_recording) {
                         tracing::warn!("Failed to update tray menu: {}", e);
                     }
@@ -222,6 +226,25 @@ pub(crate) fn spawn(
     }))
 }
 
+/// What `recording-state` reports when the pipeline enters `state`, or `None`
+/// to leave the last report standing. The event follows the microphone, which
+/// the state alone cannot tell: a streaming provider reaches Transcribing while
+/// the person is still speaking, and one that has no text until Stop stays in
+/// Recording after the microphone has closed. Transcribing therefore says
+/// nothing, and `stop_pipeline` reports the close that Stop causes. The session
+/// closes the microphone before it publishes Processing or a terminal state, so
+/// each of those says it is shut.
+fn capture_signal(state: PipelineState) -> Option<bool> {
+    match state {
+        PipelineState::Recording => Some(true),
+        PipelineState::Transcribing => None,
+        PipelineState::Processing
+        | PipelineState::Done
+        | PipelineState::Error
+        | PipelineState::Idle => Some(false),
+    }
+}
+
 /// History writes run on their own ordered queue so a slow disk cannot stall
 /// event forwarding and lag the broadcast receiver behind audio levels.
 fn spawn_history_writer(
@@ -270,5 +293,16 @@ mod tests {
             .map(|entry| entry.final_text.clone())
             .collect();
         assert_eq!(texts, ["three", "two", "one"]);
+    }
+
+    #[test]
+    fn recording_state_follows_the_microphone() {
+        use PipelineState::*;
+        assert_eq!(capture_signal(Recording), Some(true));
+        // Streaming STT reaches Transcribing while the person is still speaking.
+        assert_eq!(capture_signal(Transcribing), None);
+        for state in [Processing, Done, Error, Idle] {
+            assert_eq!(capture_signal(state), Some(false), "{state:?}");
+        }
     }
 }
