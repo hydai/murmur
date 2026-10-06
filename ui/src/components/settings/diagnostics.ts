@@ -5,8 +5,12 @@ export interface DiagnosticLogEntry {
   message: string;
 }
 
-export function formatLogTimestamp(timestampMs: number): string {
-  return new Date(timestampMs).toLocaleString();
+// The interface is English whatever language the system is set to, so the times are too.
+const LOCALE = 'en-US';
+
+/** The time zone is the system's unless one is named; naming one is for tests. */
+export function formatLogTimestamp(timestampMs: number, timeZone?: string): string {
+  return new Date(timestampMs).toLocaleString(LOCALE, { timeZone });
 }
 
 export function formatDiagnosticLogsForClipboard(logs: DiagnosticLogEntry[]): string {

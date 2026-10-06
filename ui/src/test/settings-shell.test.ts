@@ -49,7 +49,6 @@ beforeEach(() => {
       case 'get_stt_providers':
       case 'get_llm_processors':
       case 'get_prompts':
-      case 'get_diagnostic_logs':
       case 'get_history': return [];
       case 'get_dictionary': return { entries: [] };
       default: return undefined;

@@ -5,12 +5,10 @@
   import type { IconProps } from 'lucide-svelte';
   import { useLifecycle } from '../../lib/lifecycle';
   import { PANES, initialRoute, parsePane, type PaneId } from './navigation';
-  import LegacyPane from './LegacyPane.svelte';
   import GeneralConfig from './GeneralConfig.svelte';
   import ProviderConfig from './ProviderConfig.svelte';
   import DictionaryEditor from './DictionaryEditor.svelte';
   import LlmConfig from './LlmConfig.svelte';
-  import DiagnosticsPanel from './DiagnosticsPanel.svelte';
   import AboutSection from './AboutSection.svelte';
   import HistoryPanel from '../history/HistoryPanel.svelte';
 
@@ -82,13 +80,10 @@
     {:else if activePane === 'history'}
       <HistoryPanel onnavigate={(pane) => (activePane = pane)} />
     {:else if activePane === 'about'}
-      <LegacyPane>
-        <AboutSection
-          pendingCheck={pendingUpdateCheck}
-          onCheckConsumed={() => (pendingUpdateCheck = false)}
-        />
-        <DiagnosticsPanel />
-      </LegacyPane>
+      <AboutSection
+        pendingCheck={pendingUpdateCheck}
+        onCheckConsumed={() => (pendingUpdateCheck = false)}
+      />
     {/if}
   </main>
 </div>

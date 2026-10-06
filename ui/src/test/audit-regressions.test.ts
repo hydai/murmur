@@ -178,7 +178,7 @@ describe('updater and lifecycle', () => {
     emit('update-available', { version: '2.0.0' });
     await settle();
     expect(mocks.check).toHaveBeenCalledTimes(1);
-    button(target, 'Download & Install').click();
+    button(target, 'Download and Install').click();
     await settle();
     expect(update.downloadAndInstall).toHaveBeenCalledTimes(1);
     expect(target.textContent).not.toContain('Restart Now');
@@ -568,7 +568,7 @@ describe('diagnostics export', () => {
         ]
       : undefined);
 
-    const { target } = render(DiagnosticsPanel, {});
+    const { target } = render(DiagnosticsPanel, { onback: vi.fn() });
     await settle();
 
     const rows = [...target.querySelectorAll('.log-row')].map(row => row.textContent ?? '');
