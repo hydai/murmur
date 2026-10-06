@@ -110,7 +110,7 @@ When mounted, the .dmg shows:
    - System prompts for microphone permission
    - System prompts for accessibility permission
    - App opens with overlay window
-   - User configures API keys via Settings (system tray → Settings)
+   - User configures API keys via Settings (menu bar → Settings…)
 
 ### Permission Prompts
 
@@ -197,7 +197,7 @@ open /Applications/Murmur.app
 # Test workflow:
 # 1. Grant microphone permission when prompted
 # 2. Grant accessibility permission when prompted
-# 3. Click system tray icon → Settings
+# 3. Click the menu bar icon → Settings…
 # 4. Configure API key (e.g., ElevenLabs)
 # 5. Press Cmd+Shift+Space
 # 6. Speak into microphone

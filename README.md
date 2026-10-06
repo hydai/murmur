@@ -24,7 +24,7 @@ Privacy-first BYOK (Bring Your Own Key) voice typing application built with Taur
 
 ### Interface
 
-- Floating glassmorphism overlay with waveform visualization
+- Native macOS settings window that follows light and dark mode
 - System tray with configurable global hotkey (default `Ctrl+``)
 - Transcription history with search and persistent storage
 - Output to clipboard, keyboard simulation, or both
@@ -64,7 +64,8 @@ murmur/
 │       ├── components/
 │       │   ├── history/          # HistoryPanel (transcription history with search)
 │       │   ├── overlay/          # FloatingOverlay, WaveformIndicator, TranscriptionView
-│       │   └── settings/         # SettingsPanel (standalone 720x560 window)
+│       │   ├── settings/         # SettingsPanel (Murmur window: sidebar + six panes)
+│       │   └── ui/               # Shared components (Pane, Group, Row, Sheet, ...)
 │       └── lib/                  # Tauri IPC wrapper
 ├── config/default.toml           # Default settings template
 └── prompts/                      # LLM prompt templates
@@ -98,7 +99,7 @@ xattr -cr /Applications/Murmur.app
 ### First launch
 
 1. Grant microphone and accessibility permissions when prompted
-2. Configure your providers in Settings (system tray → Settings)
+2. Configure your providers in Settings (menu bar → Settings…)
 
 ## Development
 

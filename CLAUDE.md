@@ -48,7 +48,8 @@ cargo tauri build
 - `ui/` - Svelte 5 + TypeScript frontend
 - `ui/src/components/history/` - HistoryPanel (transcription history with search)
 - `ui/src/components/overlay/` - FloatingOverlay (main UI), WaveformIndicator, TranscriptionView
-- `ui/src/components/settings/` - SettingsPanel (standalone 720x560 window)
+- `ui/src/components/settings/` - SettingsPanel (the single Murmur window: a sidebar plus six panes, History included)
+- `ui/src/components/ui/` - Shared components (Pane, Group, Row, Sheet, Select, Switch, Toast, SearchField, ShortcutField)
 - `ui/src/lib/tauri.ts` - `safeInvoke()` wrapper that guards against IPC readiness
 - `config/default.toml` - Default configuration template
 - `prompts/` - LLM prompt templates for post-processing
@@ -64,7 +65,7 @@ cargo tauri build
 - Use `safeInvoke()` from `ui/src/lib/tauri.ts` instead of raw `invoke()` — it guards against Tauri IPC not being ready
 - Event listeners from Tauri use `listen()` from `@tauri-apps/api/event` — always clean up with unlisten in `onDestroy`
 - Window operations use `getCurrentWindow()` and `LogicalSize` from `@tauri-apps/api/window`
-- Settings is a standalone window (720x560), separate from the overlay
+- Settings and History share one Murmur window (760×560, min 640×460)
 
 ### LLM Model Configuration
 - Each LLM processor has a `DEFAULT_MODEL` constant and `with_model(Option<String>)` constructor
@@ -89,7 +90,7 @@ cargo tauri build
 - Both use `serde(default)` for backward-compatible deserialization of existing config files
 - `get_elevenlabs_languages` IPC returns the full static list of 98 supported languages; `set_elevenlabs_language` persists to config
 - No hot-swap needed — STT provider is recreated on every `start_pipeline` call, so language changes take effect on the next recording
-- UI: language dropdown in `ProviderConfig.svelte` appears when the provider is active, reusing `.locale-selector` CSS
+- UI: Language select in the provider-in-use group of `ProviderConfig.svelte`
 
 ### Custom STT Endpoint
 - `CustomSttProvider` in `crates/lt-stt/src/custom.rs` — OpenAI-compatible Whisper API client with configurable base URL
@@ -101,10 +102,10 @@ cargo tauri build
 - No hot-swap needed — STT provider is recreated on every `start_pipeline` call
 
 ### Tauri Events
-- Rust emits events like `audio-level`, `recording-state`, `pipeline-state`, `open-settings`
+- Rust emits events like `audio-level`, `recording-state`, `pipeline-state`
 - Additional events: `apple-stt-model-progress`, `transcription-partial`, `transcription-committed`, `pipeline-result`, `pipeline-error`, `command-detected`
 - The frontend listens for these in `FloatingOverlay.svelte`'s `onMount`
-- The `open-settings` event is emitted from the system tray menu in `main.rs`
+- `navigate` (payload `{ pane, action? }`) goes to the settings window only: `show_settings` in `main.rs` emits it to a window that is already open (a new window reads the same route from its URL), and `SettingsPanel.svelte` listens for it
 
 ### Pipeline State Machine
 - States: Idle → Recording → Transcribing → Processing → Done / Error
@@ -139,9 +140,11 @@ cargo tauri build
 - Implementations in `crates/lt-output/src/`
 
 ### Settings Window
-- 6 tabs: STT Providers, LLM Processor, Hotkey, Output, Dictionary, About
-- Component files in `ui/src/components/settings/`
-- About tab includes auto-updater (`@tauri-apps/plugin-updater`)
+- One Murmur window (label `settings`) with a sidebar and six panes: General, Transcription, AI Processing, Dictionary, History, About
+- Component files are in `ui/src/components/settings/`, except History's `HistoryPanel.svelte` in `ui/src/components/history/`; shared components are in `ui/src/components/ui/`
+- Voice Commands rows in AI Processing open the prompt editor (`PromptsEditor.svelte`)
+- About includes the auto-updater (`@tauri-apps/plugin-updater`); the Diagnostics Log is a subpage of About
+- Colors and fonts come from the tokens in `ui/src/lib/design-tokens.css`, which follow the system light/dark appearance; brand blue marks selection and primary actions: light mode uses `#1C74B8` for both, dark mode uses `#4BA8E8` for selection text and icons and keeps `#1C74B8` for the fills of primary buttons and switches
 
 ## Common Pitfalls
 
