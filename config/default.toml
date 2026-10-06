@@ -31,6 +31,10 @@ hotkey = "Ctrl+`"
 # Set to false to stop writing finished transcriptions to history.json
 save_history = true
 
+# Recording Indicator
+# Set to false to hide the capsule shown at the bottom of the screen while you dictate
+show_recording_indicator = true
+
 # Chinese Output
 # "traditional": convert Simplified Chinese to Traditional (Taiwan phrasing)
 # "none": deliver the text exactly as transcribed
