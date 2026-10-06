@@ -33,8 +33,16 @@
 
   let activePane = $state<PaneId>(route.pane);
   let pendingUpdateCheck = $state(route.checkUpdate);
+  // How many times the sidebar item of the pane on show has been pressed again.
+  // A pane with a page below it goes back to its top level when this changes.
+  let homePresses = $state(0);
 
   const lifecycle = useLifecycle();
+
+  function selectPane(id: PaneId) {
+    if (id === activePane) homePresses += 1;
+    else activePane = id;
+  }
 
   onMount(() => {
     // Sent when the window is already open and something, such as the menu
@@ -58,7 +66,7 @@
             type="button"
             class="nav-item"
             aria-current={activePane === pane.id ? 'page' : undefined}
-            onclick={() => (activePane = pane.id)}
+            onclick={() => selectPane(pane.id)}
           >
             <span class="nav-icon"><Icon size={16} strokeWidth={1.75} aria-hidden="true" /></span>
             <span>{pane.label}</span>
@@ -74,13 +82,14 @@
     {:else if activePane === 'transcription'}
       <ProviderConfig />
     {:else if activePane === 'ai'}
-      <LlmConfig />
+      <LlmConfig home={homePresses} />
     {:else if activePane === 'dictionary'}
       <DictionaryEditor />
     {:else if activePane === 'history'}
       <HistoryPanel onnavigate={(pane) => (activePane = pane)} />
     {:else if activePane === 'about'}
       <AboutSection
+        home={homePresses}
         pendingCheck={pendingUpdateCheck}
         onCheckConsumed={() => (pendingUpdateCheck = false)}
       />
