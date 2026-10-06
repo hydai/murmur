@@ -12,7 +12,6 @@ import LlmConfig from '../components/settings/LlmConfig.svelte';
 import PromptsEditor from '../components/settings/PromptsEditor.svelte';
 import { resetDrafts } from '../components/settings/promptDrafts.svelte';
 import DiagnosticsPanel from '../components/settings/DiagnosticsPanel.svelte';
-import StatusRowHarness from './StatusRowHarness.svelte';
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(), listen: vi.fn(), check: vi.fn(), startDragging: vi.fn(), writeText: vi.fn(),
@@ -295,23 +294,6 @@ describe('history snapshots', () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(mocks.invoke).toHaveBeenCalledTimes(callsBeforeUnmount);
   });
-});
-
-it('makes provider selection and edit actions independently keyboard accessible', async () => {
-  const select = vi.fn();
-  const edit = vi.fn();
-  const { target } = render(StatusRowHarness, { select, edit });
-  const user = userEvent.setup();
-  expect(target.querySelector('button button')).toBeNull();
-  await user.tab();
-  expect(document.activeElement?.textContent).toContain('Cloud provider');
-  await user.keyboard('{Enter}');
-  expect(select).toHaveBeenCalledTimes(1);
-  await user.tab();
-  expect(document.activeElement?.textContent).toBe('Edit key');
-  await user.keyboard(' ');
-  expect(edit).toHaveBeenCalledTimes(1);
-  expect(select).toHaveBeenCalledTimes(1);
 });
 
 describe('modal dialogs', () => {

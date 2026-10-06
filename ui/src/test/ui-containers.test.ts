@@ -479,7 +479,7 @@ describe('Pane', () => {
       actions: snippet('<button type="button">Add</button>'),
       children: snippet('<p>Words</p>'),
     });
-    const pane = target.querySelector('section.pane.ui-v2')!;
+    const pane = target.querySelector('section.pane')!;
     const heading = pane.querySelector('h1')!;
     expect(pane.getAttribute('aria-labelledby')).toBe(heading.id);
     expect(pane.querySelector('header.toolbar button')?.textContent).toBe('Add');

@@ -310,10 +310,10 @@ describe('Dictionary pane: adding a word', () => {
     expect(document.activeElement).toBe(field(target, 'term'));
   });
 
-  it('keeps its tokens: the sheet is inside the pane', async () => {
+  it('renders the sheet inside the pane', async () => {
     const target = await open();
     addButton(target).click(); await settle();
-    expect(target.querySelector('.pane.ui-v2 [role="dialog"]')).not.toBeNull();
+    expect(target.querySelector('.pane [role="dialog"]')).not.toBeNull();
   });
 
   it('adds the word, closes the sheet, and shows it in the list without a toast', async () => {
@@ -526,7 +526,7 @@ describe('Dictionary pane: editing a word', () => {
     expect(field(target, 'aliases').value).toBe('tori, towery');
     expect(field(target, 'description').value).toBe('Desktop framework');
     expect(document.activeElement).toBe(field(target, 'term'));
-    expect(target.querySelector('.pane.ui-v2 [role="dialog"]')).not.toBeNull();
+    expect(target.querySelector('.pane [role="dialog"]')).not.toBeNull();
   });
 
   it('puts Delete… at the left and Cancel and Save at the right, Save being the default', async () => {
@@ -739,7 +739,7 @@ describe('Dictionary pane: deleting a word', () => {
     expect(buttonsOf(dialog(target)!)).toEqual([['Cancel', 'button'], ['Delete', 'submit']]);
     expect(button(dialog(target)!, 'Delete').classList.contains('btn-destructive')).toBe(true);
     expect(dialog(target)!.querySelector('.sheet-leading')).toBeNull();
-    expect(target.querySelector('.pane.ui-v2 [role="dialog"]')).not.toBeNull();
+    expect(target.querySelector('.pane [role="dialog"]')).not.toBeNull();
   });
 
   it('closes the confirmation on Cancel without deleting, and does not bring the edit sheet back', async () => {

@@ -633,11 +633,11 @@ describe('AI Processing pane: API key sheet', () => {
     expect(called('set_llm_processor')).toHaveLength(0);
   });
 
-  it('keeps its tokens: the sheet is inside the pane', async () => {
+  it('renders the sheet inside the pane', async () => {
     backend({ processors: [P.gemini(), P.claude(false)] });
     const target = await open();
     button(target, 'Add API Key…').click(); await settle();
-    expect(target.querySelector('.pane.ui-v2 [role="dialog"]')).not.toBeNull();
+    expect(target.querySelector('.pane [role="dialog"]')).not.toBeNull();
   });
 
   it('opens titled as a change for a key that is already saved', async () => {
@@ -1149,7 +1149,7 @@ describe('AI Processing pane: prompt editor', () => {
     expect(editor(target).value).toBe('content of shorten');
     expect(editor(target).getAttribute('aria-label')).toBe('Shorten prompt');
     expect(editor(target).getAttribute('spellcheck')).toBe('false');
-    expect(editor(target).closest('.pane.ui-v2')).not.toBeNull();
+    expect(editor(target).closest('.pane')).not.toBeNull();
   });
 
   it('has no Required line for a prompt that requires nothing', async () => {

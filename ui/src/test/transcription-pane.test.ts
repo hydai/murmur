@@ -461,11 +461,11 @@ describe('Transcription pane: API key sheet', () => {
     expect(dialogTitle(target)).toBe('Add API Key for ElevenLabs Scribe');
   });
 
-  it('keeps its tokens: the sheet is inside the pane', async () => {
+  it('renders the sheet inside the pane', async () => {
     backend({ providers: [P.elevenlabs(false), P.openai(true)] });
     const target = await open();
     button(target, 'Add API Key…').click(); await settle();
-    expect(target.querySelector('.pane.ui-v2 [role="dialog"]')).not.toBeNull();
+    expect(target.querySelector('.pane [role="dialog"]')).not.toBeNull();
   });
 
   it('opens titled as a change for a key that is already saved', async () => {

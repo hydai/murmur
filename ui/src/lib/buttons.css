@@ -1,107 +1,13 @@
 /*
- * Shared button layer.
+ * Native-style buttons, shared by every pane.
  *
- * Component <style> blocks are scoped, so the same button was redefined in six
- * files under two names — .btn-primary and .primary-btn — in three sizes that
- * differed only in padding and font size. The colours live here; the size is a
- * modifier, so each call site keeps the dimensions it had.
+ * Component <style> blocks are scoped, so the button lives here rather than
+ * being redefined in each file. .btn is the plain button, 28px tall;
+ * .btn-small is 22px. The intent is a colour modifier: .btn-primary for the
+ * default action, .btn-destructive for one that deletes.
  */
 
 .btn {
-  border-radius: 8px;
-  border: none;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Sizes */
-
-.btn-md {
-  padding: 8px 16px;
-  font-size: 13px;
-  transition: all 0.15s ease;
-}
-
-/* Fills the width of a form. */
-.btn-block {
-  width: 100%;
-  padding: 8px;
-  font-size: 12px;
-  transition: background 0.15s ease;
-}
-
-/* Sits on a row with inputs of the same height. */
-.btn-fixed {
-  height: 34px;
-  padding: 0 16px;
-  font-size: 12px;
-  transition: background 0.15s ease;
-}
-
-/* Sits on its own, away from inputs. */
-.btn-lg {
-  padding: 10px 20px;
-  font-size: 14px;
-  transition: all 0.2s ease;
-}
-
-/* Intents */
-
-.btn-primary {
-  background: var(--accent);
-  color: var(--text-primary);
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-
-.btn-secondary {
-  background: var(--surface-raised);
-  color: var(--text-primary);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: var(--surface-raised-hover);
-}
-
-.btn-danger {
-  background: color-mix(in srgb, var(--status-red) 30%, transparent);
-  color: var(--status-red-text);
-  border: 1px solid color-mix(in srgb, var(--status-red) 50%, transparent);
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--status-red) 40%, transparent);
-}
-
-/* A destructive action that should not shout until hovered. */
-.btn-danger-outline {
-  background: transparent;
-  color: var(--status-red-text);
-  border: 1px solid color-mix(in srgb, var(--status-red) 40%, transparent);
-}
-
-.btn-danger-outline:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--status-red) 15%, transparent);
-}
-
-/*
- * Native-style buttons, scoped to .ui-v2 so the legacy buttons above keep
- * working until every page has moved over.
- *
- * .btn is the plain button, 28px tall; .btn-small is 22px. The intent is a
- * colour modifier. The legacy rules above still load and share these class
- * names, so where one outranks a v2 rule (the primary hover colour) or would
- * otherwise show through (cursor, weight), the rule below sets it explicitly.
- */
-
-.ui-v2 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -119,38 +25,31 @@
   cursor: default;
 }
 
-.ui-v2 .btn-small {
+.btn-small {
   height: 22px;
   padding: 0 10px;
   font-size: 12px;
 }
 
-.ui-v2 .btn-primary {
+.btn-primary {
   background: var(--accent-fill);
   color: var(--on-accent);
   box-shadow: none;
 }
 
-/*
- * Native buttons do not change colour under the pointer. This also outranks
- * the legacy primary hover rule, which would turn the button purple.
- */
-.ui-v2 .btn-primary:hover:not(:disabled) {
-  background: var(--accent-fill);
-}
-
-.ui-v2 .btn-destructive {
+.btn-destructive {
   background: var(--danger-fill);
   color: var(--on-accent);
   box-shadow: none;
 }
 
-.ui-v2 .btn:disabled {
+.btn:disabled {
   opacity: .45;
   cursor: default;
 }
 
-.ui-v2 :focus-visible {
+/* The page-wide keyboard focus ring. */
+:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }

@@ -49,7 +49,7 @@
 </script>
 
 <div class="shell">
-  <nav class="sidebar ui-v2" aria-label="Settings" data-tauri-drag-region="deep">
+  <nav class="sidebar" aria-label="Settings" data-tauri-drag-region="deep">
     {#each GROUPS as group (group.id)}
       <div class="nav-group">
         {#each group.panes as pane (pane.id)}

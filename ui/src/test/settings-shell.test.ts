@@ -26,7 +26,7 @@ function emit(name: string, payload: unknown) {
   flushSync();
 }
 
-/** What the legacy pages read when they mount. */
+/** The config the panes read when they mount. */
 const CONFIG = {
   hotkey: 'Ctrl+`',
   output_mode: 'clipboard',
