@@ -1,4 +1,25 @@
 # Changelog
+## 0.2.19 (2026-10-06)
+
+### Features
+
+- add native design tokens and basic components
+- add sheets, toasts, and the pane layout
+- move settings into a single-window shell with native chrome
+- open history inside the settings window
+- merge hotkey and output into the General pane
+- redesign the Transcription pane
+- show voice commands and edit their prompts from AI Processing
+- redesign the Dictionary pane
+- redesign the History pane
+- redesign About and move diagnostics under it
+- use macOS menu wording from one menu builder
+- return to a pane's top level from its sidebar item
+
+### Fixes
+
+- point the CLI install hints at the current packages
+
 ## 0.2.18 (2026-09-17)
 
 ### Fixes
