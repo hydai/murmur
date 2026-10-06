@@ -1,11 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "overlay",
-  "description": "The always-on recording overlay: start or stop a recording, open settings, drag the window",
+  "description": "The recording capsule: shows pipeline events and calls no commands",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "core:window:allow-start-dragging",
-    "overlay-commands"
+    "core:default"
   ]
 }

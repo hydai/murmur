@@ -1860,27 +1860,16 @@ mod tests {
         }
     }
 
+    /// The recording capsule only listens for events, so the `main` window holds
+    /// the baseline `core:default` and nothing else. Least privilege here is the
+    /// difference between a compromised page reading API keys or not: the
+    /// capability names no command set, so none of them can be reached.
     #[test]
     fn the_overlay_cannot_reach_configuration_or_history() {
-        // The overlay window is always on screen. Least privilege here is the
-        // difference between a compromised page reading API keys or not.
-        let overlay = include_str!("../permissions/default.toml")
-            .split("identifier = \"settings-commands\"")
-            .next()
-            .expect("the overlay set comes first");
-        for forbidden in [
-            "get_config",
-            "save_api_key",
-            "get_dictionary",
-            "get_history",
-            "clear_history",
-            "get_diagnostic_logs",
-        ] {
-            assert!(
-                !overlay.contains(forbidden),
-                "the overlay must not be granted `{forbidden}`"
-            );
-        }
+        let overlay: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/overlay.json"))
+                .expect("overlay.json is valid JSON");
+        assert_eq!(overlay["permissions"], serde_json::json!(["core:default"]));
     }
 
     /// Mirrors `ui/src/test/shortcut.test.ts`: the strings listed here are the ones that test

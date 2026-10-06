@@ -9,6 +9,8 @@
  * Payloads mirror the structs in `crates/lt-tauri/src/events.rs`.
  */
 
+import type { CapsuleContext } from '../components/capsule/capsuleState';
+
 export interface PipelineStatePayload {
   state: string;
   timestamp_ms: number;
@@ -36,6 +38,7 @@ export interface ErrorPayload {
 }
 
 export interface RecordingStatePayload {
+  /** True while the microphone is open. */
   is_recording: boolean;
 }
 
@@ -72,6 +75,8 @@ export interface AppEvents {
   'transcription-partial': TranscriptionPayload;
   'transcription-committed': TranscriptionPayload;
   'command-detected': CommandDetectedPayload;
+  /** Goes to the capsule window only, as a recording starts. */
+  'capsule-context': CapsuleContext;
   'apple-stt-model-progress': ModelProgressPayload;
   navigate: NavigatePayload;
   'update-available': void;

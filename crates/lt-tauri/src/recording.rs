@@ -1,6 +1,6 @@
 use lt_pipeline::PipelineState;
 
-/// What a "toggle recording" gesture (hotkey, tray, overlay button) should do.
+/// What a "toggle recording" gesture (the hotkey or the menu bar) should do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ToggleAction {
     Start,

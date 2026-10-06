@@ -333,7 +333,8 @@ impl Session {
     /// Write the final text out and settle the pipeline.
     ///
     /// A sink failure is reported but never withholds the result: the text
-    /// stays available in the overlay even when delivery fails.
+    /// is still published (and kept in History when saving is on) even when
+    /// delivery fails.
     async fn deliver(
         &self,
         text: String,
