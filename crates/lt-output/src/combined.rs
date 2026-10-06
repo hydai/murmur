@@ -146,6 +146,47 @@ mod tests {
         assert_eq!(*typed.lock().unwrap(), ["hello"]);
     }
 
+    /// The recording capsule words a failed delivery from these names
+    /// (ui/src/components/capsule/capsuleState.ts), so the error names each
+    /// destination that failed, and only those.
+    #[tokio::test]
+    async fn the_error_names_each_destination_that_failed() {
+        let delivered = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let error_from = |clipboard: Box<dyn OutputSink>, keyboard: Box<dyn OutputSink>| async {
+            CombinedOutput::from_sinks(OutputMode::Both, Some(clipboard), Some(keyboard))
+                .output_text("hello")
+                .await
+                .unwrap_err()
+                .to_string()
+        };
+
+        let error = error_from(
+            Box::new(FailingSink),
+            Box::new(RecordingSink(delivered.clone())),
+        )
+        .await;
+        assert!(
+            error.contains("clipboard: ") && !error.contains("keyboard: "),
+            "{error}"
+        );
+
+        let error = error_from(
+            Box::new(RecordingSink(delivered.clone())),
+            Box::new(FailingSink),
+        )
+        .await;
+        assert!(
+            error.contains("keyboard: ") && !error.contains("clipboard: "),
+            "{error}"
+        );
+
+        let error = error_from(Box::new(FailingSink), Box::new(FailingSink)).await;
+        assert!(
+            error.contains("clipboard: ") && error.contains("keyboard: "),
+            "{error}"
+        );
+    }
+
     #[tokio::test]
     #[ignore = "Types into the focused application; run only in an isolated desktop session"]
     async fn test_combined_output_text() {
