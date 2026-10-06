@@ -506,7 +506,7 @@
     outline-offset: 0;
   }
 
-  /* The hint is a command or a link, which has no place to break, so it may break anywhere. */
+  /* The hint is an install command whose package name has no place to break, so it may break anywhere. */
   .install-hint {
     font-size: 11.5px;
     line-height: 1.4;

@@ -1700,7 +1700,7 @@ fn main() {
                     }
                     Ok(false) => {
                         tracing::warn!("⚠ Gemini CLI is not installed.");
-                        tracing::warn!("  Install: https://github.com/google/generative-ai-cli");
+                        tracing::warn!("  Install: npm install -g @google/gemini-cli");
                     }
                     Err(e) => {
                         tracing::error!("✗ Failed to check Gemini CLI: {}", e);
@@ -1715,7 +1715,7 @@ fn main() {
                     }
                     Ok(false) => {
                         tracing::warn!("⚠ Copilot CLI is not installed.");
-                        tracing::warn!("  Install: npm install -g @githubnext/github-copilot-cli");
+                        tracing::warn!("  Install: npm install -g @github/copilot");
                     }
                     Err(e) => {
                         tracing::error!("✗ Failed to check Copilot CLI: {}", e);

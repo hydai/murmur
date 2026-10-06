@@ -6,7 +6,7 @@ static SPEC: CliSpec = CliSpec {
     binary: "copilot",
     display_name: "Copilot CLI",
     default_model: DEFAULT_MODEL,
-    install_hint: "Please install copilot-cli.",
+    install_hint: "Please install Copilot CLI: npm install -g @github/copilot",
     args: |prompt, model| {
         vec![
             "--prompt".into(),
