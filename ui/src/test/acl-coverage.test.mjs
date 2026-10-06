@@ -35,7 +35,7 @@ function permissionSets() {
     const list = block.match(/commands\.allow\s*=\s*\[([\s\S]*?)\]/)?.[1] ?? '';
     sets.set(identifier, [...list.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]));
   }
-  assert.ok(sets.size >= 3, `parsed ${sets.size} permission sets, expected overlay, settings and history`);
+  assert.ok(sets.size >= 2, `parsed ${sets.size} permission sets, expected settings and history`);
   return sets;
 }
 
@@ -52,7 +52,7 @@ function capabilities() {
 const ROUTER = 'ui/src/App.svelte';
 const WINDOW_SOURCES = {
   // The router loads in both windows, so whatever it uses each must be granted.
-  main: [ROUTER, 'ui/src/components/overlay'],
+  main: [ROUTER, 'ui/src/components/capsule'],
   // History is a pane of the settings window, so it is granted here too.
   settings: [
     ROUTER,
@@ -81,6 +81,12 @@ const PLUGIN_GRANTS = [
 
 /** Granted to every window as the baseline for events and the webview itself. */
 const BASELINE = new Set(['core:default']);
+
+/**
+ * The windows whose UI calls commands. The capsule only listens for events, so
+ * `main` is not one of them: finding no invoke() there is the point.
+ */
+const WINDOWS_THAT_INVOKE = new Set(['settings']);
 
 function sourceFiles(relative) {
   const full = join(repo, relative);
@@ -132,7 +138,9 @@ function grantsTo(window) {
 for (const window of Object.keys(WINDOW_SOURCES)) {
   test(`the ${window} window is granted every command its UI invokes`, () => {
     const invoked = commandsInvokedBy(window);
-    assert.ok(invoked.size > 0, `found no invoke() calls for ${window}`);
+    if (WINDOWS_THAT_INVOKE.has(window)) {
+      assert.ok(invoked.size > 0, `found no invoke() calls for ${window}`);
+    }
     const { commands } = grantsTo(window);
     const missing = [...invoked].filter((command) => !commands.has(command)).sort();
     assert.deepEqual(missing, [], `${window} invokes commands it is not allowed`);
@@ -165,6 +173,8 @@ test('the overlay stays away from configuration and history', () => {
   for (const forbidden of ['get_config', 'save_api_key', 'get_dictionary', 'get_history', 'clear_history']) {
     assert.ok(!commands.has(forbidden), `overlay must not reach ${forbidden}`);
   }
+  // The capsule calls nothing, so it is granted nothing.
+  assert.equal(commands.size, 0, `the capsule window is granted ${[...commands].join(', ')}`);
 });
 
 test('the committed generated ACL matches its sources', () => {

@@ -1,17 +1,10 @@
 "$schema" = "../gen/schemas/desktop-schema.json"
 
 # Permission sets group commands by job, and each window's capability lists the
-# sets it needs. The overlay is always on screen and only ever starts a
-# recording or opens settings; it has no business reading the config, writing
-# an API key or clearing history, so it cannot.
-
-[[permission]]
-identifier = "overlay-commands"
-description = "What the always-on recording overlay needs"
-commands.allow = [
-    "toggle_recording",
-    "open_settings_window",
-]
+# sets it needs. The recording capsule (the `main` window) calls no commands.
+# `toggle_recording` and `open_settings_window` stay registered because the
+# shortcut and the menu bar call them directly in Rust, but no window is
+# granted them.
 
 [[permission]]
 identifier = "settings-commands"

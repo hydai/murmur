@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount, type Component } from 'svelte';
 import userEvent from '@testing-library/user-event';
-import WaveformIndicator from '../components/overlay/WaveformIndicator.svelte';
-import FloatingOverlay from '../components/overlay/FloatingOverlay.svelte';
 import AboutSection from '../components/settings/AboutSection.svelte';
 import ProviderConfig from '../components/settings/ProviderConfig.svelte';
 import HistoryPanel from '../components/history/HistoryPanel.svelte';
@@ -14,12 +12,11 @@ import { resetDrafts } from '../components/settings/promptDrafts.svelte';
 import DiagnosticsPanel from '../components/settings/DiagnosticsPanel.svelte';
 
 const mocks = vi.hoisted(() => ({
-  invoke: vi.fn(), listen: vi.fn(), check: vi.fn(), startDragging: vi.fn(), writeText: vi.fn(),
+  invoke: vi.fn(), listen: vi.fn(), check: vi.fn(), writeText: vi.fn(),
 }));
 vi.mock('../lib/tauri', () => ({ safeInvoke: mocks.invoke }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }));
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: async () => '1.0.0' }));
-vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ startDragging: mocks.startDragging }) }));
 vi.mock('@tauri-apps/plugin-updater', () => ({ check: mocks.check }));
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ writeText: mocks.writeText }));
@@ -69,7 +66,6 @@ beforeEach(() => {
     listeners.set(name, callback);
     return () => listeners.delete(name);
   });
-  mocks.startDragging.mockResolvedValue(undefined);
   mocks.writeText.mockReset().mockResolvedValue(undefined);
 });
 
@@ -78,87 +74,6 @@ afterEach(async () => {
   mounted = [];
   document.body.replaceChildren();
   vi.useRealTimers();
-});
-
-describe('recording overlay', () => {
-  it('renders bounded waveform bars without mutating state during derivation', () => {
-    const { target } = render(WaveformIndicator, { rms: 0.5, voiceActive: true });
-    const bars = [...target.querySelectorAll<HTMLElement>('.bar')];
-    expect(bars).toHaveLength(24);
-    expect(bars.every(bar => Number.parseFloat(bar.style.height) >= 8 && Number.parseFloat(bar.style.height) <= 100)).toBe(true);
-    expect(new Set(bars.map(bar => bar.style.height)).size).toBeGreaterThan(1);
-  });
-
-  it('resets previous transcript and errors when a hotkey starts another recording', async () => {
-    const { target } = render(FloatingOverlay, {});
-    await settle();
-    emit('pipeline-result', { text: 'Previous recording', processing_time_ms: 10 });
-    expect(target.textContent).toContain('Text ready');
-    expect(target.textContent).not.toContain('Copied to clipboard');
-    emit('pipeline-state', { state: 'done' });
-    emit('pipeline-error', { message: 'Previous error', recoverable: true });
-    emit('command-detected', { command_name: 'shorten' });
-    emit('pipeline-state', { state: 'recording' });
-    emit('recording-state', { is_recording: true });
-    emit('transcription-committed', { text: 'New recording' });
-    await settle();
-    expect(target.textContent).toContain('New recording');
-    expect(target.textContent).not.toContain('Previous recording');
-    expect(target.textContent).not.toContain('Previous error');
-    expect(target.querySelector('.result-indicator')).toBeNull();
-    expect(target.querySelectorAll('.bar')).toHaveLength(24);
-    emit('pipeline-state', { state: 'processing' });
-    emit('recording-state', { is_recording: false });
-    expect(target.textContent).toContain('Processing...');
-    expect(target.textContent).not.toContain('Shortening...');
-  });
-
-  it('offers to cancel while processing and routes the button through the backend toggle', async () => {
-    mocks.invoke.mockResolvedValue(undefined);
-    const { target } = render(FloatingOverlay, {});
-    await settle();
-    emit('pipeline-state', { state: 'recording' });
-    emit('recording-state', { is_recording: true });
-    emit('pipeline-state', { state: 'processing' });
-    emit('recording-state', { is_recording: false });
-    button(target, 'Cancel').click();
-    await settle();
-    expect(mocks.invoke).toHaveBeenCalledWith('toggle_recording');
-    emit('pipeline-state', { state: 'idle' });
-    await settle();
-    expect(target.textContent).toContain('Cancelled');
-    expect(target.textContent).not.toContain('Processing...');
-  });
-
-  it('clears the processing indicator from the result alone', async () => {
-    const { target } = render(FloatingOverlay, {});
-    await settle();
-    emit('pipeline-state', { state: 'processing' });
-    emit('recording-state', { is_recording: false });
-    expect(target.textContent).toContain('Processing...');
-    // The backend no longer emits a duplicate transcription-processed event,
-    // so the result itself has to clear the spinner.
-    emit('pipeline-result', { text: 'done', processing_time_ms: 5 });
-    await settle();
-    expect(target.textContent).not.toContain('Processing...');
-  });
-
-  it('does not subscribe to events the backend never emits', async () => {
-    render(FloatingOverlay, {});
-    await settle();
-    for (const name of ['processing-status', 'transcription-error', 'transcription-processed']) {
-      expect(listeners.has(name), `${name} has no emitter in the Rust side`).toBe(false);
-    }
-  });
-
-  it('uses native dragging for the window surface and excludes its controls', async () => {
-    const { target } = render(FloatingOverlay, {});
-    target.querySelector('.app-title')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
-    expect(mocks.startDragging).toHaveBeenCalledTimes(1);
-    target.querySelector('.record-button')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
-    target.querySelector('.app-title')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 2 }));
-    expect(mocks.startDragging).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe('updater and lifecycle', () => {

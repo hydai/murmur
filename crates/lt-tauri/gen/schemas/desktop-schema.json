@@ -183,12 +183,6 @@
           "markdownDescription": "Reading and pruning the transcription history"
         },
         {
-          "description": "What the always-on recording overlay needs",
-          "type": "string",
-          "const": "overlay-commands",
-          "markdownDescription": "What the always-on recording overlay needs"
-        },
-        {
           "description": "Reading and writing every configurable setting",
           "type": "string",
           "const": "settings-commands",
