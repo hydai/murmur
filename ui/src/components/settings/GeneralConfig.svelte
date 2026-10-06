@@ -31,6 +31,7 @@
   let outputMode = $state('clipboard');
   let chineseConversion = $state('traditional');
   let saveHistory = $state(true);
+  let showIndicator = $state(true);
 
   // Why the last key press was not a shortcut. A shortcut the backend refuses is a toast instead.
   let shortcutError = $state('');
@@ -43,11 +44,13 @@
         hotkey: string;
         output_mode: string;
         save_history: boolean;
+        show_recording_indicator?: boolean;
         chinese_conversion?: string;
       }>('get_config');
       hotkey = config.hotkey;
       outputMode = config.output_mode.toLowerCase();
       saveHistory = config.save_history !== false;
+      showIndicator = config.show_recording_indicator !== false;
       chineseConversion = (config.chinese_conversion || 'traditional').toLowerCase();
     });
   }
@@ -83,6 +86,13 @@
       saveHistory = enabled;
     });
   }
+
+  async function setShowIndicator(enabled: boolean): Promise<void> {
+    await status.run('Failed to update recording indicator', async () => {
+      await invoke('set_show_recording_indicator', { enabled });
+      showIndicator = enabled;
+    });
+  }
 </script>
 
 <Pane title="General" {status}>
@@ -95,6 +105,11 @@
           onchange={saveHotkey}
           onerror={(message) => (shortcutError = message)}
         />
+      {/snippet}
+    </Row>
+    <Row label="Show recording indicator" detail="A small capsule at the bottom of the screen while you dictate">
+      {#snippet trailing()}
+        <Switch checked={showIndicator} label="Show recording indicator" onchange={setShowIndicator} />
       {/snippet}
     </Row>
   </Group>

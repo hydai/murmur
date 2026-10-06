@@ -14,6 +14,7 @@ const CONFIG = {
   output_mode: 'clipboard',
   save_history: true,
   chinese_conversion: 'traditional',
+  show_recording_indicator: true,
 };
 
 /** Every command succeeds, and get_config answers with `config`. */
@@ -53,6 +54,8 @@ const chineseSelect = (target: Element) =>
   target.querySelector<HTMLSelectElement>('select[aria-label="Chinese characters"]')!;
 const historySwitch = (target: Element) =>
   target.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Save transcription history"]')!;
+const indicatorSwitch = (target: Element) =>
+  target.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Show recording indicator"]')!;
 
 async function choose(select: HTMLSelectElement, value: string) {
   select.value = value;
@@ -79,6 +82,7 @@ describe('General pane', () => {
       text.querySelector('.row-detail')?.textContent,
     ])).toEqual([
       ['Shortcut', 'Starts and stops recording'],
+      ['Show recording indicator', 'A small capsule at the bottom of the screen while you dictate'],
       ['Copy to clipboard', 'Paste it yourself with ⌘V'],
       ['Type it out', 'Murmur types the text at your cursor'],
       ['Type it out and copy', 'Also keeps a copy on the clipboard'],
@@ -196,6 +200,36 @@ describe('General pane', () => {
     expect(mocks.invoke).toHaveBeenCalledWith('set_save_history', { enabled: false });
     expect(historySwitch(target).getAttribute('aria-checked')).toBe('true');
     expect(errorToast(target)).toContain('Failed to update history setting');
+  });
+
+  it('shows the recording indicator switch in the Recording group and saves it', async () => {
+    backend({ ...CONFIG, show_recording_indicator: false });
+    const target = await open();
+    const row = indicatorSwitch(target).closest('.row')!;
+    expect(row.closest('.group')?.querySelector('.group-title')?.textContent).toBe('Recording');
+    expect(row.querySelector('.row-label')?.textContent).toBe('Show recording indicator');
+    expect(row.querySelector('.row-detail')?.textContent)
+      .toBe('A small capsule at the bottom of the screen while you dictate');
+    expect(indicatorSwitch(target).getAttribute('aria-checked')).toBe('false');
+    indicatorSwitch(target).click(); await settle();
+    expect(mocks.invoke).toHaveBeenCalledWith('set_show_recording_indicator', { enabled: true });
+    expect(indicatorSwitch(target).getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('treats a config without show_recording_indicator as on', async () => {
+    // What a config written before the setting existed returns.
+    backend({ hotkey: 'Ctrl+`', output_mode: 'clipboard', save_history: true, chinese_conversion: 'traditional' });
+    const target = await open();
+    expect(indicatorSwitch(target).getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('keeps the indicator switch where it was when saving fails', async () => {
+    backendRejecting('set_show_recording_indicator', new Error('disk full'));
+    const target = await open();
+    indicatorSwitch(target).click(); await settle();
+    expect(mocks.invoke).toHaveBeenCalledWith('set_show_recording_indicator', { enabled: false });
+    expect(indicatorSwitch(target).getAttribute('aria-checked')).toBe('true');
+    expect(errorToast(target)).toContain('Failed to update recording indicator');
   });
 
   it('confirms nothing for a change the screen already shows', async () => {

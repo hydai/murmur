@@ -785,6 +785,22 @@ async fn set_save_history(enabled: bool, state: tauri::State<'_, AppState>) -> R
 }
 
 #[tauri::command]
+async fn set_show_recording_indicator(
+    enabled: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .store
+        .config
+        .update(move |config| {
+            config.show_recording_indicator = enabled;
+            Ok(())
+        })
+        .await
+        .map(|_| ())
+}
+
+#[tauri::command]
 async fn set_hotkey(
     hotkey: String,
     app: tauri::AppHandle,
@@ -1573,6 +1589,7 @@ fn main() {
             set_custom_stt_endpoint,
             set_output_mode,
             set_save_history,
+            set_show_recording_indicator,
             set_chinese_conversion,
             set_hotkey,
             get_dictionary,

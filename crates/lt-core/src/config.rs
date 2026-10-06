@@ -339,12 +339,20 @@ pub struct AppConfig {
     #[serde(default = "default_save_history")]
     pub save_history: bool,
 
+    /// Whether the recording capsule appears while dictating
+    #[serde(default = "default_show_recording_indicator")]
+    pub show_recording_indicator: bool,
+
     /// Chinese conversion applied to the final output
     #[serde(default)]
     pub chinese_conversion: ChineseConversion,
 }
 
 fn default_save_history() -> bool {
+    true
+}
+
+fn default_show_recording_indicator() -> bool {
     true
 }
 
@@ -387,6 +395,7 @@ impl Default for AppConfig {
             http_llm_config: HttpLlmConfig::default(),
             http_stt_config: HttpSttConfig::default(),
             save_history: default_save_history(),
+            show_recording_indicator: default_show_recording_indicator(),
             chinese_conversion: ChineseConversion::default(),
         }
     }
@@ -511,6 +520,20 @@ mod tests {
         assert!(!legacy.contains("save_history"));
         let parsed: AppConfig = toml::from_str(&legacy).unwrap();
         assert!(parsed.save_history);
+    }
+
+    #[test]
+    fn show_recording_indicator_defaults_to_true_for_existing_config_files() {
+        assert!(AppConfig::default().show_recording_indicator);
+        let written = toml::to_string(&AppConfig::default()).unwrap();
+        let legacy: String = written
+            .lines()
+            .filter(|line| !line.starts_with("show_recording_indicator"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!legacy.contains("show_recording_indicator"));
+        let parsed: AppConfig = toml::from_str(&legacy).unwrap();
+        assert!(parsed.show_recording_indicator);
     }
 
     #[test]

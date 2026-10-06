@@ -28,6 +28,7 @@ commands.allow = [
     "set_custom_stt_endpoint",
     "set_output_mode",
     "set_save_history",
+    "set_show_recording_indicator",
     "set_chinese_conversion",
     "set_hotkey",
     "get_dictionary",
