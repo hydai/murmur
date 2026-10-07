@@ -59,22 +59,15 @@ fn register_recording_shortcut(app: &tauri::AppHandle, shortcut: Shortcut) -> Re
             if event.state != ShortcutState::Pressed {
                 return;
             }
-            let app = app.clone();
-            tauri::async_runtime::spawn(async move {
-                let state = app.state::<AppState>();
-                let result = toggle_recording(app.clone(), state).await;
-                if let Err(message) = result {
-                    report_toggle_failure(&app, message).await;
-                }
-            });
+            tauri::async_runtime::spawn(toggle_and_report(app.clone()));
         })
         .map_err(|error| format!("Failed to register shortcut: {error}"))
 }
 
-/// The hotkey and the menu bar run `toggle_recording` with no caller to read
-/// its error. When it fails (no API key, say) the pipeline never started and
-/// has nothing to report, so the failure goes out as a `pipeline-error` and the
-/// capsule shows it, unless the person has turned the indicator off. A config
+/// `toggle_and_report` sends here the toggle failures nothing has reported:
+/// when a start fails before the pipeline runs (no API key, say), or a stop or
+/// cancel fails, the failure goes out as a `pipeline-error` and the capsule
+/// shows it, unless the person has turned the indicator off. A config
 /// that cannot be read counts as the indicator on (`capsule::failure_context`):
 /// every press fails then, and the capsule is where the person sees why. The
 /// window comes up before the error goes out, so the frontend's countdown,
@@ -851,6 +844,18 @@ async fn start_pipeline(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    start_recording(app, state)
+        .await
+        .map_err(recording::ToggleFailure::into_message)
+}
+
+/// Starts a recording. A failure inside `Pipeline::start` comes back as
+/// `Reported`, since the pipeline has announced it; any earlier one, as
+/// `Unreported`.
+async fn start_recording(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), recording::ToggleFailure> {
     tracing::info!("Starting pipeline");
 
     let pipeline = state.pipeline.lock().await;
@@ -859,10 +864,7 @@ async fn start_pipeline(
     let current_state = pipeline.get_state().await;
     match current_state {
         PipelineState::Recording | PipelineState::Transcribing | PipelineState::Processing => {
-            return Err(format!(
-                "Pipeline is already running (state: {:?})",
-                current_state
-            ));
+            return Err(format!("Pipeline is already running (state: {:?})", current_state).into());
         }
         _ => {} // Idle, Done, Error are all acceptable starting states
     }
@@ -913,7 +915,9 @@ async fn start_pipeline(
             }
             #[cfg(not(target_os = "macos"))]
             {
-                return Err("Apple STT is only available on macOS 26+".to_string());
+                return Err("Apple STT is only available on macOS 26+"
+                    .to_string()
+                    .into());
             }
         }
         SttProviderType::CustomStt => {
@@ -964,7 +968,16 @@ async fn start_pipeline(
     // Start the pipeline
     pipeline.start(stt).await.map_err(|e| {
         tracing::error!("Failed to start pipeline: {}", e);
-        format!("Failed to start pipeline: {}", e)
+        let message = format!("Failed to start pipeline: {}", e);
+        match e {
+            // Refused before it announced anything.
+            lt_core::error::MurmurError::InvalidState(_) => {
+                recording::ToggleFailure::Unreported(message)
+            }
+            // Past its state check, the pipeline announces the recording and
+            // then its failure (`fail_start`), so the capsule shows it already.
+            _ => recording::ToggleFailure::Reported(message),
+        }
     })?;
 
     tracing::info!("Pipeline started successfully");
@@ -996,28 +1009,48 @@ async fn stop_pipeline(
     Ok(())
 }
 
-/// Shared by the hotkey and the menu bar.
 #[tauri::command]
 async fn toggle_recording(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    toggle(app, state)
+        .await
+        .map_err(recording::ToggleFailure::into_message)
+}
+
+/// Starts, stops or cancels, whichever `recording::toggle_action` picks.
+async fn toggle(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), recording::ToggleFailure> {
     let action = {
         let pipeline = state.pipeline.lock().await;
         recording::toggle_action(pipeline.get_state().await, pipeline.is_capturing().await)
     };
     match action {
-        recording::ToggleAction::Start => start_pipeline(app, state).await,
-        recording::ToggleAction::Stop => stop_pipeline(app, state).await,
+        recording::ToggleAction::Start => start_recording(app, state).await,
+        recording::ToggleAction::Stop => Ok(stop_pipeline(app, state).await?),
         recording::ToggleAction::Cancel => {
             tracing::info!("Cancelling pipeline");
-            state
+            Ok(state
                 .pipeline
                 .lock()
                 .await
                 .reset()
                 .await
-                .map_err(|e| format!("Failed to cancel pipeline: {e}"))
+                .map_err(|e| format!("Failed to cancel pipeline: {e}"))?)
+        }
+    }
+}
+
+/// The hotkey and the menu bar toggle with no caller to read the error, so a
+/// failure goes to `report_toggle_failure`, unless the pipeline reported it.
+async fn toggle_and_report(app: tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    if let Err(failure) = toggle(app.clone(), state).await {
+        if let Some(message) = failure.unreported() {
+            report_toggle_failure(&app, message).await;
         }
     }
 }
@@ -1705,14 +1738,7 @@ fn main() {
                     let app_handle = app.clone();
                     match event.id.as_ref() {
                         "toggle_recording" => {
-                            tauri::async_runtime::spawn(async move {
-                                let state = app_handle.state::<AppState>();
-                                if let Err(message) =
-                                    toggle_recording(app_handle.clone(), state).await
-                                {
-                                    report_toggle_failure(&app_handle, message).await;
-                                }
-                            });
+                            tauri::async_runtime::spawn(toggle_and_report(app_handle));
                         }
                         "open_settings" => {
                             let handle = app_handle.clone();
