@@ -1057,6 +1057,11 @@ async fn get_dictionary(state: tauri::State<'_, AppState>) -> Result<PersonalDic
     state.store.dictionary.read().await
 }
 
+/// Refusal for a word another entry already has, ignoring case: two entries for
+/// one word could not be told apart, since edits and deletes find a word by name.
+/// `DictionaryEditor.svelte` says the same before it asks.
+const WORD_TAKEN: &str = "That word is already in your dictionary.";
+
 #[derive(serde::Deserialize)]
 struct AddEntryParams {
     term: String,
@@ -1073,6 +1078,9 @@ async fn add_dictionary_entry(
         .store
         .dictionary
         .update(move |dict| {
+            if dict.term_taken(&params.term, None) {
+                return Err(WORD_TAKEN.to_string());
+            }
             dict.add_entry(lt_core::DictionaryEntry {
                 term: params.term,
                 aliases: params.aliases,
@@ -1101,6 +1109,9 @@ async fn update_dictionary_entry(
         .store
         .dictionary
         .update(move |dict| {
+            if dict.term_taken(&params.term, Some(&params.old_term)) {
+                return Err(WORD_TAKEN.to_string());
+            }
             if !dict.update_entry(
                 &params.old_term,
                 lt_core::DictionaryEntry {

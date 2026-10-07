@@ -48,6 +48,23 @@ impl PersonalDictionary {
         self.entries.push(entry);
     }
 
+    /// Whether an entry already has `term`, ignoring letter case. The entry
+    /// being renamed (the one `update_entry` would change for `editing`) does
+    /// not count, so a word can change its own case.
+    pub fn term_taken(&self, term: &str, editing: Option<&str>) -> bool {
+        // An edit that keeps its word adds no copy of it, even where an older
+        // dictionary already holds one.
+        if editing == Some(term) {
+            return false;
+        }
+        let renamed = editing.and_then(|old| self.entries.iter().position(|e| e.term == old));
+        let term = term.to_lowercase();
+        self.entries
+            .iter()
+            .enumerate()
+            .any(|(index, e)| Some(index) != renamed && e.term.to_lowercase() == term)
+    }
+
     /// Update an entry by term
     pub fn update_entry(&mut self, old_term: &str, new_entry: DictionaryEntry) -> bool {
         if let Some(pos) = self.entries.iter().position(|e| e.term == old_term) {
@@ -180,6 +197,46 @@ mod tests {
     fn test_remove_nonexistent_entry() {
         let mut dict = PersonalDictionary::new();
         assert!(!dict.remove_entry("NonExistent"));
+    }
+
+    #[test]
+    fn a_word_is_taken_once_any_entry_has_it_ignoring_case() {
+        let mut dict = PersonalDictionary::new();
+        for term in ["Murmur", "Tauri"] {
+            dict.add_entry(DictionaryEntry {
+                term: term.to_string(),
+                aliases: vec![],
+                description: None,
+            });
+        }
+
+        assert!(dict.term_taken("murmur", None));
+        assert!(dict.term_taken("MURMUR", None));
+        assert!(!dict.term_taken("Localtype", None));
+        // The word being renamed does not count against itself, so it can change its case.
+        assert!(!dict.term_taken("murmur", Some("Murmur")));
+        // Another word does.
+        assert!(dict.term_taken("tauri", Some("Murmur")));
+    }
+
+    #[test]
+    fn an_edit_that_keeps_its_word_is_never_refused() {
+        // A dictionary written before duplicates were refused can hold two
+        // copies of a word, and each must stay editable.
+        let mut dict = PersonalDictionary::new();
+        for term in ["Murmur", "murmur", "Tauri", "Tauri"] {
+            dict.add_entry(DictionaryEntry {
+                term: term.to_string(),
+                aliases: vec![],
+                description: None,
+            });
+        }
+
+        assert!(!dict.term_taken("Murmur", Some("Murmur")));
+        assert!(!dict.term_taken("murmur", Some("murmur")));
+        assert!(!dict.term_taken("Tauri", Some("Tauri")));
+        // Renaming one copy to the other's spelling would add an exact duplicate.
+        assert!(dict.term_taken("Murmur", Some("murmur")));
     }
 
     #[test]

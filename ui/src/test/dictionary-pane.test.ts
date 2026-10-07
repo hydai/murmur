@@ -414,6 +414,20 @@ describe('Dictionary pane: adding a word', () => {
     expect(sheetError(target)).toBeUndefined();
   });
 
+  it('refuses a word the dictionary already has, ignoring case and spaces, inside the sheet', async () => {
+    const target = await open([entry('Murmur')]);
+    addButton(target).click(); await settle();
+    fill(field(target, 'term'), ' murmur ');
+    button(dialog(target)!, 'Add Word').click(); await settle();
+    expect(sheetError(target)).toBe('That word is already in your dictionary.');
+    expect(called('add_dictionary_entry')).toHaveLength(0);
+    expect(target.querySelector('.toast')).toBeNull();
+    expect(dialogTitle(target)).toBe('Add Word');
+    // Typing clears it, as it clears "Enter a word."
+    fill(field(target, 'term'), 'Murmur app'); await settle();
+    expect(sheetError(target)).toBeUndefined();
+  });
+
   it('forgets the message when the sheet is opened again', async () => {
     const target = await open();
     addButton(target).click(); await settle();
@@ -615,6 +629,32 @@ describe('Dictionary pane: editing a word', () => {
     expect(called('update_dictionary_entry')).toHaveLength(0);
     expect(target.querySelector('.toast')).toBeNull();
     expect(dialogTitle(target)).toBe('Edit Word');
+  });
+
+  it('refuses renaming a word to another word it has, but lets a word change its own case', async () => {
+    const target = await open([entry('Murmur'), entry('Tauri')]);
+    button(target, 'Tauri').click(); await settle();
+    fill(field(target, 'term'), 'MURMUR');
+    button(dialog(target)!, 'Save').click(); await settle();
+    expect(sheetError(target)).toBe('That word is already in your dictionary.');
+    expect(called('update_dictionary_entry')).toHaveLength(0);
+
+    fill(field(target, 'term'), 'tauri');
+    button(dialog(target)!, 'Save').click(); await settle();
+    expect(mocks.invoke).toHaveBeenCalledWith('update_dictionary_entry', {
+      params: { old_term: 'Tauri', term: 'tauri', aliases: [], description: null },
+    });
+  });
+
+  it('lets either copy of a word an older dictionary holds twice be edited, as long as its word stays', async () => {
+    const target = await open([entry('Murmur'), entry('murmur')]);
+    button(target, 'murmur').click(); await settle();
+    fill(field(target, 'aliases'), 'mermer');
+    button(dialog(target)!, 'Save').click(); await settle();
+    expect(sheetError(target)).toBeUndefined();
+    expect(mocks.invoke).toHaveBeenCalledWith('update_dictionary_entry', {
+      params: { old_term: 'murmur', term: 'murmur', aliases: ['mermer'], description: null },
+    });
   });
 
   it('forgets the message when the sheet is opened again', async () => {
