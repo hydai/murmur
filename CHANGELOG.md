@@ -1,4 +1,19 @@
 # Changelog
+## 0.2.20 (2026-10-07)
+
+### Features
+
+- add a switch for the recording indicator
+- add the recording capsule state
+- replace the invisible overlay with the recording capsule
+- report when the microphone closes
+- show the recording capsule while dictating
+- say "Nothing heard" when a recording ends empty
+
+### Fixes
+
+- keep transcript text out of the webviews
+
 ## 0.2.19 (2026-10-06)
 
 ### Features
