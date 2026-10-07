@@ -1,5 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 
+/** The part of the bridge Tauri injects into the webview that the readiness check reads. */
+interface TauriWindow {
+  __TAURI_INTERNALS__?: { invoke?: unknown };
+}
+
+const tauriInternals = () => (window as Window & TauriWindow).__TAURI_INTERNALS__;
+
 /**
  * Waits for Tauri's IPC bridge to be available, then calls invoke.
  * Prevents "Cannot read properties of undefined (reading 'invoke')" errors
@@ -10,14 +17,14 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
   const INTERVAL_MS = 100;
 
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    if ((window as any).__TAURI_INTERNALS__?.invoke) {
+    if (tauriInternals()?.invoke) {
       return invoke<T>(cmd, args);
     }
     await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS));
   }
 
   // Build a diagnostic error message
-  const tauriObj = (window as any).__TAURI_INTERNALS__;
+  const tauriObj = tauriInternals();
   let detail: string;
   if (tauriObj === undefined) {
     detail = '__TAURI_INTERNALS__ is not defined. '
