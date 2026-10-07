@@ -46,6 +46,9 @@ pub enum PipelineEvent {
     /// The recording ended with nothing transcribed, just before the session
     /// goes back to Idle. A cancel also ends in Idle, without this.
     NothingHeard { timestamp_ms: u64 },
+    /// The microphone opened or closed. Every close goes through the one place
+    /// that stops capture, so this follows the microphone whoever closes it.
+    CaptureChanged { open: bool, timestamp_ms: u64 },
     /// Final result after LLM processing
     FinalResult {
         text: String,
