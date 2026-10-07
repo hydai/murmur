@@ -1,6 +1,6 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "overlay",
+  "identifier": "capsule",
   "description": "The recording capsule: shows pipeline events and calls no commands",
   "windows": ["main"],
   "permissions": [

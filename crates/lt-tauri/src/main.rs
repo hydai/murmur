@@ -1912,11 +1912,11 @@ mod tests {
     /// difference between a compromised page reading API keys or not: the
     /// capability names no command set, so none of them can be reached.
     #[test]
-    fn the_overlay_cannot_reach_configuration_or_history() {
-        let overlay: serde_json::Value =
-            serde_json::from_str(include_str!("../capabilities/overlay.json"))
-                .expect("overlay.json is valid JSON");
-        assert_eq!(overlay["permissions"], serde_json::json!(["core:default"]));
+    fn the_capsule_cannot_reach_configuration_or_history() {
+        let capsule: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/capsule.json"))
+                .expect("capsule.json is valid JSON");
+        assert_eq!(capsule["permissions"], serde_json::json!(["core:default"]));
     }
 
     /// Mirrors `ui/src/test/shortcut.test.ts`: the strings listed here are the ones that test
