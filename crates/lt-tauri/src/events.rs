@@ -19,15 +19,11 @@ struct AudioLevelEvent {
     timestamp_ms: u64,
 }
 
-#[derive(Clone, serde::Serialize)]
-struct TranscriptionEvent {
-    text: String,
-    timestamp_ms: u64,
-}
-
+/// The end of a session's processing. It carries no text: no window needs the
+/// transcript (History reads it from disk), so transcript text never goes out
+/// as an event, where every webview, the capsule's included, could listen.
 #[derive(Clone, serde::Serialize)]
 struct FinalResultEvent {
-    text: String,
     processing_time_ms: u64,
 }
 
@@ -145,23 +141,14 @@ pub(crate) fn spawn(
                         },
                     );
                 }
-                PipelineEvent::PartialTranscription { text, timestamp_ms } => {
-                    let _ = app_clone.emit(
-                        "transcription-partial",
-                        TranscriptionEvent { text, timestamp_ms },
-                    );
-                }
-                PipelineEvent::CommittedTranscription { text, timestamp_ms } => {
+                // Transcript text stays here (see `FinalResultEvent`).
+                PipelineEvent::PartialTranscription { .. } => {}
+                PipelineEvent::CommittedTranscription { text, .. } => {
                     // Accumulate raw transcription for history
                     if !raw_transcription.is_empty() {
                         raw_transcription.push(' ');
                     }
                     raw_transcription.push_str(&text);
-
-                    let _ = app_clone.emit(
-                        "transcription-committed",
-                        TranscriptionEvent { text, timestamp_ms },
-                    );
                 }
                 PipelineEvent::CommandDetected {
                     command_name,
@@ -188,13 +175,8 @@ pub(crate) fn spawn(
                         processing_time_ms
                     );
 
-                    let _ = app_clone.emit(
-                        "pipeline-result",
-                        FinalResultEvent {
-                            text: text.clone(),
-                            processing_time_ms,
-                        },
-                    );
+                    let _ =
+                        app_clone.emit("pipeline-result", FinalResultEvent { processing_time_ms });
 
                     let raw = std::mem::take(&mut raw_transcription);
                     let entry = lt_core::HistoryEntry::new(
@@ -305,6 +287,17 @@ fn spawn_history_writer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_result_event_carries_no_transcript_text() {
+        assert_eq!(
+            serde_json::to_value(FinalResultEvent {
+                processing_time_ms: 5
+            })
+            .unwrap(),
+            serde_json::json!({ "processing_time_ms": 5 })
+        );
+    }
 
     #[tokio::test]
     async fn history_writer_persists_entries_in_send_order() {

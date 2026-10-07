@@ -103,7 +103,8 @@ cargo tauri build
 
 ### Tauri Events
 - Rust emits events like `audio-level`, `recording-state`, `pipeline-state`
-- Additional events: `apple-stt-model-progress`, `transcription-partial`, `transcription-committed`, `pipeline-result`, `pipeline-error`, `command-detected`, `capsule-context`
+- Additional events: `apple-stt-model-progress`, `pipeline-result`, `pipeline-error`, `command-detected`, `capsule-context`
+- No event carries transcript text, since every webview (the capsule's included) can listen to any event: `pipeline-result` sends only `processing_time_ms`, and the words reach a window only through History (`get_history`)
 - `RecordingCapsule.svelte` listens in its `onMount` for `pipeline-state`, `recording-state`, `command-detected`, `pipeline-result`, `pipeline-error`, `capsule-context`, and `audio-level`
 - `recording-state`'s `is_recording` means the microphone is open: `true` when Recording begins, `false` once Stop closes it and on Processing, Done, Error, and Idle; Transcribing leaves the last value standing (`capture_signal` in `events.rs`, `stop_pipeline` in `main.rs`)
 - `capsule-context` (payload `{ shortcut, output_mode, save_history }`) goes to the `main` window only, just before the capsule is shown
