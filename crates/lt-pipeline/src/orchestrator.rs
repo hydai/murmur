@@ -158,6 +158,10 @@ impl PipelineOrchestrator {
             }
         };
         *self.audio_capture.lock().await = Some(capture);
+        let _ = self.event_tx.send(PipelineEvent::CaptureChanged {
+            open: true,
+            timestamp_ms: lt_core::now_ms(),
+        });
 
         let (cancel_tx, cancel_rx) = watch::channel(false);
         *self.cancel_tx.lock().await = Some(cancel_tx.clone());
@@ -201,7 +205,7 @@ impl PipelineOrchestrator {
     /// Stop capture and let queued transcription and output finish normally.
     pub async fn stop(&self) -> Result<()> {
         let _lifecycle = self.lifecycle.lock().await;
-        let result = stop_capture(&self.audio_capture).await;
+        let result = stop_capture(&self.audio_capture, &self.event_tx).await;
         if let Some(task) = self.level_task.lock().await.take() {
             task.abort();
             let _ = task.await;
@@ -231,7 +235,7 @@ impl PipelineOrchestrator {
         if let Some(cancel) = self.cancel_tx.lock().await.take() {
             let _ = cancel.send(true);
         }
-        let _ = stop_capture(&self.audio_capture).await;
+        let _ = stop_capture(&self.audio_capture, &self.event_tx).await;
         for slot in [&self.level_task, &self.transcription_task, &self.audio_task] {
             if let Some(task) = slot.lock().await.take() {
                 task.abort();
@@ -542,7 +546,7 @@ async fn run_transcription(
 
     // Ending transcription (including provider failure) ends capture. Do this
     // before emitting any terminal state or writing output.
-    let _ = stop_capture(&session.capture).await;
+    let _ = stop_capture(&session.capture, &session.events).await;
     let _ = cancel_tx.send(true);
 
     if transcript.text.is_empty() {
@@ -599,7 +603,7 @@ async fn pump_audio(
                 };
                 if !matches!(sent, Ok(Ok(()))) {
                     session.fail("STT audio delivery failed or timed out");
-                    let _ = stop_capture(&session.capture).await;
+                    let _ = stop_capture(&session.capture, &session.events).await;
                     break;
                 }
             }
@@ -633,13 +637,24 @@ async fn publish_state(
     });
 }
 
-async fn stop_capture(capture: &Mutex<Option<Box<dyn CaptureControl>>>) -> Result<()> {
-    if let Some(mut capture) = capture.lock().await.take() {
-        capture
-            .stop()
-            .map_err(|error| MurmurError::Audio(error.to_string()))?;
-    }
-    Ok(())
+/// Closes the microphone if it is open, and announces it when it was, so
+/// whoever closes it (Stop, a cancel, the end of transcription, a failed send)
+/// is followed by one `CaptureChanged`.
+async fn stop_capture(
+    capture: &Mutex<Option<Box<dyn CaptureControl>>>,
+    events: &broadcast::Sender<PipelineEvent>,
+) -> Result<()> {
+    let Some(mut capture) = capture.lock().await.take() else {
+        return Ok(());
+    };
+    // Announced even when stopping fails: the capture is dropped either way.
+    let _ = events.send(PipelineEvent::CaptureChanged {
+        open: false,
+        timestamp_ms: lt_core::now_ms(),
+    });
+    capture
+        .stop()
+        .map_err(|error| MurmurError::Audio(error.to_string()))
 }
 
 impl Drop for PipelineOrchestrator {
@@ -714,6 +729,7 @@ mod tests {
         tx: Option<mpsc::Sender<TranscriptionEvent>>,
         rx: SyncMutex<Option<mpsc::Receiver<TranscriptionEvent>>>,
         fail_start: bool,
+        fail_send: bool,
     }
     impl TestStt {
         fn new(fail_start: bool) -> (Box<Self>, mpsc::Sender<TranscriptionEvent>) {
@@ -723,6 +739,7 @@ mod tests {
                     tx: Some(tx.clone()),
                     rx: SyncMutex::new(Some(rx)),
                     fail_start,
+                    fail_send: false,
                 }),
                 tx,
             )
@@ -738,7 +755,11 @@ mod tests {
             }
         }
         async fn send_audio(&mut self, _: AudioChunk) -> Result<()> {
-            Ok(())
+            if self.fail_send {
+                Err(MurmurError::Stt("delivery failed".into()))
+            } else {
+                Ok(())
+            }
         }
         async fn stop_session(&mut self) -> Result<()> {
             self.tx.take();
@@ -1136,6 +1157,103 @@ mod tests {
         })
         .await
         .expect("expected the session to end")
+    }
+
+    /// Swaps in a capture whose audio the test sends itself. Its chunk sender
+    /// lands in the returned slot when the capture opens.
+    fn capture_fed_by_test(
+        pipeline: &mut PipelineOrchestrator,
+    ) -> Arc<SyncMutex<Option<mpsc::Sender<AudioChunk>>>> {
+        let slot = Arc::new(SyncMutex::new(None));
+        let feed = slot.clone();
+        pipeline.capture_factory = Arc::new(move || {
+            let (tx, rx) = mpsc::channel(4);
+            *feed.lock().unwrap() = Some(tx.clone());
+            Ok(AudioInput {
+                capture: Box::new(TestCapture {
+                    chunks: Some(tx),
+                    running: Arc::new(AtomicBool::new(true)),
+                }),
+                chunks: rx,
+                levels: None,
+            })
+        });
+        slot
+    }
+
+    fn capture_changes(events: &[PipelineEvent]) -> Vec<bool> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                PipelineEvent::CaptureChanged { open, .. } => Some(*open),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn capture_changes_are_announced_once_each() {
+        let (p, _) = pipeline(Arc::default(), Arc::new(TestLlm(None)));
+        let mut events = p.subscribe_events();
+        let (stt, tx) = TestStt::new(false);
+        p.start(stt).await.unwrap();
+        p.stop().await.unwrap();
+        drop(tx);
+
+        let seen = events_until(&mut events, PipelineState::Idle).await;
+        // Opened once, after the recording was announced, and closed once,
+        // although capture is stopped again when transcription ends.
+        assert_eq!(capture_changes(&seen), [true, false], "{seen:?}");
+        let recording = seen.iter().position(|event| {
+            matches!(
+                event,
+                PipelineEvent::StateChanged {
+                    state: PipelineState::Recording,
+                    ..
+                }
+            )
+        });
+        let opened = seen
+            .iter()
+            .position(|event| matches!(event, PipelineEvent::CaptureChanged { open: true, .. }));
+        assert!(recording < opened, "{seen:?}");
+
+        p.reset().await.unwrap();
+        let after_reset = events_until(&mut events, PipelineState::Idle).await;
+        assert!(capture_changes(&after_reset).is_empty(), "{after_reset:?}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_send_announces_the_microphone_closing() {
+        let (mut p, _) = pipeline(Arc::default(), Arc::new(TestLlm(None)));
+        let feed = capture_fed_by_test(&mut p);
+        let mut events = p.subscribe_events();
+        let (mut stt, _tx) = TestStt::new(false);
+        stt.fail_send = true;
+        p.start(stt).await.unwrap();
+
+        let sender = feed.lock().unwrap().clone().expect("the capture opened");
+        sender
+            .send(AudioChunk {
+                data: vec![0; 160],
+                timestamp_ms: 0,
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if matches!(
+                    events.recv().await.unwrap(),
+                    PipelineEvent::CaptureChanged { open: false, .. }
+                ) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("the microphone closing is announced");
+        assert!(!p.is_capturing().await);
+        p.reset().await.unwrap();
     }
 
     #[tokio::test]

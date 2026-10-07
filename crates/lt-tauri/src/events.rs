@@ -170,6 +170,9 @@ pub(crate) fn spawn(
                 PipelineEvent::NothingHeard { .. } => {
                     let _ = app_clone.emit_to(capsule::CAPSULE_WINDOW, "nothing-heard", ());
                 }
+                // Followed by the microphone flag, recording-state and the menu
+                // bar once those stop being derived from states.
+                PipelineEvent::CaptureChanged { .. } => {}
                 PipelineEvent::FinalResult {
                     text,
                     processing_time_ms,
