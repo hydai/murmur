@@ -42,7 +42,19 @@
     description: ''
   });
   // Why the last submit went nowhere. It shows in the sheet, and goes as soon as the word is edited.
-  let missing = $state('');
+  let refusal = $state('');
+
+  /** `WORD_TAKEN` in main.rs, which refuses the same word if this check is ever bypassed. */
+  const WORD_TAKEN = 'That word is already in your dictionary.';
+
+  /** Another entry already has `term`, ignoring case. The word being renamed does not count against itself. */
+  function wordTaken(term: string, oldTerm: string | null): boolean {
+    // An edit that keeps its word adds no copy of it, even where an older dictionary already holds one.
+    if (oldTerm === term) return false;
+    const renamed = oldTerm === null ? -1 : entries.findIndex((entry) => entry.term === oldTerm);
+    const word = term.toLowerCase();
+    return entries.some((entry, index) => index !== renamed && entry.term.toLowerCase() === word);
+  }
   // The toolbar's Add Word button, for putting the focus back when what opened a sheet is gone.
   let addButton = $state<HTMLButtonElement>();
 
@@ -84,7 +96,7 @@
 
   function openAddSheet() {
     formData = { term: '', aliases: '', description: '' };
-    missing = '';
+    refusal = '';
     sheet = { kind: 'add' };
     status.reset();
   }
@@ -95,7 +107,7 @@
       aliases: entry.aliases.join(', '),
       description: entry.description || ''
     };
-    missing = '';
+    refusal = '';
     sheet = { kind: 'edit', entry };
     status.reset();
   }
@@ -144,7 +156,11 @@
   async function handleAdd() {
     if (status.busy) return;
     if (!formData.term.trim()) {
-      missing = 'Enter a word.';
+      refusal = 'Enter a word.';
+      return;
+    }
+    if (wordTaken(formData.term.trim(), null)) {
+      refusal = WORD_TAKEN;
       return;
     }
 
@@ -160,12 +176,16 @@
   async function handleEdit() {
     if (status.busy) return;
     if (!formData.term.trim()) {
-      missing = 'Enter a word.';
+      refusal = 'Enter a word.';
       return;
     }
     if (sheet?.kind !== 'edit') return;
 
     const { term: oldTerm } = sheet.entry;
+    if (wordTaken(formData.term.trim(), oldTerm)) {
+      refusal = WORD_TAKEN;
+      return;
+    }
     await status.run('Failed to save word', async () => {
       await invoke('update_dictionary_entry', {
         params: { old_term: oldTerm, ...entryParams() },
@@ -219,7 +239,8 @@
       <!--
         Keyed by position and word. The list is read again after every change, and a row that is
         still there must stay, or the focus a sheet gives back to it has nowhere to go. The word
-        alone would do, but nothing refuses a second copy of one, and a key must not repeat.
+        alone would do, but a dictionary written before duplicates were refused can still hold a
+        second copy of one, and a key must not repeat.
       -->
       <Group>
         {#each filteredEntries as entry, index (`${index}:${entry.term}`)}
@@ -239,7 +260,7 @@
       title={editing ? 'Edit Word' : 'Add Word'}
       onclose={closeSheet}
       onsubmit={editing ? handleEdit : handleAdd}
-      error={missing}
+      error={refusal}
       leading={editing ? deleteAction : undefined}
     >
       <label for="term">Word</label>
@@ -247,7 +268,7 @@
         id="term"
         type="text"
         bind:value={formData.term}
-        oninput={() => (missing = '')}
+        oninput={() => (refusal = '')}
         aria-required="true"
         autocomplete="off"
         autocapitalize="off"
