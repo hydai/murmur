@@ -168,10 +168,10 @@ for (const window of Object.keys(WINDOW_SOURCES)) {
   });
 }
 
-test('the overlay stays away from configuration and history', () => {
+test('the capsule stays away from configuration and history', () => {
   const { commands } = grantsTo('main');
   for (const forbidden of ['get_config', 'save_api_key', 'get_dictionary', 'get_history', 'clear_history']) {
-    assert.ok(!commands.has(forbidden), `overlay must not reach ${forbidden}`);
+    assert.ok(!commands.has(forbidden), `the capsule must not reach ${forbidden}`);
   }
   // The capsule calls nothing, so it is granted nothing.
   assert.equal(commands.size, 0, `the capsule window is granted ${[...commands].join(', ')}`);
