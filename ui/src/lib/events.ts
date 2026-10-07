@@ -22,13 +22,8 @@ export interface AudioLevelPayload {
   timestamp_ms: number;
 }
 
-export interface TranscriptionPayload {
-  text: string;
-  timestamp_ms: number;
-}
-
+/** Carries no text: transcript text never goes out as an event (`FinalResultEvent` in events.rs). */
 export interface FinalResultPayload {
-  text: string;
   processing_time_ms: number;
 }
 
@@ -72,8 +67,6 @@ export interface AppEvents {
   'recording-state': RecordingStatePayload;
   'audio-level': AudioLevelPayload;
   'audio-error': AudioErrorPayload;
-  'transcription-partial': TranscriptionPayload;
-  'transcription-committed': TranscriptionPayload;
   'command-detected': CommandDetectedPayload;
   /** Goes to the capsule window only, as a recording starts. */
   'capsule-context': CapsuleContext;

@@ -57,7 +57,7 @@ function emit(name: string, payload: unknown) {
 const pipelineState = (state: string) => emit('pipeline-state', { state, timestamp_ms: 0 });
 const microphone = (open: boolean) => emit('recording-state', { is_recording: open });
 const commandDetected = (name: string | null) => emit('command-detected', { command_name: name, timestamp_ms: 0 });
-const pipelineResult = () => emit('pipeline-result', { text: 'Hello', processing_time_ms: 5 });
+const pipelineResult = () => emit('pipeline-result', { processing_time_ms: 5 });
 const pipelineError = (message: string) => emit('pipeline-error', { message, recoverable: true });
 const capsuleContext = (context: CapsuleContext = CONTEXT) => emit('capsule-context', context);
 const audioLevel = (rms: number) => emit('audio-level', { rms, voice_active: true, timestamp_ms: 0 });
@@ -503,8 +503,7 @@ describe('recording capsule', () => {
       'pipeline-result', 'pipeline-state', 'recording-state',
     ]);
     for (const name of [
-      'audio-error', 'transcription-partial', 'transcription-committed',
-      'processing-status', 'transcription-error', 'transcription-processed',
+      'audio-error', 'processing-status', 'transcription-error', 'transcription-processed',
     ]) {
       expect(subscribed, `${name} is not an event the capsule needs`).not.toContain(name);
     }
