@@ -668,6 +668,26 @@ mod tests {
     }
 
     #[test]
+    fn the_config_template_puts_every_setting_where_it_is_read() {
+        // `[api_keys]` in the template holds only commented examples, so a key
+        // that lands in it is a setting written below that table, which the
+        // app would read as an API key and otherwise ignore.
+        let template: AppConfig =
+            toml::from_str(include_str!("../../../config/default.toml")).unwrap();
+        assert!(
+            template.api_keys.is_empty(),
+            "settings under [api_keys]: {:?}",
+            template.api_keys.keys().collect::<Vec<_>>()
+        );
+        // And what it sets is what a fresh install uses, so the two cannot drift
+        // apart (the shortcut, say) without this failing.
+        assert_eq!(
+            serde_json::to_value(&template).unwrap(),
+            serde_json::to_value(AppConfig::default()).unwrap()
+        );
+    }
+
+    #[test]
     fn load_errors_count_lines_correctly_after_multibyte_text() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
