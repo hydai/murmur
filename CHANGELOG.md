@@ -1,4 +1,17 @@
 # Changelog
+## 0.2.21 (2026-10-07)
+
+### Features
+
+- say the transcript went out when the AI step fails
+
+### Fixes
+
+- keep the STT language settings out of [api_keys] in the template
+- refuse a word the dictionary already has
+- report a failed start once
+- label the menu bar item by what choosing it does
+
 ## 0.2.20 (2026-10-07)
 
 ### Features
