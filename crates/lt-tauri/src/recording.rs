@@ -21,6 +21,16 @@ pub(crate) fn toggle_action(state: PipelineState, capturing: bool) -> ToggleActi
     }
 }
 
+/// What the menu bar's recording item says: what choosing it would do, so it
+/// never says Stop while choosing it would cancel.
+pub(crate) fn menu_label(action: ToggleAction) -> &'static str {
+    match action {
+        ToggleAction::Start => "Start Recording",
+        ToggleAction::Stop => "Stop Recording",
+        ToggleAction::Cancel => "Cancel Dictation",
+    }
+}
+
 /// Why toggling the recording failed, and whether the UI has heard about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ToggleFailure {
@@ -89,6 +99,28 @@ mod tests {
         assert_eq!(
             toggle_action(PipelineState::Processing, true),
             ToggleAction::Cancel
+        );
+    }
+
+    #[test]
+    fn the_menu_bar_item_says_what_choosing_it_would_do() {
+        assert_eq!(
+            menu_label(toggle_action(PipelineState::Idle, false)),
+            "Start Recording"
+        );
+        assert_eq!(
+            menu_label(toggle_action(PipelineState::Recording, true)),
+            "Stop Recording"
+        );
+        // After Stop, a batch provider stays in Recording until it has the
+        // audio: choosing the item then cancels, so it must not say Stop.
+        assert_eq!(
+            menu_label(toggle_action(PipelineState::Recording, false)),
+            "Cancel Dictation"
+        );
+        assert_eq!(
+            menu_label(toggle_action(PipelineState::Processing, false)),
+            "Cancel Dictation"
         );
     }
 

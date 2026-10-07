@@ -1,10 +1,12 @@
+use std::sync::atomic::Ordering;
+
 use lt_core::HistoryEntry;
 use lt_pipeline::{PipelineEvent, PipelineState};
 use tauri::{Emitter, Manager};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::capsule::{self, Capsule};
-use crate::{rebuild_tray_menu, sound, storage::HistoryStore};
+use crate::{rebuild_tray_menu, sound, storage::HistoryStore, AppState};
 
 #[derive(Clone, serde::Serialize)]
 struct PipelineStateEvent {
@@ -103,7 +105,9 @@ pub(crate) fn spawn(
                     );
 
                     // recording-state says whether the microphone is open.
+                    let microphone_open = &app_clone.state::<AppState>().microphone_open;
                     if let Some(open) = capture_signal(state) {
+                        microphone_open.store(open, Ordering::SeqCst);
                         let _ = app_clone.emit(
                             "recording-state",
                             serde_json::json!({
@@ -112,14 +116,11 @@ pub(crate) fn spawn(
                         );
                     }
 
-                    // Update tray menu to reflect recording state. The tray
-                    // follows the session, not the microphone, so Transcribing
-                    // still counts as recording.
-                    let is_recording = matches!(
-                        state,
-                        PipelineState::Recording | PipelineState::Transcribing
-                    );
-                    if let Err(e) = rebuild_tray_menu(&app_clone, is_recording) {
+                    // The menu bar item says what choosing it would do, so it
+                    // follows the microphone as well as the state.
+                    if let Err(e) =
+                        rebuild_tray_menu(&app_clone, state, microphone_open.load(Ordering::SeqCst))
+                    {
                         tracing::warn!("Failed to update tray menu: {}", e);
                     }
 

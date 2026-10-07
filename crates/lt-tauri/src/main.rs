@@ -26,6 +26,7 @@ use lt_pipeline::{PipelineOrchestrator, PipelineState};
 #[cfg(target_os = "macos")]
 use lt_stt::AppleSttProvider;
 use lt_stt::{CustomSttProvider, ElevenLabsProvider, GroqProvider, OpenAIProvider};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -41,6 +42,10 @@ struct AppState {
     pipeline: Arc<Mutex<PipelineOrchestrator>>,
     store: storage::AppStore,
     hotkey_updates: Arc<Mutex<()>>,
+    /// Whether the microphone is open, for the menu bar. Set by the event
+    /// forwarder as states arrive, and cleared by `stop_pipeline`, since Stop
+    /// closes the microphone without changing the pipeline's state.
+    microphone_open: Arc<AtomicBool>,
     prompts: PromptManager,
 }
 
@@ -1004,6 +1009,11 @@ async fn stop_pipeline(
         "recording-state",
         serde_json::json!({ "is_recording": false }),
     );
+    state.microphone_open.store(false, Ordering::SeqCst);
+    // Choosing the menu bar item now cancels the session, and it says so.
+    if let Err(e) = rebuild_tray_menu(&app, pipeline.get_state().await, false) {
+        tracing::warn!("Failed to rebuild tray menu: {e}");
+    }
 
     tracing::info!("Pipeline stopped successfully");
     Ok(())
@@ -1457,16 +1467,9 @@ fn create_recording_icon(original_bytes: &[u8], _width: u32, _height: u32) -> Ve
 /// Menu-bar menu entries as `(id, label)` in display order; `None` is a
 /// separator. `on_menu_event` dispatches on the ids, so they stay fixed when
 /// the wording changes.
-fn tray_menu_items(is_recording: bool) -> [Option<(&'static str, &'static str)>; 6] {
+fn tray_menu_items(action: recording::ToggleAction) -> [Option<(&'static str, &'static str)>; 6] {
     [
-        Some((
-            "toggle_recording",
-            if is_recording {
-                "Stop Recording"
-            } else {
-                "Start Recording"
-            },
-        )),
+        Some(("toggle_recording", recording::menu_label(action))),
         Some(("open_settings", "Settings…")),
         Some(("open_history", "History…")),
         None,
@@ -1479,10 +1482,10 @@ fn tray_menu_items(is_recording: bool) -> [Option<(&'static str, &'static str)>;
 /// and the one rebuilt when recording starts or stops cannot drift apart.
 fn build_tray_menu(
     app: &tauri::AppHandle,
-    is_recording: bool,
+    action: recording::ToggleAction,
 ) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     let mut menu = MenuBuilder::new(app);
-    for entry in tray_menu_items(is_recording) {
+    for entry in tray_menu_items(action) {
         menu = match entry {
             Some((id, label)) => menu.item(&MenuItemBuilder::with_id(id, label).build(app)?),
             None => menu.separator(),
@@ -1491,17 +1494,22 @@ fn build_tray_menu(
     menu.build()
 }
 
-/// Helper function to rebuild tray menu with updated recording state
+/// Rebuilds the menu bar menu, tooltip and icon for the pipeline's state and
+/// whether the microphone is open, which the state alone cannot say.
 fn rebuild_tray_menu(
     app: &tauri::AppHandle,
-    is_recording: bool,
+    state: PipelineState,
+    microphone_open: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tray = app.tray_by_id("main-tray").ok_or("Tray not found")?;
 
-    let menu = build_tray_menu(app, is_recording)?;
+    let action = recording::toggle_action(state, microphone_open);
+    let menu = build_tray_menu(app, action)?;
     tray.set_menu(Some(menu))?;
 
-    // Update tooltip to reflect recording state
+    // The tooltip and the icon say the microphone is live, which is exactly
+    // when choosing the item stops the recording.
+    let is_recording = action == recording::ToggleAction::Stop;
     let tooltip = if is_recording {
         "Murmur - Recording"
     } else {
@@ -1642,6 +1650,7 @@ fn main() {
         pipeline: Arc::new(Mutex::new(pipeline)),
         store: storage::AppStore::new(config_dir),
         hotkey_updates: Arc::new(Mutex::new(())),
+        microphone_open: Arc::new(AtomicBool::new(false)),
         prompts,
     };
     app_state.store.history.set_enabled(config.save_history);
@@ -1726,7 +1735,7 @@ fn main() {
             let icon = tauri::image::Image::new(&icon_bytes, width, height);
 
             // Build initial menu
-            let menu = build_tray_menu(app.handle(), false)?;
+            let menu = build_tray_menu(app.handle(), recording::ToggleAction::Start)?;
 
             // Create tray icon
             let _tray = TrayIconBuilder::with_id("main-tray")
@@ -2155,7 +2164,7 @@ mod tests {
 
     #[test]
     fn the_tray_menu_uses_macos_wording() {
-        let labels: Vec<_> = tray_menu_items(false)
+        let labels: Vec<_> = tray_menu_items(recording::ToggleAction::Start)
             .iter()
             .map(|item| item.map(|(_, label)| label))
             .collect();
@@ -2171,14 +2180,18 @@ mod tests {
             ]
         );
         assert_eq!(
-            tray_menu_items(true)[0],
+            tray_menu_items(recording::ToggleAction::Stop)[0],
             Some(("toggle_recording", "Stop Recording"))
+        );
+        assert_eq!(
+            tray_menu_items(recording::ToggleAction::Cancel)[0],
+            Some(("toggle_recording", "Cancel Dictation"))
         );
     }
 
     #[test]
     fn the_tray_menu_keeps_the_ids_its_handler_matches() {
-        let ids: Vec<_> = tray_menu_items(false)
+        let ids: Vec<_> = tray_menu_items(recording::ToggleAction::Start)
             .iter()
             .flatten()
             .map(|(id, _)| *id)
