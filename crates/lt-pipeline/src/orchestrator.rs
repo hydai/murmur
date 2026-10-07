@@ -37,6 +37,19 @@ const PRE_SESSION_SAMPLES: usize = 40 * 16_000;
 /// audio budget until the pump is done with it.
 type BufferedChunk = (AudioChunk, OwnedSemaphorePermit);
 
+/// Whether the microphone is open right now. It shares the pipeline's capture
+/// rather than copying it, and asking it needs nothing else of the pipeline,
+/// so a listener that missed a `CaptureChanged` can ask it even while a start
+/// is still running.
+#[derive(Clone)]
+pub struct MicrophoneProbe(Arc<Mutex<Option<Box<dyn CaptureControl>>>>);
+
+impl MicrophoneProbe {
+    pub async fn is_open(&self) -> bool {
+        self.0.lock().await.is_some()
+    }
+}
+
 /// Pipeline orchestrator coordinating the full flow
 pub struct PipelineOrchestrator {
     audio_capture: Arc<Mutex<Option<Box<dyn CaptureControl>>>>,
@@ -98,6 +111,12 @@ impl PipelineOrchestrator {
     /// live recording from a session that is finishing after `stop()`.
     pub async fn is_capturing(&self) -> bool {
         self.audio_capture.lock().await.is_some()
+    }
+
+    /// The microphone, for a listener to ask whether it is open whenever the
+    /// events cannot tell it.
+    pub fn microphone(&self) -> MicrophoneProbe {
+        MicrophoneProbe(self.audio_capture.clone())
     }
 
     /// Get reference to the dictionary for updates
@@ -1046,6 +1065,21 @@ mod tests {
         assert_eq!(p.get_state().await, PipelineState::Processing);
         p.reset().await.unwrap();
         assert!(!p.is_capturing().await);
+    }
+
+    #[tokio::test]
+    async fn a_microphone_probe_taken_before_any_recording_follows_the_capture() {
+        // The event forwarder takes the probe at setup and asks it after it
+        // misses events, so the probe must see the live capture, not a copy.
+        let (p, _) = pipeline(Arc::default(), Arc::new(TestLlm(None)));
+        let microphone = p.microphone();
+        assert!(!microphone.is_open().await);
+        let (stt, _tx) = TestStt::new(false);
+        p.start(stt).await.unwrap();
+        assert!(microphone.is_open().await);
+        p.stop().await.unwrap();
+        assert!(!microphone.is_open().await);
+        p.reset().await.unwrap();
     }
 
     #[tokio::test]
