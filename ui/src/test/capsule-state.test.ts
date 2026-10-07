@@ -56,8 +56,11 @@ const processing = (context: CapsuleContext = ctx, command: string | null = null
   run([commandDetected(command), pipelineState('processing')], transcribing(context));
 
 const PHASES: CapsulePhase[] = [
-  'hidden', 'recording', 'transcribing', 'processing', 'done', 'output-failed', 'error', 'cancelled',
+  'hidden', 'recording', 'transcribing', 'processing', 'done', 'output-failed', 'as-transcribed', 'error', 'cancelled',
 ];
+
+/** What the pipeline sends when the AI step fails and it falls back to the transcript (lt-pipeline's orchestrator). */
+const AI_FAILED = 'LLM processing failed: Gemini CLI exited with status 1. Using raw transcription.';
 
 /** One session in every phase, reached by the events that reach it in production. */
 function sessions(): Record<CapsulePhase, CapsuleState> {
@@ -71,6 +74,7 @@ function sessions(): Record<CapsulePhase, CapsuleState> {
       [pipelineError('Output failed: no access'), pipelineResult, pipelineState('done')],
       processing(),
     ),
+    'as-transcribed': run([pipelineError(AI_FAILED), pipelineResult, pipelineState('done')], processing()),
     error: run([pipelineError('Boom'), pipelineState('error')], processing()),
     cancelled: run([pipelineState('idle')], processing()),
   };
@@ -85,7 +89,7 @@ function sessions(): Record<CapsulePhase, CapsuleState> {
  */
 const ENDED: Record<CapsulePhase, boolean> = {
   hidden: false, recording: false, transcribing: false, processing: false,
-  done: true, 'output-failed': true, error: true, cancelled: true,
+  done: true, 'output-failed': true, 'as-transcribed': true, error: true, cancelled: true,
 };
 
 /** A table in which every phase stays where it is; the tests name the phases that move. */
@@ -147,13 +151,13 @@ describe('capsule state', () => {
   it('starts a fresh session on recording', () => {
     const finished: CapsuleState = {
       phase: 'done', capturing: false, startedAt: 10, command: 'shorten', outputFailed: true,
-      failedOutputs: { clipboard: true, keyboard: false }, nothingHeard: true, ended: true,
+      failedOutputs: { clipboard: true, keyboard: false }, nothingHeard: true, aiFailed: true, ended: true,
       message: 'Earlier error', context: ctx,
     };
 
     expect(reduce(finished, pipelineState('recording', 1000))).toEqual({
       phase: 'recording', capturing: true, startedAt: 1000, command: null, outputFailed: false,
-      failedOutputs: { clipboard: false, keyboard: false }, nothingHeard: false, ended: false,
+      failedOutputs: { clipboard: false, keyboard: false }, nothingHeard: false, aiFailed: false, ended: false,
       message: '', context: ctx,
     });
   });
@@ -255,18 +259,23 @@ describe('capsule state', () => {
     }
     expect(statusText(reduce(INITIAL_CAPSULE, pipelineResult))).toBe('Done');
 
-    // A result ends every phase but an error, even one that had been cancelled. A state report of Done only
-    // ends a session that is still going; a finished or cancelled one keeps its phase.
-    expectPhases(pipelineResult, { ...everyPhaseTo('done'), 'output-failed': 'output-failed', error: 'error' });
+    // A result ends every phase but an error, even one that had been cancelled; a session whose AI step failed ends
+    // as the transcript going out. A state report of Done only ends a session that is still going; a finished or
+    // cancelled one keeps its phase.
+    expectPhases(pipelineResult, {
+      ...everyPhaseTo('done'), 'output-failed': 'output-failed', 'as-transcribed': 'as-transcribed', error: 'error',
+    });
     expectPhases(pipelineState('done'), {
-      ...everyPhaseTo('done'), 'output-failed': 'output-failed', error: 'error', cancelled: 'cancelled',
+      ...everyPhaseTo('done'), 'output-failed': 'output-failed', 'as-transcribed': 'as-transcribed', error: 'error',
+      cancelled: 'cancelled',
     });
 
     // With a failed output on record, both end it as a failed output instead.
     const outputFailed = [pipelineError('Output failed: x')];
     expectPhases(pipelineResult, { ...everyPhaseTo('output-failed'), error: 'error' }, outputFailed);
     expectPhases(pipelineState('done'), {
-      ...everyPhaseTo('output-failed'), done: 'done', error: 'error', cancelled: 'cancelled',
+      ...everyPhaseTo('output-failed'), done: 'done', 'as-transcribed': 'as-transcribed', error: 'error',
+      cancelled: 'cancelled',
     }, outputFailed);
   });
 
@@ -332,6 +341,35 @@ describe('capsule state', () => {
       processing(keyboard)))).toBe("Couldn't copy the text · saved in History");
   });
 
+  it('says the text went out as transcribed when the AI step fails', () => {
+    // The error shows as soon as it arrives, while the pipeline goes on with the transcript.
+    const failing = reduce(processing(), pipelineError(AI_FAILED));
+    expect(failing).toMatchObject({ phase: 'error', aiFailed: true, ended: false });
+    expect(statusText(failing)).toBe(AI_FAILED);
+
+    // The result says what became of the text first, worded for how it was meant to go.
+    const delivered = (context: CapsuleContext) =>
+      statusText(run([pipelineError(AI_FAILED), pipelineResult, pipelineState('done')], processing(context)));
+    expect(delivered(ctx)).toBe('Copied as transcribed · AI processing failed');
+    expect(delivered({ ...ctx, output_mode: 'keyboard' })).toBe('Typed as transcribed · AI processing failed');
+    expect(delivered({ ...ctx, output_mode: 'both' })).toBe('Typed and copied as transcribed · AI processing failed');
+
+    const ended = run([pipelineError(AI_FAILED), pipelineResult], processing());
+    expect(ended).toMatchObject({ phase: 'as-transcribed', ended: true });
+    expect(hintText(ended)).toBe('');
+
+    // When the text could not be delivered either, that is what the capsule says.
+    // The pipeline ends this session in Error, after the result, and that does not take it back.
+    const undelivered = run(
+      [pipelineError(AI_FAILED), pipelineError('Output failed: no access'), pipelineResult, pipelineState('error')],
+      processing(),
+    );
+    expect(statusText(undelivered)).toBe("Couldn't copy the text · saved in History");
+
+    // The next recording forgets it.
+    expect(run([pipelineState('recording', 9000)], ended).aiFailed).toBe(false);
+  });
+
   it('shows an error that arrives before any recording', () => {
     const message = 'ElevenLabs API key not configured. Please add your API key in Settings';
     const failed = reduce(INITIAL_CAPSULE, pipelineError(message));
@@ -356,9 +394,14 @@ describe('capsule state', () => {
     expect(stateOnly.phase).toBe('error');
     expect(statusText(stateOnly)).toBe('Something went wrong');
     // The Error state ends any phase too, and the session with it, and takes nothing else with it, a failed output
-    // included.
-    expectChange(pipelineState('error'), { phase: 'error', ended: true });
-    expectPhases(pipelineState('error'), everyPhaseTo('error'), [pipelineError('Output failed: x')]);
+    // included. Only what a result already said became of the text stays: that it went out as transcribed, or that
+    // it could not go out.
+    const keepsItsEnding = (phase: CapsulePhase) => phase === 'as-transcribed' || phase === 'output-failed';
+    expectChange(pipelineState('error'), session =>
+      keepsItsEnding(session.phase) ? {} : { phase: 'error', ended: true });
+    expectPhases(pipelineState('error'), {
+      ...everyPhaseTo('error'), 'as-transcribed': 'as-transcribed', 'output-failed': 'output-failed',
+    }, [pipelineError('Output failed: x')]);
     // A message that follows the state is shown all the same.
     expect(statusText(run([pipelineState('error'), pipelineError('Late message')]))).toBe('Late message');
 
@@ -435,9 +478,10 @@ describe('capsule state', () => {
     expect(reduce(failedAgain, pipelineError('Output failed: no access')))
       .toMatchObject({ phase: 'error', ended: false, outputFailed: true });
 
-    // The result ends it, and the Error state that follows it finds the session over already.
+    // The result ends it. The language model failed, so the transcript went out as it was, and that is what the
+    // capsule says; the Error state that follows it finds the session over already and leaves that up.
     const delivered = reduce(failedAgain, pipelineResult);
-    expect(delivered).toMatchObject({ phase: 'error', ended: true });
+    expect(delivered).toMatchObject({ phase: 'as-transcribed', ended: true });
     expect(reduce(delivered, pipelineState('error'))).toEqual(delivered);
     // With no text there is nothing to process, and the Error state alone ends it.
     expect(reduce(failing, pipelineState('error'))).toMatchObject({ phase: 'error', ended: true });
@@ -467,7 +511,7 @@ describe('capsule state', () => {
     for (const [phase, session] of Object.entries(sessions())) {
       expect(reduce(session, pipelineState('recording', 7000)), phase).toEqual({
         phase: 'recording', capturing: true, startedAt: 7000, command: null, outputFailed: false,
-        failedOutputs: { clipboard: false, keyboard: false }, nothingHeard: false, ended: false,
+        failedOutputs: { clipboard: false, keyboard: false }, nothingHeard: false, aiFailed: false, ended: false,
         message: '', context: session.context,
       });
     }
@@ -490,7 +534,7 @@ describe('capsule state', () => {
           for (const ended of [true, false]) {
             const frozen = deepFreeze<CapsuleState>({
               phase, capturing, outputFailed, ended, startedAt: 1000, command: 'translate to French',
-              failedOutputs: { clipboard: outputFailed, keyboard: false }, nothingHeard: !capturing,
+              failedOutputs: { clipboard: outputFailed, keyboard: false }, nothingHeard: !capturing, aiFailed: ended,
               message: 'Earlier error', context: { ...ctx },
             });
             for (const event of events) {
@@ -504,7 +548,7 @@ describe('capsule state', () => {
     // Every session starts from the same object, so it must come out of all of the above as it went in.
     expect(INITIAL_CAPSULE).toEqual({
       phase: 'hidden', capturing: false, startedAt: null, command: null, outputFailed: false,
-      failedOutputs: { clipboard: false, keyboard: false }, nothingHeard: false, ended: false,
+      failedOutputs: { clipboard: false, keyboard: false }, nothingHeard: false, aiFailed: false, ended: false,
       message: '', context: null,
     });
 
@@ -550,6 +594,8 @@ describe('capsule state', () => {
   });
 
   it("hides after the spec's delays", () => {
-    expect(HIDE_AFTER_MS).toEqual({ done: 1500, 'output-failed': 4000, error: 4000, cancelled: 1000 });
+    expect(HIDE_AFTER_MS).toEqual({
+      done: 1500, 'output-failed': 4000, 'as-transcribed': 4000, error: 4000, cancelled: 1000,
+    });
   });
 });

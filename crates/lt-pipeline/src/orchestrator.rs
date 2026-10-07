@@ -1103,12 +1103,16 @@ mod tests {
         .await
         .expect("a terminal state");
 
+        // The recording capsule words both endings from how these messages
+        // start (ui/src/components/capsule/capsuleState.ts).
         assert!(
-            messages.iter().any(|m| m.contains("LLM processing failed")),
+            messages
+                .iter()
+                .any(|m| m.starts_with("LLM processing failed: ")),
             "{messages:?}"
         );
         assert!(
-            messages.iter().any(|m| m.contains("Output failed")),
+            messages.iter().any(|m| m.starts_with("Output failed: ")),
             "{messages:?}"
         );
     }
