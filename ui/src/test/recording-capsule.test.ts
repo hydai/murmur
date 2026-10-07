@@ -411,8 +411,21 @@ describe('recording capsule', () => {
     expect(fading(target)).toBe(true);
   });
 
-  // Each of these ends a session in a different way; Rust hides the window after 4, 4, 1 and 1 s.
+  // Each of these ends a session in a different way; Rust hides the window after 4, 4, 4, 1 and 1 s.
   it.each([
+    {
+      ending: 'the transcript going out after the AI step failed',
+      status: 'Copied as transcribed · AI processing failed',
+      icon: 'lucide-circle-alert',
+      fadesAt: 3800,
+      reach() {
+        pipelineState('processing');
+        pipelineError('LLM processing failed: Gemini CLI exited with status 1. Using raw transcription.');
+        pipelineResult();
+        // The pipeline ends this session in Error.
+        pipelineState('error');
+      },
+    },
     {
       ending: 'a failed output',
       status: "Couldn't copy the text · saved in History",

@@ -16,7 +16,7 @@ import { formatShortcut } from '../../lib/shortcut';
 
 export type CapsulePhase =
   | 'hidden' | 'recording' | 'transcribing' | 'processing'
-  | 'done' | 'output-failed' | 'error' | 'cancelled';
+  | 'done' | 'output-failed' | 'as-transcribed' | 'error' | 'cancelled';
 
 /** Mirrors `CapsuleContext` in crates/lt-tauri/src/capsule.rs. */
 export interface CapsuleContext {
@@ -39,6 +39,8 @@ export interface CapsuleState {
   failedOutputs: FailedOutputs;
   /** The recording ended with nothing transcribed (`nothing-heard`), so the Idle that follows is not a cancel. */
   nothingHeard: boolean;
+  /** The AI step failed (`LLM processing failed`), so the text the pipeline goes on to deliver is the transcript. */
+  aiFailed: boolean;
   /**
    * The session is over, so what the capsule shows is its ending, and it is on its way out. An error does not end a
    * session that is under way: the pipeline goes on past it with the text it already has, and delivers that seconds
@@ -74,6 +76,7 @@ export const INITIAL_CAPSULE: CapsuleState = {
   outputFailed: false,
   failedOutputs: { clipboard: false, keyboard: false },
   nothingHeard: false,
+  aiFailed: false,
   ended: false,
   message: '',
   context: null,
@@ -86,6 +89,15 @@ export const INITIAL_CAPSULE: CapsuleState = {
  * ends the session, as `output-failed` instead of `done`.
  */
 const OUTPUT_FAILED = 'Output failed';
+
+/**
+ * How the error starts that the pipeline sends when the AI step fails
+ * (`format!("LLM processing failed: {error}. Using raw transcription.")` in
+ * lt-pipeline's orchestrator, pinned by its test). It shows at once, like any
+ * error in a session; the pipeline then delivers the transcript (without the
+ * voice command's words, unpolished), and the result says so first.
+ */
+const AI_FAILED = 'LLM processing failed';
 
 /**
  * The destinations named in that error. lt-output's `CombinedOutput` tries each
@@ -112,7 +124,10 @@ const isLive = (state: CapsuleState) => isInSession(state.phase) || (state.phase
 const endSession = (state: CapsuleState): CapsuleState => (state.ended ? state : { ...state, ended: true });
 
 /** Where a session ends once its text has been handed over, or has failed to be. */
-const endingPhase = (state: CapsuleState): CapsulePhase => (state.outputFailed ? 'output-failed' : 'done');
+const endingPhase = (state: CapsuleState): CapsulePhase => {
+  if (state.outputFailed) return 'output-failed';
+  return state.aiFailed ? 'as-transcribed' : 'done';
+};
 
 function reducePipelineState(state: CapsuleState, name: string, at: number): CapsuleState {
   const { phase } = state;
@@ -133,7 +148,9 @@ function reducePipelineState(state: CapsuleState, name: string, at: number): Cap
       // The result has usually finished the session before this arrives.
       return endSession(phase === 'hidden' || isInSession(phase) ? { ...state, phase: endingPhase(state) } : state);
     case 'error':
-      return endSession({ ...state, phase: 'error' });
+      // A failed session's Error state does not take back what the result said became of the text: that it went
+      // out as transcribed, or could not go out at all. The AI step's failure ends a session this way.
+      return endSession(phase === 'as-transcribed' || phase === 'output-failed' ? state : { ...state, phase: 'error' });
     case 'idle':
       // Back to idle without a result: the session was abandoned.
       return endSession(isInSession(phase) ? { ...state, phase: 'cancelled' } : state);
@@ -154,8 +171,11 @@ export function reduce(state: CapsuleState, event: CapsuleEvent): CapsuleState {
     case 'command':
       return { ...state, command: event.name };
     case 'result':
-      // An error stays on screen, but the result is still the end of the session it came in.
-      return endSession(state.phase === 'error' ? state : { ...state, phase: endingPhase(state) });
+      // An error stays on screen, but the result is still the end of the session it came in. After the AI step
+      // failed, though, the result is the transcript going out anyway, and the capsule says that first.
+      return endSession(
+        state.phase === 'error' && !state.aiFailed ? state : { ...state, phase: endingPhase(state) },
+      );
     case 'error':
       if (event.message.startsWith(OUTPUT_FAILED)) {
         return { ...state, outputFailed: true, failedOutputs: failedOutputsIn(event.message) };
@@ -166,6 +186,7 @@ export function reduce(state: CapsuleState, event: CapsuleEvent): CapsuleState {
         ...state,
         phase: 'error',
         message: event.message.trim().replace(/\s+/g, ' '),
+        aiFailed: state.aiFailed || event.message.startsWith(AI_FAILED),
         ended: !isLive(state),
       };
     case 'context':
@@ -213,6 +234,17 @@ function failedOutputText(context: CapsuleContext | null, failed: FailedOutputs)
   }
 }
 
+/** The text went out as it was transcribed, because the AI step failed: what became of it comes first. */
+function asTranscribedText(context: CapsuleContext | null): string {
+  const reason = 'AI processing failed';
+  switch (context?.output_mode) {
+    case 'clipboard': return `Copied as transcribed · ${reason}`;
+    case 'keyboard': return `Typed as transcribed · ${reason}`;
+    case 'both': return `Typed and copied as transcribed · ${reason}`;
+    default: return `Delivered as transcribed · ${reason}`;
+  }
+}
+
 function outputFailedText(context: CapsuleContext | null, failed: FailedOutputs): string {
   const text = failedOutputText(context, failed);
   // With history on, the text is not lost: the result is saved there either way.
@@ -233,6 +265,8 @@ export function statusText(state: CapsuleState): string {
       return doneText(state.context);
     case 'output-failed':
       return outputFailedText(state.context, state.failedOutputs);
+    case 'as-transcribed':
+      return asTranscribedText(state.context);
     case 'error':
       return state.message || 'Something went wrong';
     case 'cancelled':
@@ -268,7 +302,9 @@ export function formatElapsed(ms: number): string {
  * (`CapsuleState.ended`). Rust hides the window on the same schedule
  * (crates/lt-tauri/src/capsule.rs); keep the two together.
  */
-export const HIDE_AFTER_MS = { done: 1500, 'output-failed': 4000, error: 4000, cancelled: 1000 } as const;
+export const HIDE_AFTER_MS = {
+  done: 1500, 'output-failed': 4000, 'as-transcribed': 4000, error: 4000, cancelled: 1000,
+} as const;
 
 export const BAR_COUNT = 15;
 

@@ -152,7 +152,7 @@
     {:else if phase === 'done'}
       <span class="icon done"><Check size={16} aria-hidden="true" /></span>
       <span class="status">{status}</span>
-    {:else if phase === 'output-failed' || phase === 'error'}
+    {:else if phase === 'output-failed' || phase === 'as-transcribed' || phase === 'error'}
       <span class="icon alert"><CircleAlert size={16} aria-hidden="true" /></span>
       <span class="status">{status}</span>
     {:else}
