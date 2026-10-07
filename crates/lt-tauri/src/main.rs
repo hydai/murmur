@@ -26,7 +26,7 @@ use lt_pipeline::{PipelineOrchestrator, PipelineState};
 #[cfg(target_os = "macos")]
 use lt_stt::AppleSttProvider;
 use lt_stt::{CustomSttProvider, ElevenLabsProvider, GroqProvider, OpenAIProvider};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -42,9 +42,8 @@ struct AppState {
     pipeline: Arc<Mutex<PipelineOrchestrator>>,
     store: storage::AppStore,
     hotkey_updates: Arc<Mutex<()>>,
-    /// Whether the microphone is open, for the menu bar. Set by the event
-    /// forwarder as states arrive, and cleared by `stop_pipeline`, since Stop
-    /// closes the microphone without changing the pipeline's state.
+    /// Whether the microphone is open, for the menu bar. Written only by the
+    /// event forwarder, from the pipeline's `CaptureChanged` events.
     microphone_open: Arc<AtomicBool>,
     prompts: PromptManager,
 }
@@ -990,10 +989,7 @@ async fn start_recording(
 }
 
 #[tauri::command]
-async fn stop_pipeline(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
+async fn stop_pipeline(state: tauri::State<'_, AppState>) -> Result<(), String> {
     tracing::info!("Stopping pipeline");
 
     let pipeline = state.pipeline.lock().await;
@@ -1002,18 +998,6 @@ async fn stop_pipeline(
         tracing::error!("Failed to stop pipeline: {}", e);
         format!("Failed to stop pipeline: {}", e)
     })?;
-
-    // Stop closes the microphone but changes no state: the pipeline stays in
-    // Recording or Transcribing until the transcript is in, so report it here.
-    let _ = app.emit(
-        "recording-state",
-        serde_json::json!({ "is_recording": false }),
-    );
-    state.microphone_open.store(false, Ordering::SeqCst);
-    // Choosing the menu bar item now cancels the session, and it says so.
-    if let Err(e) = rebuild_tray_menu(&app, pipeline.get_state().await, false) {
-        tracing::warn!("Failed to rebuild tray menu: {e}");
-    }
 
     tracing::info!("Pipeline stopped successfully");
     Ok(())
@@ -1040,7 +1024,7 @@ async fn toggle(
     };
     match action {
         recording::ToggleAction::Start => start_recording(app, state).await,
-        recording::ToggleAction::Stop => Ok(stop_pipeline(app, state).await?),
+        recording::ToggleAction::Stop => Ok(stop_pipeline(state).await?),
         recording::ToggleAction::Cancel => {
             tracing::info!("Cancelling pipeline");
             Ok(state
@@ -1643,6 +1627,7 @@ fn main() {
     );
 
     let event_rx = pipeline.subscribe_events();
+    let microphone = pipeline.microphone();
     let config_dir = AppConfig::default_config_dir().expect("application config directory");
 
     // Create app state
@@ -1719,6 +1704,7 @@ fn main() {
             app.manage(events::spawn(
                 app.handle().clone(),
                 event_rx,
+                microphone,
                 app.state::<AppState>().store.history.clone(),
             ));
             // Set up system tray - embed icon at compile time to avoid runtime path issues

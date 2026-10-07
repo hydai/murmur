@@ -1,7 +1,7 @@
 use std::sync::atomic::Ordering;
 
 use lt_core::HistoryEntry;
-use lt_pipeline::{PipelineEvent, PipelineState};
+use lt_pipeline::{MicrophoneProbe, PipelineEvent, PipelineState};
 use tauri::{Emitter, Manager};
 use tokio::sync::{broadcast, mpsc};
 
@@ -48,6 +48,7 @@ impl Drop for EventForwarder {
 pub(crate) fn spawn(
     app_clone: tauri::AppHandle,
     mut event_rx: broadcast::Receiver<PipelineEvent>,
+    microphone: MicrophoneProbe,
     history: HistoryStore,
 ) -> EventForwarder {
     EventForwarder(tauri::async_runtime::spawn(async move {
@@ -56,12 +57,17 @@ pub(crate) fn spawn(
         // Track raw transcription and command for history
         let mut raw_transcription = String::new();
         let mut detected_command: Option<String> = None;
+        // For the menu bar when the microphone changes between states.
+        let mut last_state = PipelineState::Idle;
 
         loop {
             let event = match event_rx.recv().await {
                 Ok(event) => event,
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
                     tracing::warn!("Pipeline event receiver lagged by {count} events");
+                    // A missed `CaptureChanged` has no later event to correct
+                    // it, so follow the microphone as it is now.
+                    capture_changed(&app_clone, microphone.is_open().await, last_state);
                     continue;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -104,23 +110,14 @@ pub(crate) fn spawn(
                         },
                     );
 
-                    // recording-state says whether the microphone is open.
-                    let microphone_open = &app_clone.state::<AppState>().microphone_open;
-                    if let Some(open) = capture_signal(state) {
-                        microphone_open.store(open, Ordering::SeqCst);
-                        let _ = app_clone.emit(
-                            "recording-state",
-                            serde_json::json!({
-                                "is_recording": open
-                            }),
-                        );
-                    }
-
                     // The menu bar item says what choosing it would do, so it
                     // follows the microphone as well as the state.
-                    if let Err(e) =
-                        rebuild_tray_menu(&app_clone, state, microphone_open.load(Ordering::SeqCst))
-                    {
+                    last_state = state;
+                    let microphone_open = app_clone
+                        .state::<AppState>()
+                        .microphone_open
+                        .load(Ordering::SeqCst);
+                    if let Err(e) = rebuild_tray_menu(&app_clone, state, microphone_open) {
                         tracing::warn!("Failed to update tray menu: {}", e);
                     }
 
@@ -170,9 +167,10 @@ pub(crate) fn spawn(
                 PipelineEvent::NothingHeard { .. } => {
                     let _ = app_clone.emit_to(capsule::CAPSULE_WINDOW, "nothing-heard", ());
                 }
-                // Followed by the microphone flag, recording-state and the menu
-                // bar once those stop being derived from states.
-                PipelineEvent::CaptureChanged { .. } => {}
+                // The pipeline announces every open and close of the microphone.
+                PipelineEvent::CaptureChanged { open, .. } => {
+                    capture_changed(&app_clone, open, last_state);
+                }
                 PipelineEvent::FinalResult {
                     text,
                     processing_time_ms,
@@ -229,22 +227,20 @@ pub(crate) fn spawn(
     }))
 }
 
-/// What `recording-state` reports when the pipeline enters `state`, or `None`
-/// to leave the last report standing. The event follows the microphone, which
-/// the state alone cannot tell: a streaming provider reaches Transcribing while
-/// the person is still speaking, and one that has no text until Stop stays in
-/// Recording after the microphone has closed. Transcribing therefore says
-/// nothing, and `stop_pipeline` reports the close that Stop causes. The session
-/// closes the microphone before it publishes Processing or a terminal state, so
-/// each of those says it is shut.
-fn capture_signal(state: PipelineState) -> Option<bool> {
-    match state {
-        PipelineState::Recording => Some(true),
-        PipelineState::Transcribing => None,
-        PipelineState::Processing
-        | PipelineState::Done
-        | PipelineState::Error
-        | PipelineState::Idle => Some(false),
+/// The one place the flag, recording-state and the menu bar follow the
+/// microphone. It publishes a value the flag already holds too: the capsule
+/// takes the microphone as open from `pipeline-state: recording` alone, so
+/// after a lag only a published close can correct it.
+fn capture_changed(app: &tauri::AppHandle, open: bool, state: PipelineState) {
+    app.state::<AppState>()
+        .microphone_open
+        .store(open, Ordering::SeqCst);
+    let _ = app.emit(
+        "recording-state",
+        serde_json::json!({ "is_recording": open }),
+    );
+    if let Err(e) = rebuild_tray_menu(app, state, open) {
+        tracing::warn!("Failed to update tray menu: {}", e);
     }
 }
 
@@ -332,16 +328,5 @@ mod tests {
             .map(|entry| entry.final_text.clone())
             .collect();
         assert_eq!(texts, ["three", "two", "one"]);
-    }
-
-    #[test]
-    fn recording_state_follows_the_microphone() {
-        use PipelineState::*;
-        assert_eq!(capture_signal(Recording), Some(true));
-        // Streaming STT reaches Transcribing while the person is still speaking.
-        assert_eq!(capture_signal(Transcribing), None);
-        for state in [Processing, Done, Error, Idle] {
-            assert_eq!(capture_signal(state), Some(false), "{state:?}");
-        }
     }
 }
