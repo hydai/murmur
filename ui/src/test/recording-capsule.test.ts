@@ -60,6 +60,7 @@ const commandDetected = (name: string | null) => emit('command-detected', { comm
 const pipelineResult = () => emit('pipeline-result', { processing_time_ms: 5 });
 const pipelineError = (message: string) => emit('pipeline-error', { message, recoverable: true });
 const capsuleContext = (context: CapsuleContext = CONTEXT) => emit('capsule-context', context);
+const nothingHeard = () => emit('nothing-heard', null);
 const audioLevel = (rms: number) => emit('audio-level', { rms, voice_active: true, timestamp_ms: 0 });
 
 /** Move the clock on and let Svelte draw what the timers changed. */
@@ -410,7 +411,7 @@ describe('recording capsule', () => {
     expect(fading(target)).toBe(true);
   });
 
-  // Each of these ends a session in a different way; Rust hides the window after 4, 4 and 1 s.
+  // Each of these ends a session in a different way; Rust hides the window after 4, 4, 1 and 1 s.
   it.each([
     {
       ending: 'a failed output',
@@ -441,6 +442,19 @@ describe('recording capsule', () => {
       fadesAt: 800,
       reach() {
         pipelineState('processing');
+        pipelineState('idle');
+      },
+    },
+    {
+      ending: 'a recording in which nothing was heard',
+      status: 'Nothing heard',
+      icon: null,
+      fadesAt: 800,
+      reach() {
+        pipelineState('recording');
+        microphone(true);
+        microphone(false);
+        nothingHeard();
         pipelineState('idle');
       },
     },
@@ -499,7 +513,7 @@ describe('recording capsule', () => {
     await mountCapsule();
     const subscribed = mocks.listen.mock.calls.map(([name]) => name as string).sort();
     expect(subscribed).toEqual([
-      'audio-level', 'capsule-context', 'command-detected', 'pipeline-error',
+      'audio-level', 'capsule-context', 'command-detected', 'nothing-heard', 'pipeline-error',
       'pipeline-result', 'pipeline-state', 'recording-state',
     ]);
     for (const name of [
@@ -511,7 +525,7 @@ describe('recording capsule', () => {
 
   it('stops listening when unmounted', async () => {
     await mountCapsule();
-    expect(unlisteners).toHaveLength(7);
+    expect(unlisteners).toHaveLength(8);
     for (const unlisten of unlisteners) expect(unlisten).not.toHaveBeenCalled();
     await unmountAll();
     for (const unlisten of unlisteners) expect(unlisten).toHaveBeenCalledTimes(1);

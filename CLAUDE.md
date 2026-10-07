@@ -103,9 +103,10 @@ cargo tauri build
 
 ### Tauri Events
 - Rust emits events like `audio-level`, `recording-state`, `pipeline-state`
-- Additional events: `apple-stt-model-progress`, `pipeline-result`, `pipeline-error`, `command-detected`, `capsule-context`
+- Additional events: `apple-stt-model-progress`, `pipeline-result`, `pipeline-error`, `command-detected`, `capsule-context`, `nothing-heard`
 - No event carries transcript text, since every webview (the capsule's included) can listen to any event: `pipeline-result` sends only `processing_time_ms`, and the words reach a window only through History (`get_history`)
-- `RecordingCapsule.svelte` listens in its `onMount` for `pipeline-state`, `recording-state`, `command-detected`, `pipeline-result`, `pipeline-error`, `capsule-context`, and `audio-level`
+- `RecordingCapsule.svelte` listens in its `onMount` for `pipeline-state`, `recording-state`, `command-detected`, `pipeline-result`, `pipeline-error`, `capsule-context`, `nothing-heard`, and `audio-level`
+- `nothing-heard` (no payload) goes to the `main` window only, just before the Idle of a recording that ended with nothing transcribed (`PipelineEvent::NothingHeard`), so the capsule says "Nothing heard"; a cancel reaches Idle without it and says "Cancelled"
 - `recording-state`'s `is_recording` means the microphone is open: `true` when Recording begins, `false` once Stop closes it and on Processing, Done, Error, and Idle; Transcribing leaves the last value standing (`capture_signal` in `events.rs`, `stop_pipeline` in `main.rs`)
 - `capsule-context` (payload `{ shortcut, output_mode, save_history }`) goes to the `main` window only, just before the capsule is shown
 - `navigate` (payload `{ pane, action? }`) goes to the settings window only: `show_settings` in `main.rs` emits it to a window that is already open (a new window reads the same route from its URL), and `SettingsPanel.svelte` listens for it
@@ -114,7 +115,7 @@ cargo tauri build
 - States: Idle → Recording → Transcribing → Processing → Done / Error
 - Reference: `crates/lt-pipeline/src/state.rs`
 - Startup failure rolls back to Error. Terminal STT events stop capture before final processing; `reset()` cancels and joins session tasks before returning to Idle.
-- The hotkey and the menu bar call `toggle_recording`, which picks Start / Stop / Cancel from `recording::toggle_action(state, is_capturing)`; Cancel runs `reset()`, so a session that is finishing or processing can always be abandoned.
+- The hotkey and the menu bar call `toggle_recording`, which picks Start / Stop / Cancel from `recording::toggle_action(state, is_capturing)`; Cancel runs `reset()`, so a session that is finishing or processing can always be abandoned. A recording that ends with nothing transcribed also settles on Idle, after a `NothingHeard` event that tells it apart from a cancel.
 - A toggle that fails (no API key, say) goes through `report_toggle_failure` in `main.rs`, which always emits `pipeline-error` and, unless the indicator is off or a recording is already under way, brings the capsule up to show it for 4 s.
 - Create the event forwarder once in app setup, never once per recording. Reset accumulated event data when Recording begins.
 - OpenAI, Groq, and Custom STT share the bounded HTTP worker in `crates/lt-stt/src/http.rs`.

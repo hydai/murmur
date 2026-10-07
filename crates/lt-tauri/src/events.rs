@@ -165,6 +165,10 @@ pub(crate) fn spawn(
                         }),
                     );
                 }
+                // Only the capsule words an empty recording differently from a cancel.
+                PipelineEvent::NothingHeard { .. } => {
+                    let _ = app_clone.emit_to(capsule::CAPSULE_WINDOW, "nothing-heard", ());
+                }
                 PipelineEvent::FinalResult {
                     text,
                     processing_time_ms,

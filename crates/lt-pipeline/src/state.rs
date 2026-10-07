@@ -43,6 +43,9 @@ pub enum PipelineEvent {
         command_name: Option<String>,
         timestamp_ms: u64,
     },
+    /// The recording ended with nothing transcribed, just before the session
+    /// goes back to Idle. A cancel also ends in Idle, without this.
+    NothingHeard { timestamp_ms: u64 },
     /// Final result after LLM processing
     FinalResult {
         text: String,

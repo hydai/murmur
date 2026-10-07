@@ -70,6 +70,8 @@ export interface AppEvents {
   'command-detected': CommandDetectedPayload;
   /** Goes to the capsule window only, as a recording starts. */
   'capsule-context': CapsuleContext;
+  /** Goes to the capsule window only, just before the Idle of a recording with nothing transcribed. */
+  'nothing-heard': void;
   'apple-stt-model-progress': ModelProgressPayload;
   navigate: NavigatePayload;
   'update-available': void;

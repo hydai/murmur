@@ -83,6 +83,7 @@
       if (capsule.phase === 'error') errors += 1;
     });
     listen('capsule-context', (context) => apply({ type: 'context', context }));
+    listen('nothing-heard', () => apply({ type: 'nothing-heard' }));
     listen('audio-level', ({ rms }) => {
       level = smoothLevel(level, rms);
     });
