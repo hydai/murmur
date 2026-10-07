@@ -41,6 +41,17 @@ show_recording_indicator = true
 # Translations whose target is Simplified Chinese are never converted.
 chinese_conversion = "traditional"
 
+# Apple STT Locale
+# "auto" = detect system language, or set a specific locale (e.g. "en_US", "ja_JP", "zh_TW")
+apple_stt_locale = "auto"
+
+# ElevenLabs STT Language
+# "auto" = automatic language detection, or set an ISO 639-3 code (e.g. "eng", "jpn", "zho")
+elevenlabs_language = "auto"
+
+# Every setting above must stay above the first [table] header: TOML puts each
+# key that follows a header into that table.
+
 # API Keys
 # Store your API keys here or use environment variables
 [api_keys]
@@ -50,14 +61,6 @@ chinese_conversion = "traditional"
 # anthropic = "your-anthropic-api-key"  # for Claude API
 # google_ai = "your-google-ai-key"     # for Gemini API (distinct from Gemini CLI)
 # custom_llm = "your-custom-api-key"   # for custom OpenAI-compatible endpoints
-
-# Apple STT Locale
-# "auto" = detect system language, or set a specific locale (e.g. "en_US", "ja_JP", "zh_TW")
-apple_stt_locale = "auto"
-
-# ElevenLabs STT Language
-# "auto" = automatic language detection, or set an ISO 639-3 code (e.g. "eng", "jpn", "zho")
-elevenlabs_language = "auto"
 
 # HTTP LLM Provider Configuration (for custom_api)
 # [http_llm_config]
