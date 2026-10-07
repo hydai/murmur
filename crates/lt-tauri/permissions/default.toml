@@ -2,9 +2,10 @@
 
 # Permission sets group commands by job, and each window's capability lists the
 # sets it needs. The recording capsule (the `main` window) calls no commands.
-# `toggle_recording` and `open_settings_window` stay registered because the
-# shortcut and the menu bar call them directly in Rust, but no window is
-# granted them.
+# `start_pipeline`, `stop_pipeline`, `toggle_recording` and
+# `open_settings_window` stay registered, but no window is granted them: the
+# shortcut and the menu bar run the same code in Rust (`toggle_and_report`,
+# and `open_settings_window` itself).
 
 [[permission]]
 identifier = "settings-commands"

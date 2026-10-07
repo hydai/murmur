@@ -115,8 +115,8 @@ cargo tauri build
 - States: Idle → Recording → Transcribing → Processing → Done / Error
 - Reference: `crates/lt-pipeline/src/state.rs`
 - Startup failure rolls back to Error. Terminal STT events stop capture before final processing; `reset()` cancels and joins session tasks before returning to Idle.
-- The hotkey and the menu bar call `toggle_recording`, which picks Start / Stop / Cancel from `recording::toggle_action(state, is_capturing)`; Cancel runs `reset()`, so a session that is finishing or processing can always be abandoned. A recording that ends with nothing transcribed also settles on Idle, after a `NothingHeard` event that tells it apart from a cancel.
-- A toggle that fails (no API key, say) goes through `report_toggle_failure` in `main.rs`, which always emits `pipeline-error` and, unless the indicator is off or a recording is already under way, brings the capsule up to show it for 4 s.
+- The hotkey and the menu bar call `toggle_and_report` in `main.rs`, which runs `toggle` (also behind the `toggle_recording` command) to pick Start / Stop / Cancel from `recording::toggle_action(state, is_capturing)`; Cancel runs `reset()`, so a session that is finishing or processing can always be abandoned. A recording that ends with nothing transcribed also settles on Idle, after a `NothingHeard` event that tells it apart from a cancel.
+- A toggle that fails (no API key, say) goes through `report_toggle_failure` in `main.rs`, which always emits `pipeline-error` and, unless the indicator is off or a recording is already under way, brings the capsule up to show it for 4 s. A failure inside `Pipeline::start` comes back as `recording::ToggleFailure::Reported` and skips it, since the pipeline has already sent that error.
 - Create the event forwarder once in app setup, never once per recording. Reset accumulated event data when Recording begins.
 - OpenAI, Groq, and Custom STT share the bounded HTTP worker in `crates/lt-stt/src/http.rs`.
 
