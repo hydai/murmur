@@ -1,4 +1,16 @@
 # Changelog
+## 0.2.22 (2026-10-07)
+
+### Features
+
+- announce when the microphone opens and closes
+- open the microphone before the speech-to-text session connects
+
+### Fixes
+
+- follow the microphone from the pipeline's own events
+- don't start again on a press that waited behind a failed start
+
 ## 0.2.21 (2026-10-07)
 
 ### Features
