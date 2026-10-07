@@ -11,7 +11,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::{broadcast, mpsc, watch, Mutex, RwLock};
+use tokio::sync::{broadcast, mpsc, watch, Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
 use tokio::task::JoinHandle;
 
 use crate::commands::detect_command;
@@ -27,6 +27,15 @@ const STT_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 /// Long enough for a full HTTP backlog (4 queued + in-flight + final buffer)
 /// to drain at 30 seconds per request.
 const STT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(180);
+/// How much captured audio may wait in the pipeline, while the provider
+/// connects or when it falls behind later: 40 s of the 16 kHz audio capture
+/// delivers, more than `STT_STARTUP_TIMEOUT`. Counted in samples, since a chunk
+/// is one device callback and devices differ in how long those are.
+const PRE_SESSION_SAMPLES: usize = 40 * 16_000;
+
+/// A captured chunk on its way to the pump, holding its share of the buffer's
+/// audio budget until the pump is done with it.
+type BufferedChunk = (AudioChunk, OwnedSemaphorePermit);
 
 /// Pipeline orchestrator coordinating the full flow
 pub struct PipelineOrchestrator {
@@ -44,6 +53,7 @@ pub struct PipelineOrchestrator {
     level_task: Arc<Mutex<Option<JoinHandle<()>>>>,
     audio_task: Arc<Mutex<Option<JoinHandle<()>>>>,
     transcription_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    relay_task: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl PipelineOrchestrator {
@@ -69,6 +79,7 @@ impl PipelineOrchestrator {
             level_task: Arc::new(Mutex::new(None)),
             audio_task: Arc::new(Mutex::new(None)),
             transcription_task: Arc::new(Mutex::new(None)),
+            relay_task: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -134,15 +145,9 @@ impl PipelineOrchestrator {
         *self.state.lock().await = PipelineState::Recording;
         self.emit_state_change(PipelineState::Recording);
 
-        let mut stt = stt_provider;
-        let startup = tokio::time::timeout(STT_STARTUP_TIMEOUT, stt.start_session()).await;
-        let startup =
-            startup.unwrap_or_else(|_| Err(MurmurError::Stt("STT startup timed out".into())));
-        if let Err(error) = startup {
-            self.fail_start(&error).await;
-            return Err(error);
-        }
-
+        // The microphone opens before the provider connects, so nothing said
+        // while it does is lost: the relay holds that audio until the pump
+        // sends it, first and in order.
         let AudioInput {
             capture,
             chunks,
@@ -150,8 +155,7 @@ impl PipelineOrchestrator {
         } = match (self.capture_factory)() {
             Ok(input) => input,
             Err(error) => {
-                // Drop owns provider cleanup; do not leave an active session on
-                // a device/permission failure after the network connected.
+                // No provider session has started; dropping it is all its cleanup.
                 let error = MurmurError::Audio(error.to_string());
                 self.fail_start(&error).await;
                 return Err(error);
@@ -162,6 +166,22 @@ impl PipelineOrchestrator {
             open: true,
             timestamp_ms: lt_core::now_ms(),
         });
+        if let Some(levels) = levels {
+            *self.level_task.lock().await =
+                Some(tokio::spawn(forward_levels(self.event_tx.clone(), levels)));
+        }
+        let (relay_tx, relay_rx) = mpsc::unbounded_channel();
+        let budget = Arc::new(Semaphore::new(PRE_SESSION_SAMPLES));
+        *self.relay_task.lock().await = Some(tokio::spawn(relay_audio(chunks, relay_tx, budget)));
+
+        let mut stt = stt_provider;
+        let startup = tokio::time::timeout(STT_STARTUP_TIMEOUT, stt.start_session()).await;
+        let startup =
+            startup.unwrap_or_else(|_| Err(MurmurError::Stt("STT startup timed out".into())));
+        if let Err(error) = startup {
+            self.fail_start_after_opening_capture(&error).await;
+            return Err(error);
+        }
 
         let (cancel_tx, cancel_rx) = watch::channel(false);
         *self.cancel_tx.lock().await = Some(cancel_tx.clone());
@@ -173,12 +193,8 @@ impl PipelineOrchestrator {
             stt_events,
             cancel_tx,
         )));
-        if let Some(levels) = levels {
-            *self.level_task.lock().await =
-                Some(tokio::spawn(forward_levels(self.event_tx.clone(), levels)));
-        }
         *self.audio_task.lock().await =
-            Some(tokio::spawn(pump_audio(session, stt, chunks, cancel_rx)));
+            Some(tokio::spawn(pump_audio(session, stt, relay_rx, cancel_rx)));
 
         tracing::info!("Pipeline started successfully");
         Ok(())
@@ -231,12 +247,37 @@ impl PipelineOrchestrator {
         self.emit_state_change(PipelineState::Error);
     }
 
+    /// A start that failed once the microphone was open. The error goes out
+    /// first, so the capsule never takes the closing microphone for a session
+    /// that is transcribing; then the microphone closes, the tasks that read it
+    /// stop, and the state settles on Error.
+    async fn fail_start_after_opening_capture(&self, error: &MurmurError) {
+        let _ = self.event_tx.send(PipelineEvent::Error {
+            message: error.to_string(),
+            recoverable: false,
+        });
+        let _ = stop_capture(&self.audio_capture, &self.event_tx).await;
+        for slot in [&self.level_task, &self.relay_task] {
+            if let Some(task) = slot.lock().await.take() {
+                task.abort();
+                let _ = task.await;
+            }
+        }
+        *self.state.lock().await = PipelineState::Error;
+        self.emit_state_change(PipelineState::Error);
+    }
+
     async fn cancel_session(&self) {
         if let Some(cancel) = self.cancel_tx.lock().await.take() {
             let _ = cancel.send(true);
         }
         let _ = stop_capture(&self.audio_capture, &self.event_tx).await;
-        for slot in [&self.level_task, &self.transcription_task, &self.audio_task] {
+        for slot in [
+            &self.level_task,
+            &self.relay_task,
+            &self.transcription_task,
+            &self.audio_task,
+        ] {
             if let Some(task) = slot.lock().await.take() {
                 task.abort();
                 let _ = task.await;
@@ -583,11 +624,32 @@ async fn forward_levels(
     tracing::debug!("Audio level task finished");
 }
 
+/// Moves captured audio into the pipeline's buffer as it arrives, so capture
+/// never fills up and drops frames while the provider is still connecting. The
+/// pump then reads the buffer: the audio from before the session first.
+async fn relay_audio(
+    mut from: mpsc::Receiver<AudioChunk>,
+    to: mpsc::UnboundedSender<BufferedChunk>,
+    budget: Arc<Semaphore>,
+) {
+    while let Some(chunk) = from.recv().await {
+        // Waits while the budget is spent, and capture then drops frames as it
+        // would without the buffer. No chunk can need more than all of it.
+        let samples = chunk.data.len().min(PRE_SESSION_SAMPLES) as u32;
+        let Ok(share) = budget.clone().acquire_many_owned(samples).await else {
+            break;
+        };
+        if to.send((chunk, share)).is_err() {
+            break;
+        }
+    }
+}
+
 /// Feed captured audio to the provider, then close the session.
 async fn pump_audio(
     session: Session,
     mut stt: Box<dyn SttProvider>,
-    mut chunks: mpsc::Receiver<AudioChunk>,
+    mut chunks: mpsc::UnboundedReceiver<BufferedChunk>,
     mut cancel: watch::Receiver<bool>,
 ) {
     loop {
@@ -595,7 +657,8 @@ async fn pump_audio(
             biased;
             _ = cancel.changed() => break,
             chunk = chunks.recv() => {
-                let Some(chunk) = chunk else { break; };
+                // The chunk's share of the budget goes back once it is sent.
+                let Some((chunk, _share)) = chunk else { break; };
                 let sent = tokio::select! {
                     biased;
                     _ = cancel.changed() => break,
@@ -664,7 +727,12 @@ impl Drop for PipelineOrchestrator {
                 let _ = capture.stop();
             }
         }
-        for slot in [&self.level_task, &self.transcription_task, &self.audio_task] {
+        for slot in [
+            &self.level_task,
+            &self.relay_task,
+            &self.transcription_task,
+            &self.audio_task,
+        ] {
             if let Ok(mut slot) = slot.try_lock() {
                 if let Some(task) = slot.take() {
                     task.abort();
@@ -730,6 +798,11 @@ mod tests {
         rx: SyncMutex<Option<mpsc::Receiver<TranscriptionEvent>>>,
         fail_start: bool,
         fail_send: bool,
+        /// Held closed, keeps `start_session` from answering: a provider still connecting.
+        gate: Option<Arc<Notify>>,
+        /// The timestamp of every chunk it was sent, in order.
+        sent: Arc<SyncMutex<Vec<u64>>>,
+        started: Arc<AtomicBool>,
     }
     impl TestStt {
         fn new(fail_start: bool) -> (Box<Self>, mpsc::Sender<TranscriptionEvent>) {
@@ -740,6 +813,9 @@ mod tests {
                     rx: SyncMutex::new(Some(rx)),
                     fail_start,
                     fail_send: false,
+                    gate: None,
+                    sent: Arc::default(),
+                    started: Arc::default(),
                 }),
                 tx,
             )
@@ -748,13 +824,18 @@ mod tests {
     #[async_trait]
     impl SttProvider for TestStt {
         async fn start_session(&mut self) -> Result<()> {
+            self.started.store(true, Ordering::SeqCst);
+            if let Some(gate) = &self.gate {
+                gate.notified().await;
+            }
             if self.fail_start {
                 Err(MurmurError::Stt("startup failed".into()))
             } else {
                 Ok(())
             }
         }
-        async fn send_audio(&mut self, _: AudioChunk) -> Result<()> {
+        async fn send_audio(&mut self, chunk: AudioChunk) -> Result<()> {
+            self.sent.lock().unwrap().push(chunk.timestamp_ms);
             if self.fail_send {
                 Err(MurmurError::Stt("delivery failed".into()))
             } else {
@@ -860,12 +941,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn capture_start_failure_rolls_back_started_provider() {
+    async fn a_microphone_that_fails_to_open_starts_no_provider_session() {
         let (mut p, _) = pipeline(Arc::default(), Arc::new(TestLlm(None)));
         p.capture_factory = Arc::new(|| Err(lt_audio::AudioError::NoInputDevice));
-        let (stt, events) = TestStt::new(false);
+        let mut events = p.subscribe_events();
+        let (stt, _tx) = TestStt::new(false);
+        let started = stt.started.clone();
         assert!(p.start(stt).await.is_err());
-        assert!(events.is_closed());
+        assert!(!started.load(Ordering::SeqCst));
+
+        let seen = events_until(&mut events, PipelineState::Error).await;
+        assert!(capture_changes(&seen).is_empty(), "{seen:?}");
         assert_eq!(p.get_state().await, PipelineState::Error);
     }
 
@@ -1254,6 +1340,239 @@ mod tests {
         .expect("the microphone closing is announced");
         assert!(!p.is_capturing().await);
         p.reset().await.unwrap();
+    }
+
+    fn chunk(timestamp_ms: u64) -> AudioChunk {
+        AudioChunk {
+            data: vec![0; 160],
+            timestamp_ms,
+        }
+    }
+
+    /// The chunk sender of a `capture_fed_by_test` capture, once it has opened.
+    async fn opened_feed(
+        feed: &Arc<SyncMutex<Option<mpsc::Sender<AudioChunk>>>>,
+    ) -> mpsc::Sender<AudioChunk> {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(sender) = feed.lock().unwrap().clone() {
+                    break sender;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the microphone opened")
+    }
+
+    #[tokio::test]
+    async fn audio_captured_while_the_provider_connects_reaches_it_in_order() {
+        let (mut p, _) = pipeline(Arc::default(), Arc::new(TestLlm(None)));
+        let feed = capture_fed_by_test(&mut p);
+        let p = Arc::new(p);
+        let mut events = p.subscribe_events();
+        let gate = Arc::new(Notify::new());
+        let (mut stt, tx) = TestStt::new(false);
+        stt.gate = Some(gate.clone());
+        let sent = stt.sent.clone();
+        let starting = tokio::spawn({
+            let p = p.clone();
+            async move { p.start(stt).await }
+        });
+
+        // More than the capture's own channel holds: only a pipeline that
+        // drains it while the provider connects lets every send through.
+        let sender = opened_feed(&feed).await;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            for timestamp_ms in 0..10 {
+                sender.send(chunk(timestamp_ms)).await.unwrap();
+            }
+        })
+        .await
+        .expect("the capture is drained while the provider connects");
+        drop(sender);
+        feed.lock().unwrap().take();
+
+        gate.notify_one();
+        starting.await.unwrap().unwrap();
+        p.stop().await.unwrap();
+        drop(tx);
+        events_until(&mut events, PipelineState::Idle).await;
+        assert_eq!(*sent.lock().unwrap(), (0..10).collect::<Vec<u64>>());
+    }
+
+    #[tokio::test]
+    async fn a_provider_that_fails_to_connect_closes_the_microphone() {
+        let (p, running) = pipeline(Arc::default(), Arc::new(TestLlm(None)));
+        let mut events = p.subscribe_events();
+        let (stt, _tx) = TestStt::new(true);
+        assert!(p.start(stt).await.is_err());
+        assert!(!p.is_capturing().await);
+        assert!(!running.load(Ordering::SeqCst));
+
+        // The error goes out before the microphone closes, so the capsule never
+        // takes the closing microphone for a session that is transcribing.
+        let seen = events_until(&mut events, PipelineState::Error).await;
+        let order: Vec<&str> = seen
+            .iter()
+            .filter_map(|event| match event {
+                PipelineEvent::CaptureChanged { open: true, .. } => Some("open"),
+                PipelineEvent::Error { .. } => Some("error"),
+                PipelineEvent::CaptureChanged { open: false, .. } => Some("closed"),
+                PipelineEvent::StateChanged {
+                    state: PipelineState::Error,
+                    ..
+                } => Some("error state"),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            order,
+            ["open", "error", "closed", "error state"],
+            "{seen:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stop_while_the_provider_connects_keeps_the_audio() {
+        let (mut p, _) = pipeline(Arc::default(), Arc::new(TestLlm(None)));
+        let feed = capture_fed_by_test(&mut p);
+        let p = Arc::new(p);
+        let mut events = p.subscribe_events();
+        let gate = Arc::new(Notify::new());
+        let (mut stt, tx) = TestStt::new(false);
+        stt.gate = Some(gate.clone());
+        let sent = stt.sent.clone();
+        let starting = tokio::spawn({
+            let p = p.clone();
+            async move { p.start(stt).await }
+        });
+        let sender = opened_feed(&feed).await;
+        for timestamp_ms in 0..3 {
+            sender.send(chunk(timestamp_ms)).await.unwrap();
+        }
+        drop(sender);
+        feed.lock().unwrap().take();
+
+        // The stop waits for the start, which waits for the provider.
+        let stopping = tokio::spawn({
+            let p = p.clone();
+            async move { p.stop().await }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!stopping.is_finished());
+        gate.notify_one();
+        starting.await.unwrap().unwrap();
+        stopping.await.unwrap().unwrap();
+        drop(tx);
+        events_until(&mut events, PipelineState::Idle).await;
+        assert_eq!(*sent.lock().unwrap(), [0, 1, 2]);
+    }
+
+    #[test]
+    fn the_pre_session_buffer_covers_the_startup_timeout() {
+        // Capture delivers 16 kHz samples, whatever size its chunks are.
+        assert!(PRE_SESSION_SAMPLES as u64 >= STT_STARTUP_TIMEOUT.as_secs() * 16_000);
+    }
+
+    #[tokio::test]
+    async fn the_relay_holds_tiny_chunks_by_their_audio_not_their_count() {
+        // 2 ms chunks, as a device with small callback buffers delivers them:
+        // 10 000 of them are only 20 s of audio, well inside the budget.
+        let (from_tx, from_rx) = mpsc::channel(4);
+        let (to_tx, mut to_rx) = mpsc::unbounded_channel();
+        let budget = Arc::new(Semaphore::new(PRE_SESSION_SAMPLES));
+        let relay = tokio::spawn(relay_audio(from_rx, to_tx, budget));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            for timestamp_ms in 0..10_000 {
+                let chunk = AudioChunk {
+                    data: vec![0; 32],
+                    timestamp_ms,
+                };
+                from_tx.send(chunk).await.unwrap();
+            }
+        })
+        .await
+        .expect("chunks inside the audio budget are all taken in");
+        drop(from_tx);
+        relay.await.unwrap();
+
+        let mut taken = Vec::new();
+        while let Ok((chunk, _share)) = to_rx.try_recv() {
+            taken.push(chunk.timestamp_ms);
+        }
+        assert_eq!(taken, (0..10_000).collect::<Vec<u64>>());
+    }
+
+    #[tokio::test]
+    async fn the_relay_waits_once_its_audio_budget_is_spent() {
+        let (from_tx, from_rx) = mpsc::channel(8);
+        let (to_tx, mut to_rx) = mpsc::unbounded_channel();
+        tokio::spawn(relay_audio(from_rx, to_tx, Arc::new(Semaphore::new(100))));
+        for timestamp_ms in 0..3 {
+            let chunk = AudioChunk {
+                data: vec![0; 40],
+                timestamp_ms,
+            };
+            from_tx.send(chunk).await.unwrap();
+        }
+        let recv = Duration::from_secs(1);
+
+        // Two 40-sample chunks fit a 100-sample budget; the third waits.
+        let first = tokio::time::timeout(recv, to_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let _second = tokio::time::timeout(recv, to_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), to_rx.recv())
+                .await
+                .is_err()
+        );
+        // Once the pump is done with a chunk, its share of the budget comes back.
+        drop(first);
+        let (third, _share) = tokio::time::timeout(recv, to_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(third.timestamp_ms, 2);
+    }
+
+    #[tokio::test]
+    async fn a_cancel_while_the_provider_connects_closes_everything() {
+        let (p, running) = pipeline(Arc::default(), Arc::new(TestLlm(None)));
+        let p = Arc::new(p);
+        let mut events = p.subscribe_events();
+        let gate = Arc::new(Notify::new());
+        let (mut stt, _tx) = TestStt::new(false);
+        stt.gate = Some(gate.clone());
+        let starting = tokio::spawn({
+            let p = p.clone();
+            async move { p.start(stt).await }
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !running.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the microphone opened while the provider connects");
+
+        let cancelling = tokio::spawn({
+            let p = p.clone();
+            async move { p.reset().await }
+        });
+        gate.notify_one();
+        starting.await.unwrap().unwrap();
+        cancelling.await.unwrap().unwrap();
+        assert_eq!(p.get_state().await, PipelineState::Idle);
+        assert!(!p.is_capturing().await);
+        assert!(!running.load(Ordering::SeqCst));
+        let seen = events_until(&mut events, PipelineState::Idle).await;
+        assert_eq!(capture_changes(&seen), [true, false], "{seen:?}");
     }
 
     #[tokio::test]
