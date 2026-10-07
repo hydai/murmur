@@ -45,6 +45,9 @@ struct AppState {
     /// Whether the microphone is open, for the menu bar. Written only by the
     /// event forwarder, from the pipeline's `CaptureChanged` events.
     microphone_open: Arc<AtomicBool>,
+    /// The starts running and begun, so a press that waited behind one can
+    /// tell (`recording::StartTracker`).
+    starts: Arc<recording::StartTracker>,
     prompts: PromptManager,
 }
 
@@ -848,21 +851,31 @@ async fn start_pipeline(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    start_recording(app, state)
+    start_recording(app, state, None)
         .await
         .map_err(recording::ToggleFailure::into_message)
 }
 
 /// Starts a recording. A failure inside `Pipeline::start` comes back as
 /// `Reported`, since the pipeline has announced it; any earlier one, as
-/// `Unreported`.
+/// `Unreported`. `arrival` is what the press that asked saw of the starts, if a
+/// press asked.
 async fn start_recording(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
+    arrival: Option<recording::Arrival>,
 ) -> Result<(), recording::ToggleFailure> {
     tracing::info!("Starting pipeline");
 
     let pipeline = state.pipeline.lock().await;
+    // A press that waited behind another start does nothing: if that start
+    // failed it would open the microphone again, and if it succeeded this one
+    // would only fail as already running.
+    if arrival.is_some_and(|arrival| state.starts.waited(&arrival)) {
+        tracing::info!("Ignoring a press that waited behind a start");
+        return Ok(());
+    }
+    let _starting = state.starts.begin();
 
     // Check if pipeline is already running
     let current_state = pipeline.get_state().await;
@@ -1018,12 +1031,14 @@ async fn toggle(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), recording::ToggleFailure> {
+    // Taken before waiting for the pipeline, which a start in progress holds.
+    let arrival = state.starts.arrive();
     let action = {
         let pipeline = state.pipeline.lock().await;
         recording::toggle_action(pipeline.get_state().await, pipeline.is_capturing().await)
     };
     match action {
-        recording::ToggleAction::Start => start_recording(app, state).await,
+        recording::ToggleAction::Start => start_recording(app, state, Some(arrival)).await,
         recording::ToggleAction::Stop => Ok(stop_pipeline(state).await?),
         recording::ToggleAction::Cancel => {
             tracing::info!("Cancelling pipeline");
@@ -1636,6 +1651,7 @@ fn main() {
         store: storage::AppStore::new(config_dir),
         hotkey_updates: Arc::new(Mutex::new(())),
         microphone_open: Arc::new(AtomicBool::new(false)),
+        starts: Arc::default(),
         prompts,
     };
     app_state.store.history.set_enabled(config.save_history);

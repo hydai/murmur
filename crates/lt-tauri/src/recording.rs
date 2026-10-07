@@ -1,4 +1,5 @@
 use lt_pipeline::PipelineState;
+use std::sync::{Mutex, MutexGuard};
 
 /// What a "toggle recording" gesture (the hotkey or the menu bar) should do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +19,61 @@ pub(crate) fn toggle_action(state: PipelineState, capturing: bool) -> ToggleActi
             ToggleAction::Cancel
         }
         PipelineState::Idle | PipelineState::Done | PipelineState::Error => ToggleAction::Start,
+    }
+}
+
+/// Tells a press that waited behind a start from a fresh one. A start holds
+/// the pipeline until the provider has connected or failed, so a press made
+/// meanwhile waits. If that start failed, the press finds nothing to stop and
+/// would start again, opening the microphone a second time; `start_recording`
+/// asks `waited` under the pipeline lock, right before it begins, and such a
+/// press does nothing instead. A press takes its look under the same lock a
+/// start changes its flag and its count under, so it never sees half of a
+/// start beginning.
+#[derive(Default)]
+pub(crate) struct StartTracker(Mutex<Starts>);
+
+/// The starts as they are, or as a press saw them.
+#[derive(Default, Clone, Copy)]
+struct Starts {
+    running: bool,
+    begun: u64,
+}
+
+/// What a press saw of the starts when it came.
+pub(crate) struct Arrival(Starts);
+
+impl StartTracker {
+    fn starts(&self) -> MutexGuard<'_, Starts> {
+        self.0.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    pub(crate) fn arrive(&self) -> Arrival {
+        Arrival(*self.starts())
+    }
+
+    /// Whether a start ran while the press waited: one was running when it
+    /// came, or one has begun since, while the press was choosing its action.
+    pub(crate) fn waited(&self, arrival: &Arrival) -> bool {
+        arrival.0.running || self.starts().begun != arrival.0.begun
+    }
+
+    /// Marks a start as running until the guard drops, whichever way the
+    /// start returns.
+    pub(crate) fn begin(&self) -> StartInProgress<'_> {
+        let mut starts = self.starts();
+        starts.begun += 1;
+        starts.running = true;
+        StartInProgress(self)
+    }
+}
+
+/// A start that is running, for as long as it lives.
+pub(crate) struct StartInProgress<'a>(&'a StartTracker);
+
+impl Drop for StartInProgress<'_> {
+    fn drop(&mut self) {
+        self.0.starts().running = false;
     }
 }
 
@@ -100,6 +156,54 @@ mod tests {
             toggle_action(PipelineState::Processing, true),
             ToggleAction::Cancel
         );
+    }
+
+    #[test]
+    fn a_press_made_during_a_start_waited_behind_it() {
+        let starts = StartTracker::default();
+        let starting = starts.begin();
+        let press = starts.arrive();
+        drop(starting);
+        assert!(starts.waited(&press));
+    }
+
+    #[test]
+    fn a_press_made_just_before_a_start_began_waited_behind_it() {
+        // It chose Start while the other press's start was still about to
+        // take the pipeline.
+        let starts = StartTracker::default();
+        let press = starts.arrive();
+        drop(starts.begin());
+        assert!(starts.waited(&press));
+    }
+
+    #[test]
+    fn a_press_never_sees_half_of_a_start_beginning() {
+        // A start is halfway through beginning: its count has moved and its
+        // flag not yet. A press that looks now waits for the whole change.
+        let starts = std::sync::Arc::new(StartTracker::default());
+        let mut beginning = starts.starts();
+        beginning.begun += 1;
+        let looking = {
+            let starts = starts.clone();
+            std::thread::spawn(move || starts.arrive())
+        };
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(!looking.is_finished());
+        beginning.running = true;
+        drop(beginning);
+
+        let press = looking.join().unwrap();
+        starts.starts().running = false;
+        assert!(starts.waited(&press));
+    }
+
+    #[test]
+    fn a_press_made_after_a_start_waited_for_nothing() {
+        let starts = StartTracker::default();
+        drop(starts.begin());
+        let press = starts.arrive();
+        assert!(!starts.waited(&press));
     }
 
     #[test]
