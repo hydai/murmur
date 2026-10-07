@@ -548,6 +548,12 @@ async fn run_transcription(
     if transcript.text.is_empty() {
         tracing::info!("No transcription to process");
         let terminal = session.terminal(PipelineState::Idle);
+        if terminal == PipelineState::Idle {
+            // Idle alone would read as a cancel.
+            session.emit(PipelineEvent::NothingHeard {
+                timestamp_ms: transcript.last_timestamp_ms,
+            });
+        }
         session
             .publish(terminal, transcript.last_timestamp_ms)
             .await;
@@ -1104,6 +1110,61 @@ mod tests {
         assert!(
             messages.iter().any(|m| m.contains("Output failed")),
             "{messages:?}"
+        );
+    }
+
+    /// Everything the pipeline announces up to the state that ends the session.
+    async fn events_until(
+        events: &mut broadcast::Receiver<PipelineEvent>,
+        last: PipelineState,
+    ) -> Vec<PipelineEvent> {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let mut seen = Vec::new();
+            loop {
+                let event = events.recv().await.unwrap();
+                let done =
+                    matches!(event, PipelineEvent::StateChanged { state, .. } if state == last);
+                seen.push(event);
+                if done {
+                    break seen;
+                }
+            }
+        })
+        .await
+        .expect("expected the session to end")
+    }
+
+    #[tokio::test]
+    async fn a_recording_with_nothing_transcribed_says_so_before_idle() {
+        let (p, _) = pipeline(Arc::default(), Arc::new(TestLlm(None)));
+        let mut events = p.subscribe_events();
+        let (stt, tx) = TestStt::new(false);
+        p.start(stt).await.unwrap();
+        drop(tx);
+        p.stop().await.unwrap();
+
+        let seen = events_until(&mut events, PipelineState::Idle).await;
+        let nothing_heard = seen
+            .iter()
+            .position(|event| matches!(event, PipelineEvent::NothingHeard { .. }));
+        assert_eq!(nothing_heard, Some(seen.len() - 2), "{seen:?}");
+    }
+
+    #[tokio::test]
+    async fn a_cancel_is_not_reported_as_nothing_heard() {
+        let (p, _) = pipeline(Arc::default(), Arc::new(TestLlm(None)));
+        let mut events = p.subscribe_events();
+        // The provider stays open, so the session is still listening when it is cancelled.
+        let (stt, _tx) = TestStt::new(false);
+        p.start(stt).await.unwrap();
+        p.reset().await.unwrap();
+
+        let seen = events_until(&mut events, PipelineState::Idle).await;
+        assert!(
+            !seen
+                .iter()
+                .any(|event| matches!(event, PipelineEvent::NothingHeard { .. })),
+            "{seen:?}"
         );
     }
 

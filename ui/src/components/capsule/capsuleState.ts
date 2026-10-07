@@ -37,6 +37,8 @@ export interface CapsuleState {
   outputFailed: boolean;
   /** Which destinations that error named as failed; neither when it named none. */
   failedOutputs: FailedOutputs;
+  /** The recording ended with nothing transcribed (`nothing-heard`), so the Idle that follows is not a cancel. */
+  nothingHeard: boolean;
   /**
    * The session is over, so what the capsule shows is its ending, and it is on its way out. An error does not end a
    * session that is under way: the pipeline goes on past it with the text it already has, and delivers that seconds
@@ -60,7 +62,8 @@ export type CapsuleEvent =
   | { type: 'command'; name: string | null }
   | { type: 'result' }
   | { type: 'error'; message: string }
-  | { type: 'context'; context: CapsuleContext };
+  | { type: 'context'; context: CapsuleContext }
+  | { type: 'nothing-heard' };
 
 /** Nothing has happened yet, so nothing shows. A new recording starts from this too. */
 export const INITIAL_CAPSULE: CapsuleState = {
@@ -70,6 +73,7 @@ export const INITIAL_CAPSULE: CapsuleState = {
   command: null,
   outputFailed: false,
   failedOutputs: { clipboard: false, keyboard: false },
+  nothingHeard: false,
   ended: false,
   message: '',
   context: null,
@@ -166,6 +170,8 @@ export function reduce(state: CapsuleState, event: CapsuleEvent): CapsuleState {
       };
     case 'context':
       return { ...state, context: event.context };
+    case 'nothing-heard':
+      return { ...state, nothingHeard: true };
   }
 }
 
@@ -230,7 +236,7 @@ export function statusText(state: CapsuleState): string {
     case 'error':
       return state.message || 'Something went wrong';
     case 'cancelled':
-      return 'Cancelled';
+      return state.nothingHeard ? 'Nothing heard' : 'Cancelled';
   }
 }
 

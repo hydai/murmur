@@ -31,6 +31,7 @@ const commandDetected = (name: string | null): CapsuleEvent => ({ type: 'command
 const pipelineResult: CapsuleEvent = { type: 'result' };
 const pipelineError = (message: string): CapsuleEvent => ({ type: 'error', message });
 const capsuleContext = (context: CapsuleContext): CapsuleEvent => ({ type: 'context', context });
+const nothingHeard: CapsuleEvent = { type: 'nothing-heard' };
 
 /** Feed events to the reducer one after another, as the component does. */
 const run = (events: CapsuleEvent[], from: CapsuleState = INITIAL_CAPSULE) =>
@@ -146,12 +147,14 @@ describe('capsule state', () => {
   it('starts a fresh session on recording', () => {
     const finished: CapsuleState = {
       phase: 'done', capturing: false, startedAt: 10, command: 'shorten', outputFailed: true,
-      failedOutputs: { clipboard: true, keyboard: false }, ended: true, message: 'Earlier error', context: ctx,
+      failedOutputs: { clipboard: true, keyboard: false }, nothingHeard: true, ended: true,
+      message: 'Earlier error', context: ctx,
     };
 
     expect(reduce(finished, pipelineState('recording', 1000))).toEqual({
       phase: 'recording', capturing: true, startedAt: 1000, command: null, outputFailed: false,
-      failedOutputs: { clipboard: false, keyboard: false }, ended: false, message: '', context: ctx,
+      failedOutputs: { clipboard: false, keyboard: false }, nothingHeard: false, ended: false,
+      message: '', context: ctx,
     });
   });
 
@@ -294,6 +297,21 @@ describe('capsule state', () => {
       .toBe("Couldn't deliver the text");
   });
 
+  it('says Nothing heard when a recording ends with nothing transcribed', () => {
+    // The report only marks the session; the Idle that follows ends it.
+    expectChange(nothingHeard, { nothingHeard: true });
+
+    const stopped = run([capsuleContext(ctx), pipelineState('recording', 1000), capture(true), capture(false)]);
+    const empty = run([nothingHeard, pipelineState('idle')], stopped);
+    expect(empty.phase).toBe('cancelled');
+    expect(statusText(empty)).toBe('Nothing heard');
+    expect(hintText(empty)).toBe('');
+
+    // A cancel goes back to Idle without the report, and the next recording forgets it.
+    expect(statusText(run([pipelineState('idle')], stopped))).toBe('Cancelled');
+    expect(run([pipelineState('recording', 2000)], empty).nothingHeard).toBe(false);
+  });
+
   it('words a failed output by the destinations the error names', () => {
     // lt-output names each destination that failed, so in Both mode one can fail while the other delivers.
     const both = { ...ctx, output_mode: 'both', save_history: false } as const;
@@ -384,11 +402,11 @@ describe('capsule state', () => {
     for (const name of ['done', 'error', 'idle']) expectEnded(pipelineState(name), everyEnded(true));
     expectEnded(pipelineState('recording', 1000), everyEnded(false));
 
-    // Nothing else moves it: not the microphone, a voice command or the context, and not a failed output, which
-    // only marks the session and waits for the result.
+    // Nothing else moves it: not the microphone, a voice command or the context, and not a failed output or a
+    // report that nothing was heard, which only mark the session and wait for the state that ends it.
     for (const event of [
       capture(true), capture(false), commandDetected('shorten'), capsuleContext(other),
-      pipelineError('Output failed: no access'),
+      pipelineError('Output failed: no access'), nothingHeard,
     ]) {
       expectEnded(event, ENDED);
     }
@@ -449,7 +467,8 @@ describe('capsule state', () => {
     for (const [phase, session] of Object.entries(sessions())) {
       expect(reduce(session, pipelineState('recording', 7000)), phase).toEqual({
         phase: 'recording', capturing: true, startedAt: 7000, command: null, outputFailed: false,
-        failedOutputs: { clipboard: false, keyboard: false }, ended: false, message: '', context: session.context,
+        failedOutputs: { clipboard: false, keyboard: false }, nothingHeard: false, ended: false,
+        message: '', context: session.context,
       });
     }
   });
@@ -462,7 +481,7 @@ describe('capsule state', () => {
       commandDetected('shorten'), commandDetected(null),
       pipelineResult,
       pipelineError('Output failed: no access'), pipelineError('Microphone unavailable'),
-      capsuleContext(other),
+      capsuleContext(other), nothingHeard,
     ].map(deepFreeze);
 
     for (const phase of PHASES) {
@@ -471,7 +490,8 @@ describe('capsule state', () => {
           for (const ended of [true, false]) {
             const frozen = deepFreeze<CapsuleState>({
               phase, capturing, outputFailed, ended, startedAt: 1000, command: 'translate to French',
-              failedOutputs: { clipboard: outputFailed, keyboard: false }, message: 'Earlier error', context: { ...ctx },
+              failedOutputs: { clipboard: outputFailed, keyboard: false }, nothingHeard: !capturing,
+              message: 'Earlier error', context: { ...ctx },
             });
             for (const event of events) {
               expect(() => reduce(frozen, event), `${phase} + ${JSON.stringify(event)}`).not.toThrow();
@@ -484,7 +504,8 @@ describe('capsule state', () => {
     // Every session starts from the same object, so it must come out of all of the above as it went in.
     expect(INITIAL_CAPSULE).toEqual({
       phase: 'hidden', capturing: false, startedAt: null, command: null, outputFailed: false,
-      failedOutputs: { clipboard: false, keyboard: false }, ended: false, message: '', context: null,
+      failedOutputs: { clipboard: false, keyboard: false }, nothingHeard: false, ended: false,
+      message: '', context: null,
     });
 
     // A pipeline state the capsule does not know leaves it as it is, whatever the phase.
