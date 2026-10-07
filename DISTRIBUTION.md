@@ -34,7 +34,7 @@ This document covers the build, packaging, and distribution process for Murmur o
 ```toml
 [dependencies]
 tauri = {
-  version = "2.10.2",
+  version = "2",  # exact version: crates/lt-tauri/Cargo.toml
   features = [
     "tray-icon",      # Menu bar icon
     "image-png",      # PNG icon support
@@ -84,11 +84,11 @@ target/release/bundle/
 │       └── Contents/
 │           ├── Info.plist       # Bundle metadata + privacy descriptions
 │           ├── MacOS/
-│           │   └── lt-tauri     # Main binary (20MB)
+│           │   └── lt-tauri     # Main binary
 │           └── Resources/
 │               └── icon.icns    # App icon
 └── dmg/
-    └── Murmur_0.1.0_aarch64.dmg  # Installer (7.7MB)
+    └── Murmur_<version>_aarch64.dmg  # Installer
 ```
 
 ## DMG Contents
@@ -102,7 +102,7 @@ When mounted, the .dmg shows:
 
 ### End User Installation
 
-1. **Download**: User downloads `Murmur_0.1.0_aarch64.dmg`
+1. **Download**: User downloads `Murmur_<version>_aarch64.dmg`
 2. **Mount**: Double-click the .dmg to mount the disk image
 3. **Install**: Drag Murmur.app to the Applications folder
 4. **Launch**: Open from Applications or Spotlight
@@ -132,11 +132,11 @@ After building, verify the following:
 
 ### AC1: Build Success
 - [ ] `cargo tauri build` completes without errors
-- [ ] .dmg file exists at `target/release/bundle/dmg/Murmur_0.1.0_aarch64.dmg`
+- [ ] .dmg file exists at `target/release/bundle/dmg/Murmur_<version>_aarch64.dmg`
 - [ ] .app bundle exists at `target/release/bundle/macos/Murmur.app`
 
 ### AC2: DMG Contents
-- [ ] Mount the .dmg: `hdiutil attach Murmur_0.1.0_aarch64.dmg -readonly`
+- [ ] Mount the .dmg: `hdiutil attach Murmur_<version>_aarch64.dmg -readonly`
 - [ ] Verify Murmur.app is present
 - [ ] Verify Applications symlink exists
 - [ ] Verify volume has icon
@@ -154,9 +154,9 @@ grep "NSAccessibilityUsageDescription" target/release/bundle/macos/Murmur.app/Co
 ```
 
 ### AC5: File Sizes
-- [ ] .dmg size < 50MB (actual: ~7.7MB)
-- [ ] .app size < 50MB (actual: ~20MB)
-- [ ] Binary size reasonable (~20MB for Rust + Tauri + embedded frontend)
+- [ ] .dmg size < 50MB
+- [ ] .app size < 50MB
+- [ ] Binary size reasonable for Rust + Tauri + the embedded frontend
 
 ## Bundle Verification Commands
 
@@ -187,7 +187,7 @@ tccutil reset Microphone com.hydai.murmur
 tccutil reset Accessibility com.hydai.murmur
 
 # Install from .dmg
-hdiutil attach target/release/bundle/dmg/Murmur_0.1.0_aarch64.dmg
+hdiutil attach target/release/bundle/dmg/Murmur_<version>_aarch64.dmg
 cp -R /Volumes/Murmur/Murmur.app /Applications/
 hdiutil detach /Volumes/Murmur
 
@@ -199,7 +199,7 @@ open /Applications/Murmur.app
 # 2. Grant accessibility permission when prompted
 # 3. Click the menu bar icon → Settings…
 # 4. Configure API key (e.g., ElevenLabs)
-# 5. Press Cmd+Shift+Space
+# 5. Press Ctrl+` (the default shortcut)
 # 6. Speak into microphone
 # 7. Verify the recording capsule appears at the bottom of the screen while recording
 # 8. Verify text appears in clipboard (Cmd+V)
@@ -259,9 +259,7 @@ Check for:
 
 ## Size Optimization
 
-Current sizes are well within limits:
-- DMG: 7.7MB (< 50MB target)
-- App: 20MB (< 50MB target)
+Both the DMG and the app stay well under the 50MB target.
 
 Further optimization possible:
 - Strip debug symbols (already done in release mode)
@@ -305,20 +303,20 @@ xcrun stapler staple target/release/bundle/macos/Murmur.app
 - Provide SHA256 checksum for verification
 
 ### GitHub Releases
+Releases are automated. Every push to master lets knope open a "chore: release murmur X" PR; merging it runs `.github/workflows/release.yml`, which builds the DMG, tags and publishes the release with the updater manifest (`latest.json`), and updates the Homebrew cask. To publish a one-off build by hand instead:
+
 ```bash
-# Create release with gh cli
-gh release create v0.1.0 \
-  target/release/bundle/dmg/Murmur_0.1.0_aarch64.dmg \
-  --title "Murmur v0.1.0" \
-  --notes "Initial release"
+gh release create v<version> \
+  target/release/bundle/dmg/Murmur_<version>_aarch64.dmg \
+  --title "Murmur v<version>"
 ```
 
 ### Homebrew Cask
-Create a Homebrew cask for easier installation:
+The release workflow keeps the cask in [hydai/homebrew-murmur](https://github.com/hydai/homebrew-murmur) up to date, so users install with `brew tap hydai/murmur && brew install --cask murmur`. Its shape, for reference:
 
 ```ruby
 cask "murmur" do
-  version "0.1.0"
+  version "<version>"
   sha256 "..."
 
   url "https://github.com/hydai/murmur/releases/download/v#{version}/Murmur_#{version}_aarch64.dmg"
@@ -355,7 +353,7 @@ For build issues, check:
 1. Rust version: `rustc --version` (requires 1.92+)
 2. Node version: `node --version` (requires 22+)
 3. Tauri CLI: `cargo tauri --version` (should be 2.x)
-4. macOS version: `sw_vers` (requires 10.15+)
+4. macOS version: `sw_vers` (requires macOS 26+)
 5. Xcode Command Line Tools: `xcode-select --install`
 
 Build artifacts are in `target/release/bundle/` directory. Clean builds with `cargo clean` if you encounter issues.

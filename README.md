@@ -113,7 +113,7 @@ xattr -cr /Applications/Murmur.app
 
 ```bash
 cargo tauri dev              # Development mode
-cargo test --workspace       # Run all tests (~120)
+cargo test --workspace       # Run all tests
 cargo build -p lt-tauri --release  # Release binary
 cargo tauri build            # Production bundle (.dmg)
 ```

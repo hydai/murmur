@@ -9,7 +9,7 @@ Thank you for your interest in contributing to Murmur! This document covers the 
 - **Rust** 1.92+ (`rustup update stable`)
 - **Node.js** 22+ and **npm** 11+
 - **Tauri CLI**: `cargo install tauri-cli`
-- **macOS** (required for CoreAudio, system tray, and accessibility APIs)
+- **macOS** (required for CoreAudio, the menu bar, and accessibility APIs)
 - **Xcode Command Line Tools**: `xcode-select --install`
 
 ### Getting Started
