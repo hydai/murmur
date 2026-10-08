@@ -206,17 +206,9 @@ pub(crate) fn spawn(
                     let _ = app_clone.emit(
                         "pipeline-error",
                         ErrorEvent {
-                            message: message.clone(),
+                            message,
                             recoverable,
                         },
-                    );
-
-                    // Emit as audio-error for compatibility
-                    let _ = app_clone.emit(
-                        "audio-error",
-                        serde_json::json!({
-                            "message": message
-                        }),
                     );
                 }
             }
