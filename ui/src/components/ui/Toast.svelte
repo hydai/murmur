@@ -25,7 +25,7 @@
     -->
     <button
       type="button"
-      class="toast-dismiss"
+      class="btn-icon toast-dismiss"
       aria-label="Dismiss"
       onmousedown={(event) => event.preventDefault()}
       onclick={() => ondismiss()}
@@ -84,18 +84,10 @@
   }
 
   .toast-dismiss {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    justify-content: center;
     width: 20px;
     height: 20px;
-    padding: 0;
-    border: 0;
     border-radius: 50%;
-    background: transparent;
     color: inherit;
-    transition: background-color 0.15s ease;
   }
 
   .toast-dismiss:hover {
@@ -117,10 +109,6 @@
   @media (prefers-reduced-motion: reduce) {
     .toast {
       animation: none;
-    }
-
-    .toast-dismiss {
-      transition: none;
     }
   }
 </style>
