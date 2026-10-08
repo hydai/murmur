@@ -23,36 +23,17 @@ struct ElevenLabsMessage {
     commit: Option<bool>,
 }
 
-/// ElevenLabs WebSocket response types
+/// A message ElevenLabs sends. Each of its error types (`rate_limited`,
+/// `queue_overflow`, `quota_exceeded` and a dozen more) carries the reason in
+/// `error`, and the server closes the connection after one, so any message
+/// with an `error` is reported, a type not named here included.
 #[derive(Debug, Deserialize)]
-#[serde(tag = "message_type")]
-enum ElevenLabsResponse {
-    #[serde(rename = "session_started")]
-    SessionStarted {},
-
-    #[serde(rename = "partial_transcript")]
-    PartialTranscript {
-        #[serde(default)]
-        text: String,
-    },
-
-    #[serde(rename = "committed_transcript")]
-    CommittedTranscript {
-        #[serde(default)]
-        text: String,
-    },
-
-    #[serde(rename = "error")]
-    Error {
-        #[serde(default)]
-        error: String,
-    },
-
-    #[serde(rename = "invalid_request")]
-    InvalidRequest {
-        #[serde(default)]
-        error: String,
-    },
+struct ElevenLabsResponse {
+    message_type: String,
+    #[serde(default)]
+    text: String,
+    error: Option<String>,
+    warning: Option<String>,
 }
 
 /// Reconnection configuration
@@ -246,14 +227,14 @@ impl SttProvider for ElevenLabsProvider {
                             debug!(bytes = text.len(), "Received message");
 
                             match serde_json::from_str::<ElevenLabsResponse>(&text) {
-                                Ok(response) => match response {
-                                    ElevenLabsResponse::SessionStarted {} => {
+                                Ok(response) => match response.message_type.as_str() {
+                                    "session_started" => {
                                         info!("ElevenLabs session started");
                                     }
-                                    ElevenLabsResponse::PartialTranscript { text } => {
-                                        if !text.is_empty() {
+                                    "partial_transcript" => {
+                                        if !response.text.is_empty() {
                                             let event = TranscriptionEvent::Partial {
-                                                text,
+                                                text: response.text,
                                                 timestamp_ms: 0,
                                             };
                                             if let Err(e) = event_tx_clone.send(event).await {
@@ -261,10 +242,10 @@ impl SttProvider for ElevenLabsProvider {
                                             }
                                         }
                                     }
-                                    ElevenLabsResponse::CommittedTranscript { text } => {
-                                        if !text.is_empty() {
+                                    "committed_transcript" => {
+                                        if !response.text.is_empty() {
                                             let event = TranscriptionEvent::Committed {
-                                                text,
+                                                text: response.text,
                                                 timestamp_ms: 0,
                                             };
                                             if let Err(e) = event_tx_clone.send(event).await {
@@ -272,12 +253,25 @@ impl SttProvider for ElevenLabsProvider {
                                             }
                                         }
                                     }
-                                    ElevenLabsResponse::Error { error }
-                                    | ElevenLabsResponse::InvalidRequest { error } => {
-                                        error!("ElevenLabs error: {}", error);
-                                        let event = TranscriptionEvent::Error { message: error };
-                                        if let Err(e) = event_tx_clone.send(event).await {
-                                            error!("Failed to send error event: {}", e);
+                                    kind => {
+                                        if let Some(error) = response.error {
+                                            // The reason is ElevenLabs's own text: the
+                                            // pipeline gets it, the log only its size.
+                                            error!(kind, bytes = error.len(), "ElevenLabs error");
+                                            // An error without a reason is told by its type.
+                                            let message = if error.is_empty() {
+                                                kind.to_string()
+                                            } else {
+                                                error
+                                            };
+                                            let event = TranscriptionEvent::Error { message };
+                                            if let Err(e) = event_tx_clone.send(event).await {
+                                                error!("Failed to send error event: {}", e);
+                                            }
+                                        } else if let Some(warning) = response.warning {
+                                            warn!(bytes = warning.len(), "ElevenLabs warning");
+                                        } else {
+                                            debug!(kind, "Ignoring ElevenLabs message");
                                         }
                                     }
                                 },
@@ -573,6 +567,20 @@ mod shutdown_tests {
                 ))
                 .await
                 .unwrap();
+            // ElevenLabs's own reasons and warnings are its payload too: the
+            // log keeps what kind of message each was, and its size.
+            websocket
+                .send(Message::Text(
+                    r#"{"message_type":"rate_limited","error":"reason-zebra-quartz"}"#.into(),
+                ))
+                .await
+                .unwrap();
+            websocket
+                .send(Message::Text(
+                    r#"{"message_type":"warning","warning":"warning-zebra-quartz"}"#.into(),
+                ))
+                .await
+                .unwrap();
             websocket
                 .send(Message::Text(
                     r#"{"message_type":"committed_transcript","text":"spoken-zebra-quartz"}"#
@@ -616,9 +624,83 @@ mod shutdown_tests {
             "logs were not captured:\n{captured}"
         );
         assert!(
+            captured.contains("rate_limited"),
+            "the kind of error was not logged:\n{captured}"
+        );
+        assert!(
             !captured.contains("zebra-quartz"),
             "payload leaked into logs:\n{captured}"
         );
+    }
+
+    #[tokio::test]
+    async fn every_error_elevenlabs_sends_is_reported_with_its_reason() {
+        // ElevenLabs has many error types, each with its reason in `error`,
+        // and closes the connection after one. A type added later is reported
+        // too; a warning, or a message the session did not ask for, is not.
+        let messages = [
+            r#"{"message_type":"warning","warning":"slow-heron"}"#,
+            r#"{"message_type":"rate_limited","error":"rate-limited-heron"}"#,
+            r#"{"message_type":"queue_overflow","error":"queue-overflow-heron"}"#,
+            r#"{"message_type":"quota_exceeded","error":"quota-heron"}"#,
+            r#"{"message_type":"brand_new_error","error":"future-heron"}"#,
+            r#"{"message_type":"committed_transcript_with_timestamps","text":"timed-heron"}"#,
+            r#"{"message_type":"committed_transcript","text":"spoken-heron"}"#,
+        ];
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut websocket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            for message in messages {
+                websocket.send(Message::Text(message.into())).await.unwrap();
+            }
+            while let Some(Ok(message)) = websocket.next().await {
+                if message.is_close() {
+                    break;
+                }
+            }
+        });
+        let mut provider = ElevenLabsProvider::new("test".into());
+        provider.test_url = Some(format!("ws://{address}").parse().unwrap());
+        provider.start_session().await.unwrap();
+        let mut events = provider.subscribe_events().await;
+        let received = tokio::time::timeout(Duration::from_secs(2), async {
+            let mut received = Vec::new();
+            loop {
+                match events.recv().await {
+                    Some(TranscriptionEvent::Committed { text, .. }) => {
+                        received.push(format!("committed: {text}"));
+                        break received;
+                    }
+                    Some(TranscriptionEvent::Partial { text, .. }) => {
+                        received.push(format!("partial: {text}"))
+                    }
+                    Some(TranscriptionEvent::Error { message }) => {
+                        received.push(format!("error: {message}"))
+                    }
+                    None => panic!("event channel closed after {received:?}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            received,
+            [
+                "error: rate-limited-heron",
+                "error: queue-overflow-heron",
+                "error: quota-heron",
+                "error: future-heron",
+                "committed: spoken-heron",
+            ]
+        );
+        drop(events);
+        tokio::time::timeout(Duration::from_secs(2), provider.stop_session())
+            .await
+            .unwrap()
+            .unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(2), server).await;
     }
 
     #[tokio::test]
