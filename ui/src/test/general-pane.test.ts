@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync } from 'svelte';
 import GeneralConfig from '../components/settings/GeneralConfig.svelte';
 import { MISSING_MODIFIER_MESSAGE } from '../lib/shortcut';
-import { button, render, settle, unmountAll } from './helpers';
+import { button, errorToast, inUse, render, settle, unmountAll } from './helpers';
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('../lib/tauri', () => ({ safeInvoke: mocks.invoke }));
@@ -48,8 +48,6 @@ async function open() {
 }
 
 const keycaps = (target: Element) => [...target.querySelectorAll('kbd')].map(key => key.textContent);
-const inUse = (target: Element) => [...target.querySelectorAll('[aria-current="true"]')];
-const errorToast = (target: Element) => target.querySelector('.toast-error')?.textContent;
 const chineseSelect = (target: Element) =>
   target.querySelector<HTMLSelectElement>('select[aria-label="Chinese characters"]')!;
 const historySwitch = (target: Element) =>

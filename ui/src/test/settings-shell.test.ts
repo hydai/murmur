@@ -6,7 +6,7 @@ import SettingsPanel from '../components/settings/SettingsPanel.svelte';
 import { initialRoute } from '../components/settings/navigation';
 import { resetDrafts } from '../components/settings/promptDrafts.svelte';
 import { VOICE_COMMANDS } from '../lib/voiceCommands';
-import { button, render, settle, unmountAll } from './helpers';
+import { button, fill, render, settle, unmountAll } from './helpers';
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(), listen: vi.fn(), check: vi.fn(), startDragging: vi.fn(), writeText: vi.fn(),
@@ -110,12 +110,6 @@ const groupTitles = (target: Element) =>
   [...pane(target).querySelectorAll('.group-title')].map(title => title.textContent);
 const editor = (target: Element) => pane(target).querySelector<HTMLTextAreaElement>('textarea')!;
 const called = (command: string) => mocks.invoke.mock.calls.filter(([name]) => name === command);
-
-function fill(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
-  input.value = value;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  flushSync();
-}
 
 describe('settings shell', () => {
   it('resolves the initial pane from the window URL', () => {

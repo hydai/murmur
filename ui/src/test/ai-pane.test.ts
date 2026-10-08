@@ -6,7 +6,9 @@ import {
   clearDraft, getDraft, hasDraft, resetDrafts, setDraft,
 } from '../components/settings/promptDrafts.svelte';
 import { VOICE_COMMANDS } from '../lib/voiceCommands';
-import { button, render, settle, unmountAll } from './helpers';
+import {
+  button, dialog, dialogTitle, errorToast, fill, inUse, render, settle, successToast, unmountAll,
+} from './helpers';
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('../lib/tauri', () => ({ safeInvoke: mocks.invoke }));
@@ -161,11 +163,6 @@ async function open() {
   return target;
 }
 
-const inUse = (target: Element) => [...target.querySelectorAll('[aria-current="true"]')];
-const errorToast = (target: Element) => target.querySelector('.toast-error')?.textContent;
-const successToast = (target: Element) => target.querySelector('.toast-success')?.textContent?.trim();
-const dialog = (target: Element) => target.querySelector<HTMLElement>('[role="dialog"]');
-const dialogTitle = (target: Element) => dialog(target)?.querySelector('h2')?.textContent;
 const field = (target: Element, id: string) => dialog(target)!.querySelector<HTMLInputElement>(`#${id}`)!;
 /** The one field of the API key sheet, which ApiKeySheet gives an id of its own. */
 const keyField = (target: Element) => dialog(target)!.querySelector<HTMLInputElement>('input')!;
@@ -211,12 +208,6 @@ function voiceRow(target: Element, name: string): HTMLElement {
     .find(row => row.querySelector('.row-label')?.textContent === name);
   expect(found, `voice command ${name}`).toBeDefined();
   return found!;
-}
-
-function fill(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
-  input.value = value;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  flushSync();
 }
 
 /** A key press in `element`, with the properties an input method sets when it has handled the key. */

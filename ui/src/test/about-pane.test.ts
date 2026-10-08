@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import AboutSection from '../components/settings/AboutSection.svelte';
 import SettingsPanel from '../components/settings/SettingsPanel.svelte';
 import { formatLogTimestamp } from '../components/settings/diagnostics';
-import { button, render, settle, unmountAll } from './helpers';
+import { button, errorToast, render, settle, successToast, unmountAll } from './helpers';
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(), listen: vi.fn(), getVersion: vi.fn(), check: vi.fn(), relaunch: vi.fn(), writeText: vi.fn(),
@@ -138,8 +138,6 @@ async function openLog() {
 }
 
 const heading = (target: Element) => target.querySelector('h1')?.textContent;
-const successToast = (target: Element) => target.querySelector('.toast-success')?.textContent?.trim();
-const errorToast = (target: Element) => target.querySelector('.toast-error')?.textContent;
 const called = (command: string) => mocks.invoke.mock.calls.filter(([name]) => name === command);
 const backButton = (target: Element) =>
   target.querySelector<HTMLButtonElement>('[aria-label="Back to About"]')!;

@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushSync } from 'svelte';
 import userEvent from '@testing-library/user-event';
 import HistoryPanel from '../components/history/HistoryPanel.svelte';
 import SettingsPanel from '../components/settings/SettingsPanel.svelte';
 import type { PaneId } from '../components/settings/navigation';
-import { button, render, settle, unmountAll } from './helpers';
+import {
+  button, dialog, dialogTitle, errorToast, fill, render, settle, successToast, unmountAll,
+} from './helpers';
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), writeText: vi.fn(), listen: vi.fn() }));
 vi.mock('../lib/tauri', () => ({ safeInvoke: mocks.invoke }));
@@ -127,10 +128,6 @@ async function open(
 }
 
 const called = (command: string) => mocks.invoke.mock.calls.filter(([name]) => name === command);
-const errorToast = (target: Element) => target.querySelector('.toast-error')?.textContent;
-const successToast = (target: Element) => target.querySelector('.toast-success')?.textContent?.trim();
-const dialog = (target: Element) => target.querySelector<HTMLElement>('[role="dialog"]');
-const dialogTitle = (target: Element) => dialog(target)?.querySelector('h2')?.textContent;
 const searchField = (target: Element) => target.querySelector<HTMLInputElement>('input[type="search"]')!;
 const clearButton = (target: Element) => button(target.querySelector('header.toolbar')!, 'Clear');
 const hasButton = (root: Element, text: string) => [...root.querySelectorAll('button')].some(b => b.textContent?.includes(text));
@@ -159,12 +156,6 @@ function loseFocus() {
   const stray = document.body.appendChild(document.createElement('button'));
   stray.focus();
   stray.remove();
-}
-
-function fill(input: HTMLInputElement, value: string) {
-  input.value = value;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  flushSync();
 }
 
 /** What a form does when Enter is pressed in a field. */
