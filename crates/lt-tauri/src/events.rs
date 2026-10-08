@@ -1,12 +1,10 @@
-use std::sync::atomic::Ordering;
-
 use lt_core::HistoryEntry;
 use lt_pipeline::{MicrophoneProbe, PipelineEvent, PipelineState};
 use tauri::{Emitter, Manager};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::capsule::{self, Capsule};
-use crate::{rebuild_tray_menu, sound, storage::HistoryStore, AppState};
+use crate::{rebuild_tray_menu, sound, storage::HistoryStore};
 
 #[derive(Clone, serde::Serialize)]
 struct PipelineStateEvent {
@@ -59,6 +57,9 @@ pub(crate) fn spawn(
         let mut detected_command: Option<String> = None;
         // For the menu bar when the microphone changes between states.
         let mut last_state = PipelineState::Idle;
+        // Whether the microphone is open, for the menu bar. Only
+        // `capture_changed` changes it.
+        let mut microphone_open = false;
 
         loop {
             let event = match event_rx.recv().await {
@@ -67,7 +68,8 @@ pub(crate) fn spawn(
                     tracing::warn!("Pipeline event receiver lagged by {count} events");
                     // A missed `CaptureChanged` has no later event to correct
                     // it, so follow the microphone as it is now.
-                    capture_changed(&app_clone, microphone.is_open().await, last_state);
+                    let open = microphone.is_open().await;
+                    capture_changed(&app_clone, &mut microphone_open, open, last_state);
                     continue;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -113,10 +115,6 @@ pub(crate) fn spawn(
                     // The menu bar item says what choosing it would do, so it
                     // follows the microphone as well as the state.
                     last_state = state;
-                    let microphone_open = app_clone
-                        .state::<AppState>()
-                        .microphone_open
-                        .load(Ordering::SeqCst);
                     if let Err(e) = rebuild_tray_menu(&app_clone, state, microphone_open) {
                         tracing::warn!("Failed to update tray menu: {}", e);
                     }
@@ -169,7 +167,7 @@ pub(crate) fn spawn(
                 }
                 // The pipeline announces every open and close of the microphone.
                 PipelineEvent::CaptureChanged { open, .. } => {
-                    capture_changed(&app_clone, open, last_state);
+                    capture_changed(&app_clone, &mut microphone_open, open, last_state);
                 }
                 PipelineEvent::FinalResult {
                     text,
@@ -231,10 +229,13 @@ pub(crate) fn spawn(
 /// microphone. It publishes a value the flag already holds too: the capsule
 /// takes the microphone as open from `pipeline-state: recording` alone, so
 /// after a lag only a published close can correct it.
-fn capture_changed(app: &tauri::AppHandle, open: bool, state: PipelineState) {
-    app.state::<AppState>()
-        .microphone_open
-        .store(open, Ordering::SeqCst);
+fn capture_changed(
+    app: &tauri::AppHandle,
+    microphone_open: &mut bool,
+    open: bool,
+    state: PipelineState,
+) {
+    *microphone_open = open;
     let _ = app.emit(
         "recording-state",
         serde_json::json!({ "is_recording": open }),

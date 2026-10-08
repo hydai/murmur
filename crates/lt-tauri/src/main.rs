@@ -26,7 +26,6 @@ use lt_pipeline::{PipelineOrchestrator, PipelineState};
 #[cfg(target_os = "macos")]
 use lt_stt::AppleSttProvider;
 use lt_stt::{CustomSttProvider, ElevenLabsProvider, GroqProvider, OpenAIProvider};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -42,9 +41,6 @@ struct AppState {
     pipeline: Arc<Mutex<PipelineOrchestrator>>,
     store: storage::AppStore,
     hotkey_updates: Arc<Mutex<()>>,
-    /// Whether the microphone is open, for the menu bar. Written only by the
-    /// event forwarder, from the pipeline's `CaptureChanged` events.
-    microphone_open: Arc<AtomicBool>,
     /// The starts running and begun, so a press that waited behind one can
     /// tell (`recording::StartTracker`).
     starts: Arc<recording::StartTracker>,
@@ -1650,7 +1646,6 @@ fn main() {
         pipeline: Arc::new(Mutex::new(pipeline)),
         store: storage::AppStore::new(config_dir),
         hotkey_updates: Arc::new(Mutex::new(())),
-        microphone_open: Arc::new(AtomicBool::new(false)),
         starts: Arc::default(),
         prompts,
     };
