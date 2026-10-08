@@ -8,8 +8,8 @@
   import Pane from '../ui/Pane.svelte';
   import Row from '../ui/Row.svelte';
   import Select from '../ui/Select.svelte';
-  import Sheet from '../ui/Sheet.svelte';
   import ApiKeySheet from './ApiKeySheet.svelte';
+  import CustomEndpointSheet, { type EndpointDraft } from './CustomEndpointSheet.svelte';
   import {
     orderedSttProviders,
     sttProviderAction,
@@ -48,15 +48,14 @@
   let elevenlabsLanguages = $state<[string, string][]>([]);
   let elevenlabsLanguage = $state('auto');
 
-  // Custom STT endpoint: what is saved, and the sheet's own copy of it. The
-  // rows show the saved values, so typing in the sheet changes nothing behind
-  // it, and a sheet that is cancelled leaves no half-typed address on the page.
+  // Custom STT endpoint: what is saved, which the rows show. The sheet keeps
+  // its own copy of what is typed, so a sheet that is cancelled leaves no
+  // half-typed address on the page.
   let showCustomSttSheet = $state(false);
   let customSttBaseUrl = $state('');
   let customSttDisplayName = $state('');
   let customSttModel = $state('');
   let customSttLanguage = $state('');
-  let draft = $state({ baseUrl: '', apiKey: '', model: '', language: '', displayName: '' });
 
   let modelDownloadProgress = $state(0);
   let modelDownloading = $state(false);
@@ -294,20 +293,12 @@
   }
 
   function openCustomSttSheet() {
-    draft = {
-      baseUrl: customSttBaseUrl,
-      apiKey: '',
-      model: customSttModel,
-      language: customSttLanguage,
-      displayName: customSttDisplayName,
-    };
     showCustomSttSheet = true;
   }
 
-  /** Close the sheet and forget what was typed in it, the key included. */
+  /** Close the sheet; what was typed in it, the key included, goes with it. */
   function dismissCustomSttSheet() {
     showCustomSttSheet = false;
-    draft = { baseUrl: '', apiKey: '', model: '', language: '', displayName: '' };
   }
 
   /** Cancel: the sheet goes, and so does a failure it may have caused. */
@@ -316,7 +307,7 @@
     status.reset();
   }
 
-  async function saveCustomSttEndpoint() {
+  async function saveCustomSttEndpoint(draft: EndpointDraft) {
     if (status.busy) return;
     const baseUrl = draft.baseUrl.trim();
     const displayName = draft.displayName.trim();
@@ -544,65 +535,22 @@
   {/if}
 
   {#if showCustomSttSheet}
-    <Sheet title="Custom Endpoint" onclose={closeCustomSttSheet} onsubmit={saveCustomSttEndpoint}>
-      <label for="custom-stt-base-url">Base URL</label>
-      <input
-        id="custom-stt-base-url"
-        type="text"
-        bind:value={draft.baseUrl}
-        placeholder="http://localhost:8080/v1"
-        aria-required="true"
-        autocomplete="off"
-        autocapitalize="off"
-        spellcheck="false"
-      />
-      <label for="custom-stt-api-key">API Key</label>
-      <input
-        id="custom-stt-api-key"
-        type="password"
-        bind:value={draft.apiKey}
-        placeholder="Only if the server needs one"
-        autocomplete="off"
-        autocapitalize="off"
-        spellcheck="false"
-      />
-      <label for="custom-stt-model">Model</label>
-      <input
-        id="custom-stt-model"
-        type="text"
-        bind:value={draft.model}
-        placeholder="whisper-1"
-        autocomplete="off"
-        autocapitalize="off"
-        spellcheck="false"
-      />
-      <label for="custom-stt-language">Language</label>
-      <input
-        id="custom-stt-language"
-        type="text"
-        bind:value={draft.language}
-        placeholder="Automatic"
-        aria-describedby="custom-stt-language-hint"
-        autocomplete="off"
-        autocapitalize="off"
-        spellcheck="false"
-      />
-      <p id="custom-stt-language-hint" class="hint">ISO-639-1 code, e.g. en</p>
-      <label for="custom-stt-display-name">Display Name</label>
-      <input
-        id="custom-stt-display-name"
-        type="text"
-        bind:value={draft.displayName}
-        placeholder="Local Whisper"
-        autocomplete="off"
-      />
-      {#snippet actions()}
-        <button type="button" class="btn" onclick={closeCustomSttSheet}>Cancel</button>
-        <button type="submit" class="btn btn-primary" disabled={status.busy || !draft.baseUrl.trim()}>
-          {status.busy ? 'Saving…' : 'Save & Use'}
-        </button>
-      {/snippet}
-    </Sheet>
+    <CustomEndpointSheet
+      idPrefix="custom-stt"
+      saved={{
+        baseUrl: customSttBaseUrl,
+        displayName: customSttDisplayName,
+        model: customSttModel,
+        language: customSttLanguage,
+      }}
+      baseUrlPlaceholder="http://localhost:8080/v1"
+      modelPlaceholder="whisper-1"
+      languageHint="ISO-639-1 code, e.g. en"
+      displayNamePlaceholder="Local Whisper"
+      busy={status.busy}
+      onsave={saveCustomSttEndpoint}
+      onclose={closeCustomSttSheet}
+    />
   {/if}
 </Pane>
 
@@ -659,11 +607,6 @@
     display: inline-flex;
     flex: none;
     color: var(--success);
-  }
-
-  .hint {
-    font-size: 11.5px;
-    color: var(--text-secondary);
   }
 
   @media (prefers-reduced-motion: reduce) {

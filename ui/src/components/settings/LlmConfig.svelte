@@ -8,8 +8,8 @@
   import Group from '../ui/Group.svelte';
   import Pane from '../ui/Pane.svelte';
   import Row from '../ui/Row.svelte';
-  import Sheet from '../ui/Sheet.svelte';
   import ApiKeySheet from './ApiKeySheet.svelte';
+  import CustomEndpointSheet, { type EndpointDraft } from './CustomEndpointSheet.svelte';
   import {
     llmProcessorAction,
     llmProcessorDetail,
@@ -64,13 +64,12 @@
   let keyProcessor = $state<LlmProcessorInfo | null>(null);
   let editingExistingKey = $state(false);
 
-  // Custom endpoint: what is saved, and the sheet's own copy of it. The rows show
-  // the saved values, so typing in the sheet changes nothing behind it, and a
-  // sheet that is cancelled leaves no half-typed address on the page.
+  // Custom endpoint: what is saved, which the rows show. The sheet keeps its
+  // own copy of what is typed, so a sheet that is cancelled leaves no
+  // half-typed address on the page.
   let showCustomSheet = $state(false);
   let customBaseUrl = $state('');
   let customDisplayName = $state('');
-  let draft = $state({ baseUrl: '', apiKey: '', displayName: '' });
 
   let orderedProcessors = $derived(orderedLlmProcessors(processors));
   let activeProcessor = $derived(processors.find((processor) => processor.id === currentProcessor));
@@ -195,14 +194,12 @@
   }
 
   function openCustomSheet() {
-    draft = { baseUrl: customBaseUrl, apiKey: '', displayName: customDisplayName };
     showCustomSheet = true;
   }
 
-  /** Close the sheet and forget what was typed in it, the key included. */
+  /** Close the sheet; what was typed in it, the key included, goes with it. */
   function dismissCustomSheet() {
     showCustomSheet = false;
-    draft = { baseUrl: '', apiKey: '', displayName: '' };
   }
 
   /** Cancel: the sheet goes, and so does a failure it may have caused. */
@@ -211,7 +208,7 @@
     status.reset();
   }
 
-  async function saveCustomEndpoint() {
+  async function saveCustomEndpoint(draft: EndpointDraft) {
     if (status.busy) return;
     const baseUrl = draft.baseUrl.trim();
     const displayName = draft.displayName.trim();
@@ -439,43 +436,15 @@
     {/if}
 
     {#if showCustomSheet}
-      <Sheet title="Custom Endpoint" onclose={closeCustomSheet} onsubmit={saveCustomEndpoint}>
-        <label for="custom-llm-base-url">Base URL</label>
-        <input
-          id="custom-llm-base-url"
-          type="text"
-          bind:value={draft.baseUrl}
-          placeholder="http://localhost:11434/v1"
-          aria-required="true"
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck="false"
-        />
-        <label for="custom-llm-api-key">API Key</label>
-        <input
-          id="custom-llm-api-key"
-          type="password"
-          bind:value={draft.apiKey}
-          placeholder="Only if the server needs one"
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck="false"
-        />
-        <label for="custom-llm-display-name">Display Name</label>
-        <input
-          id="custom-llm-display-name"
-          type="text"
-          bind:value={draft.displayName}
-          placeholder="Local Ollama"
-          autocomplete="off"
-        />
-        {#snippet actions()}
-          <button type="button" class="btn" onclick={closeCustomSheet}>Cancel</button>
-          <button type="submit" class="btn btn-primary" disabled={status.busy || !draft.baseUrl.trim()}>
-            {status.busy ? 'Saving…' : 'Save & Use'}
-          </button>
-        {/snippet}
-      </Sheet>
+      <CustomEndpointSheet
+        idPrefix="custom-llm"
+        saved={{ baseUrl: customBaseUrl, displayName: customDisplayName }}
+        baseUrlPlaceholder="http://localhost:11434/v1"
+        displayNamePlaceholder="Local Ollama"
+        busy={status.busy}
+        onsave={saveCustomEndpoint}
+        onclose={closeCustomSheet}
+      />
     {/if}
   </Pane>
 {/if}
