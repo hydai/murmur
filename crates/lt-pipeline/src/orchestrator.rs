@@ -145,7 +145,8 @@ impl PipelineOrchestrator {
     ///
     /// Drive this future to completion (callers spawn it on detached tasks):
     /// a startup failure rolls the state back, but dropping the future while
-    /// provider startup is pending would leave it in `Recording`.
+    /// provider startup is pending would leave it in `Recording`, with the
+    /// microphone open.
     pub async fn start(&self, stt_provider: Box<dyn SttProvider>) -> Result<()> {
         let _lifecycle = self.lifecycle.lock().await;
         let state = self.state.lock().await;
@@ -249,6 +250,11 @@ impl PipelineOrchestrator {
     }
 
     /// Cancel the session and return to Idle without later output from old tasks.
+    ///
+    /// The app cancels only a session whose microphone has closed: a press
+    /// made while it is open stops the recording instead. Called while it is
+    /// still open, the close is announced before Idle, so the capsule would
+    /// show Transcribing for a moment before Cancelled.
     pub async fn reset(&self) -> Result<()> {
         let _lifecycle = self.lifecycle.lock().await;
         self.cancel_session().await;
@@ -720,8 +726,8 @@ async fn publish_state(
 }
 
 /// Closes the microphone if it is open, and announces it when it was, so
-/// whoever closes it (Stop, a cancel, the end of transcription, a failed send)
-/// is followed by one `CaptureChanged`.
+/// whoever closes it (Stop, a cancel, the end of transcription, a failed send,
+/// a failed connect) is followed by one `CaptureChanged`.
 async fn stop_capture(
     capture: &Mutex<Option<Box<dyn CaptureControl>>>,
     events: &broadcast::Sender<PipelineEvent>,
