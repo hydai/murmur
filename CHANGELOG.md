@@ -1,4 +1,10 @@
 # Changelog
+## 0.2.23 (2026-10-08)
+
+### Fixes
+
+- report every error ElevenLabs sends, with its reason
+
 ## 0.2.22 (2026-10-07)
 
 ### Features
