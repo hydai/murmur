@@ -123,6 +123,7 @@ cargo tauri build
 
 ### Logging
 - Never log transcript, prompt, or provider payload content at any level; log sizes (`chars = ...`, `bytes = ...`) instead. Diagnostics keep WARN/ERROR and stdout keeps everything, so content in a log line is user data on disk or in a terminal.
+- Error messages are diagnostics and may be logged (`Pipeline error: …`): once the capsule fades, the Diagnostics Log is the only place a failure's reason can still be read. Providers still log only the kind and size of what they receive, error replies included, and hand the reason on in the error they report.
 - `main.rs` installs a default `lt_*=debug` filter; `RUST_LOG` overrides it.
 
 ### Persistence and Tests
