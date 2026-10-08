@@ -69,7 +69,7 @@
     />
     <button
       type="button"
-      class="key-toggle"
+      class="btn-icon"
       aria-label={visible ? 'Hide API key' : 'Show API key'}
       onclick={() => (visible = !visible)}
     >
@@ -99,30 +99,5 @@
   .key-field input {
     flex: 1;
     min-width: 0;
-  }
-
-  .key-toggle {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 26px;
-    padding: 0;
-    border: 0;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-secondary);
-    transition: background-color 0.15s ease;
-  }
-
-  .key-toggle:hover {
-    background: var(--fill-selected);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .key-toggle {
-      transition: none;
-    }
   }
 </style>

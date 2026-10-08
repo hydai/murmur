@@ -31,7 +31,7 @@
     {#if onback}
       <button
         type="button"
-        class="back"
+        class="btn-icon back"
         aria-label={backLabel ? `Back to ${backLabel}` : 'Back'}
         onclick={() => onback()}
       >
@@ -81,22 +81,8 @@
   }
 
   .back {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    justify-content: center;
     width: 24px;
     height: 24px;
-    padding: 0;
-    border: 0;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-secondary);
-    transition: background-color 0.15s ease;
-  }
-
-  .back:hover {
-    background: var(--fill-selected);
   }
 
   .toolbar-actions {
@@ -116,11 +102,5 @@
     min-height: 0;
     padding: 0 22px 22px;
     overflow-y: auto;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .back {
-      transition: none;
-    }
   }
 </style>

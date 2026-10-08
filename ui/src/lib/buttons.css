@@ -4,7 +4,8 @@
  * Component <style> blocks are scoped, so the button lives here rather than
  * being redefined in each file. .btn is the plain button, 28px tall;
  * .btn-small is 22px. The intent is a colour modifier: .btn-primary for the
- * default action, .btn-destructive for one that deletes.
+ * default action, .btn-destructive for one that deletes. .btn-icon is a
+ * button that shows only an icon.
  */
 
 .btn {
@@ -46,6 +47,33 @@
 .btn:disabled {
   opacity: .45;
   cursor: default;
+}
+
+/* 26px square, with no fill or border until the pointer is over it. A
+ * component may change its size, shape or colours to fit where it sits. */
+.btn-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  transition: background-color 0.15s ease;
+}
+
+.btn-icon:hover {
+  background: var(--fill-selected);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-icon {
+    transition: none;
+  }
 }
 
 /* The page-wide keyboard focus ring. */
