@@ -1324,18 +1324,23 @@ mod tests {
         // Opened once, after the recording was announced, and closed once,
         // although capture is stopped again when transcription ends.
         assert_eq!(capture_changes(&seen), [true, false], "{seen:?}");
-        let recording = seen.iter().position(|event| {
-            matches!(
-                event,
-                PipelineEvent::StateChanged {
-                    state: PipelineState::Recording,
-                    ..
-                }
-            )
-        });
+        // Both must be there: `None` would compare as earlier than any position.
+        let recording = seen
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    PipelineEvent::StateChanged {
+                        state: PipelineState::Recording,
+                        ..
+                    }
+                )
+            })
+            .expect("the recording was announced");
         let opened = seen
             .iter()
-            .position(|event| matches!(event, PipelineEvent::CaptureChanged { open: true, .. }));
+            .position(|event| matches!(event, PipelineEvent::CaptureChanged { open: true, .. }))
+            .expect("the microphone opened");
         assert!(recording < opened, "{seen:?}");
 
         p.reset().await.unwrap();
@@ -1599,12 +1604,29 @@ mod tests {
             let p = p.clone();
             async move { p.reset().await }
         });
+        // `start` holds the pipeline until the provider answers, so the cancel
+        // waits for the connect rather than racing it.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(
+            !cancelling.is_finished(),
+            "the cancel waits for the connect"
+        );
         gate.notify_one();
         starting.await.unwrap().unwrap();
         cancelling.await.unwrap().unwrap();
         assert_eq!(p.get_state().await, PipelineState::Idle);
         assert!(!p.is_capturing().await);
         assert!(!running.load(Ordering::SeqCst));
+        // Every task the start began is gone: none still reads the microphone
+        // or feeds the provider.
+        for task in [
+            &p.level_task,
+            &p.relay_task,
+            &p.audio_task,
+            &p.transcription_task,
+        ] {
+            assert!(task.lock().await.is_none());
+        }
         let seen = events_until(&mut events, PipelineState::Idle).await;
         assert_eq!(capture_changes(&seen), [true, false], "{seen:?}");
     }
