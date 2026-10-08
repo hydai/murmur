@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync } from 'svelte';
 import userEvent from '@testing-library/user-event';
 import ProviderConfig from '../components/settings/ProviderConfig.svelte';
-import { button, render, settle, unmountAll } from './helpers';
+import {
+  button, dialog, dialogTitle, errorToast, fill, inUse, render, settle, successToast, unmountAll,
+} from './helpers';
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }));
 vi.mock('../lib/tauri', () => ({ safeInvoke: mocks.invoke }));
@@ -126,11 +128,6 @@ function emit(name: string, payload: unknown) {
   flushSync();
 }
 
-const inUse = (target: Element) => [...target.querySelectorAll('[aria-current="true"]')];
-const errorToast = (target: Element) => target.querySelector('.toast-error')?.textContent;
-const successToast = (target: Element) => target.querySelector('.toast-success')?.textContent;
-const dialog = (target: Element) => target.querySelector<HTMLElement>('[role="dialog"]');
-const dialogTitle = (target: Element) => dialog(target)?.querySelector('h2')?.textContent;
 const field = (target: Element, id: string) => dialog(target)!.querySelector<HTMLInputElement>(`#${id}`)!;
 /** The one field of the API key sheet, which ApiKeySheet gives an id of its own. */
 const keyField = (target: Element) => dialog(target)!.querySelector<HTMLInputElement>('input')!;
@@ -159,12 +156,6 @@ const rowsOf = (container: Element) => [...container.querySelectorAll('.row')].m
   row.querySelector('.row-detail')?.textContent ?? null,
   [...row.querySelectorAll('.row-trailing button')].map(b => b.textContent?.trim()),
 ]);
-
-function fill(input: HTMLInputElement, value: string) {
-  input.value = value;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  flushSync();
-}
 
 async function choose(element: HTMLSelectElement, value: string) {
   element.value = value;

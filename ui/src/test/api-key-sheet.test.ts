@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flushSync } from 'svelte';
 import userEvent from '@testing-library/user-event';
 import ApiKeySheet from '../components/settings/ApiKeySheet.svelte';
-import { button, render, settle, unmountAll } from './helpers';
+import { button, fill, render, settle, unmountAll } from './helpers';
 
 afterEach(async () => {
   await unmountAll();
@@ -23,12 +22,6 @@ const field = (target: Element) => target.querySelector<HTMLInputElement>('input
 const submit = (target: Element) => target.querySelector<HTMLButtonElement>('button[type="submit"]')!;
 const toggle = (target: Element) => target.querySelector<HTMLButtonElement>('button[aria-label$="API key"]')!;
 const explanation = (target: Element) => target.querySelector('.sheet-error')?.textContent;
-
-function fill(input: HTMLInputElement, value: string) {
-  input.value = value;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  flushSync();
-}
 
 describe('ApiKeySheet', () => {
   it('is titled for adding a key and offers Save & Use', () => {

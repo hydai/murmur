@@ -25,6 +25,38 @@ export function button(root: Element, text: string): HTMLButtonElement {
   return result!;
 }
 
+/** Type into a field: set its value, then send the input event Svelte listens for. */
+export function fill(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  input.value = value;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  flushSync();
+}
+
+/** The sheet or confirmation on show, if there is one. */
+export function dialog(target: Element) {
+  return target.querySelector<HTMLElement>('[role="dialog"]');
+}
+
+/** The title of the sheet or confirmation on show. */
+export function dialogTitle(target: Element) {
+  return dialog(target)?.querySelector('h2')?.textContent;
+}
+
+/** What the error toast says, if one is showing. */
+export function errorToast(target: Element) {
+  return target.querySelector('.toast-error')?.textContent;
+}
+
+/** What the success toast says, if one is showing. */
+export function successToast(target: Element) {
+  return target.querySelector('.toast-success')?.textContent?.trim();
+}
+
+/** The rows marked as the one in use. */
+export function inUse(target: Element) {
+  return [...target.querySelectorAll('[aria-current="true"]')];
+}
+
 /** Unmount everything `render` mounted and empty the document. */
 export async function unmountAll() {
   for (const instance of mounted) await unmount(instance);

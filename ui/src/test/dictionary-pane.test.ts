@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushSync } from 'svelte';
 import userEvent from '@testing-library/user-event';
 import DictionaryEditor from '../components/settings/DictionaryEditor.svelte';
-import { button, render, settle, unmountAll } from './helpers';
+import {
+  button, dialog, dialogTitle, errorToast, fill, render, settle, successToast, unmountAll,
+} from './helpers';
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('../lib/tauri', () => ({ safeInvoke: mocks.invoke }));
@@ -94,10 +95,6 @@ async function open(initial?: Entry[]) {
 }
 
 const called = (command: string) => mocks.invoke.mock.calls.filter(([name]) => name === command);
-const errorToast = (target: Element) => target.querySelector('.toast-error')?.textContent;
-const successToast = (target: Element) => target.querySelector('.toast-success')?.textContent?.trim();
-const dialog = (target: Element) => target.querySelector<HTMLElement>('[role="dialog"]');
-const dialogTitle = (target: Element) => dialog(target)?.querySelector('h2')?.textContent;
 const field = (target: Element, id: string) =>
   dialog(target)!.querySelector<HTMLInputElement | HTMLTextAreaElement>(`#${id}`)!;
 const sheetError = (target: Element) => dialog(target)?.querySelector('.sheet-error')?.textContent;
@@ -114,12 +111,6 @@ const wordsOf = (target: Element) => rowsOf(target).map(([word]) => word);
 /** A sheet's buttons as [name, type], left to right. */
 const buttonsOf = (container: Element) =>
   [...container.querySelectorAll('button')].map(b => [b.textContent?.trim(), b.type]);
-
-function fill(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
-  input.value = value;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  flushSync();
-}
 
 /** What a form does when Enter is pressed in a field. */
 function submit(target: Element) {
