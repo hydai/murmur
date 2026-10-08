@@ -37,10 +37,6 @@ export interface RecordingStatePayload {
   is_recording: boolean;
 }
 
-export interface AudioErrorPayload {
-  message: string;
-}
-
 export interface CommandDetectedPayload {
   command_name: string | null;
   timestamp_ms: number;
@@ -66,7 +62,6 @@ export interface AppEvents {
   'pipeline-error': ErrorPayload;
   'recording-state': RecordingStatePayload;
   'audio-level': AudioLevelPayload;
-  'audio-error': AudioErrorPayload;
   'command-detected': CommandDetectedPayload;
   /** Goes to the capsule window only, as a recording starts. */
   'capsule-context': CapsuleContext;
