@@ -1,4 +1,14 @@
 # Changelog
+## 0.2.24 (2026-10-18)
+
+### Features
+
+- refresh providers and default to Apple Intelligence
+
+### Fixes
+
+- preserve errors from existing CLI installations
+
 ## 0.2.23 (2026-10-08)
 
 ### Fixes
