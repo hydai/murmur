@@ -1,5 +1,5 @@
 use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
@@ -62,7 +62,9 @@ impl CliExecutor {
                 .spawn()
         };
         let mut child = match (spawn(OsStr::new(program)), &self.fallback_program) {
-            (Err(error), Some(path)) if error.kind() == std::io::ErrorKind::NotFound => {
+            (Err(error), Some(path))
+                if error.kind() == std::io::ErrorKind::NotFound && program_is_absent(program) =>
+            {
                 spawn(path.as_os_str())?
             }
             (result, _) => result?,
@@ -109,6 +111,29 @@ impl CliExecutor {
         .await
         .is_ok_and(|output| output.exit_code == 0)
     }
+}
+
+/// A spawn's NotFound can refer to an existing script's interpreter (or a
+/// binary's loader), so it alone does not justify choosing another installation.
+fn program_is_absent(program: &str) -> bool {
+    let path_is_absent = |path: &Path| {
+        // Count a broken symlink as an existing installation too, and preserve
+        // the original spawn error if permissions prevent inspecting a path.
+        std::fs::symlink_metadata(path).is_err_and(|error| {
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            )
+        })
+    };
+    if program.contains(std::path::is_separator) {
+        return path_is_absent(Path::new(program));
+    }
+    // With no PATH, the OS may search its own default. We cannot establish
+    // absence in that search, so conservatively preserve the original error.
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).all(|dir| path_is_absent(&dir.join(program)))
+    })
 }
 
 async fn collect_output(child: &mut Child) -> Result<CliOutput, std::io::Error> {

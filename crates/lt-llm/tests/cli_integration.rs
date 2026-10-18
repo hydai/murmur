@@ -321,6 +321,60 @@ async fn an_existing_binary_failure_does_not_run_the_installation_fallback() {
 }
 
 #[tokio::test]
+async fn a_missing_interpreter_does_not_run_the_installation_fallback() {
+    const CHILD_DIR: &str = "MURMUR_TEST_MISSING_INTERPRETER_DIR";
+    if let Some(dir) = std::env::var_os(CHILD_DIR) {
+        let dir = std::path::PathBuf::from(dir);
+        let executor = CliExecutor::new().with_fallback_program(Some(dir.join("fallback")));
+        // Check both a PATH lookup and an explicit path in the isolated child.
+        for program in ["fake-cli".into(), dir.join("fake-cli")] {
+            let program = program.to_str().unwrap();
+            let error = executor.execute(program, &[]).await.unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+            assert!(!executor.is_available(program).await);
+        }
+        return;
+    }
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let primary = dir.path().join("fake-cli");
+    fs::write(
+        &primary,
+        format!("#!{}\n", dir.path().join("missing-interpreter").display()),
+    )
+    .unwrap();
+    let fallback = dir.path().join("fallback");
+    fs::write(&fallback, "#!/bin/sh\necho fallback\n").unwrap();
+    for path in [&primary, &fallback] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let empty = dir.path().join("empty");
+    fs::create_dir(&empty).unwrap();
+
+    // A separate test process avoids changing PATH for concurrently running tests.
+    let result = tokio::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "a_missing_interpreter_does_not_run_the_installation_fallback",
+            "--nocapture",
+        ])
+        .env(CHILD_DIR, dir.path())
+        .env(
+            "PATH",
+            std::env::join_paths([empty.as_path(), dir.path()]).unwrap(),
+        )
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "child test failed: {}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[tokio::test]
 async fn the_configured_model_reaches_the_command_line() {
     let (spec, _dir) = fake_cli("#!/bin/sh\nshift 2\necho \"model=$2\"\n");
     let processor =
