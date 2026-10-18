@@ -19,7 +19,9 @@ const DEFAULT_TIMEOUT_SECS: u64 = 30;
 pub struct CliSpec {
     /// Executable resolved on PATH.
     pub binary: &'static str,
-    /// Name used in log lines and user-facing errors, e.g. "Gemini CLI".
+    /// Standard install location relative to HOME, tried only if PATH lookup fails.
+    pub fallback_binary: Option<&'static str>,
+    /// Name used in log lines and user-facing errors, e.g. "Antigravity CLI".
     pub display_name: &'static str,
     /// Model used when the config carries no override.
     pub default_model: &'static str,
@@ -28,7 +30,7 @@ pub struct CliSpec {
     /// Arguments for one invocation.
     pub args: fn(prompt: &str, model: &str) -> Vec<String>,
     /// Extracts the reply from the tool's stdout.
-    pub parse: fn(stdout: &str) -> String,
+    pub parse: fn(stdout: &str) -> Result<String>,
 }
 
 /// An `LlmProcessor` that shells out to the tool described by its spec.
@@ -47,7 +49,12 @@ impl CliLlmProcessor {
     ) -> Self {
         Self {
             spec,
-            executor: CliExecutor::with_timeout(DEFAULT_TIMEOUT_SECS),
+            executor: CliExecutor::with_timeout(DEFAULT_TIMEOUT_SECS).with_fallback_program(
+                spec.fallback_binary.and_then(|relative| {
+                    std::env::var_os("HOME")
+                        .map(|home| std::path::PathBuf::from(home).join(relative))
+                }),
+            ),
             prompt_manager: prompts,
             model: model
                 .filter(|model| !model.is_empty())
@@ -100,7 +107,7 @@ impl LlmProcessor for CliLlmProcessor {
             )));
         }
 
-        let processed_text = (self.spec.parse)(&output.stdout);
+        let processed_text = (self.spec.parse)(&output.stdout)?;
         let processing_time_ms = start_time.elapsed().as_millis() as u64;
         tracing::info!(
             "LLM processing completed in {processing_time_ms}ms (output length: {} chars)",

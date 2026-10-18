@@ -1,20 +1,22 @@
+pub mod antigravity;
 pub mod cli;
 pub mod copilot;
 pub mod executor;
-pub mod gemini;
 pub mod http_api;
 pub mod prompt_store;
 pub mod prompts;
+mod unavailable;
 
 #[cfg(target_os = "macos")]
 pub mod apple;
 
+pub use antigravity::AntigravityProcessor;
 pub use copilot::CopilotProcessor;
 pub use executor::CliExecutor;
-pub use gemini::GeminiProcessor;
 pub use http_api::HttpLlmProcessor;
 pub use prompt_store::PromptStore;
 pub use prompts::{PromptManager, PromptName, PromptSet};
+pub use unavailable::UnavailableProcessor;
 
 #[cfg(target_os = "macos")]
 pub use apple::AppleLlmProcessor;
@@ -26,7 +28,7 @@ pub use apple::AppleLlmProcessor;
 pub fn default_model(processor: lt_core::config::LlmProcessorType) -> &'static str {
     use lt_core::config::LlmProcessorType as P;
     match processor {
-        P::Gemini => gemini::DEFAULT_MODEL,
+        P::Antigravity => antigravity::DEFAULT_MODEL,
         P::Copilot => copilot::DEFAULT_MODEL,
         #[cfg(target_os = "macos")]
         P::AppleLlm => apple::DEFAULT_MODEL,

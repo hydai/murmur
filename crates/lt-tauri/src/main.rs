@@ -18,8 +18,8 @@ use lt_core::{AppConfig, PersonalDictionary};
 #[cfg(target_os = "macos")]
 use lt_llm::AppleLlmProcessor;
 use lt_llm::{
-    CopilotProcessor, GeminiProcessor, HttpLlmProcessor, PromptManager, PromptName, PromptSet,
-    PromptStore,
+    AntigravityProcessor, CopilotProcessor, HttpLlmProcessor, PromptManager, PromptName, PromptSet,
+    PromptStore, UnavailableProcessor,
 };
 use lt_output::CombinedOutput;
 use lt_pipeline::{PipelineOrchestrator, PipelineState};
@@ -517,11 +517,11 @@ async fn get_llm_processors(
     let config = state.store.config.read().await?;
 
     // Probe both CLIs at once: a missing binary costs a process spawn each.
-    let gemini = GeminiProcessor::new();
+    let antigravity = AntigravityProcessor::new();
     let copilot = CopilotProcessor::new();
-    let (gemini_available, copilot_available) =
-        tokio::join!(gemini.health_check(), copilot.health_check());
-    let gemini_available = gemini_available.unwrap_or(false);
+    let (antigravity_available, copilot_available) =
+        tokio::join!(antigravity.health_check(), copilot.health_check());
+    let antigravity_available = antigravity_available.unwrap_or(false);
     let copilot_available = copilot_available.unwrap_or(false);
 
     let mut processors = Vec::new();
@@ -532,7 +532,7 @@ async fn get_llm_processors(
 
         let configured = llm_processor_configured(processor, &config);
         let available = match processor {
-            LlmProcessorType::Gemini => gemini_available,
+            LlmProcessorType::Antigravity => antigravity_available,
             LlmProcessorType::Copilot => copilot_available,
             #[cfg(target_os = "macos")]
             LlmProcessorType::AppleLlm => AppleLlmProcessor::is_available(),
@@ -593,9 +593,9 @@ fn create_llm_processor(
     prompts: &PromptManager,
 ) -> Result<Arc<dyn LlmProcessor>, String> {
     Ok(match processor_type {
-        LlmProcessorType::Gemini => {
-            tracing::info!("Using Gemini CLI as LLM processor");
-            Arc::new(GeminiProcessor::with_model_and_prompts(
+        LlmProcessorType::Antigravity => {
+            tracing::info!("Using Antigravity CLI as LLM processor");
+            Arc::new(AntigravityProcessor::with_model_and_prompts(
                 model,
                 prompts.clone(),
             ))
@@ -618,13 +618,7 @@ fn create_llm_processor(
             }
             #[cfg(not(target_os = "macos"))]
             {
-                tracing::warn!(
-                    "Apple Intelligence is only available on macOS, falling back to Gemini"
-                );
-                Arc::new(GeminiProcessor::with_model_and_prompts(
-                    model,
-                    prompts.clone(),
-                ))
+                return Err("Apple Intelligence is only available on macOS".into());
             }
         }
         LlmProcessorType::OpenAiApi => {
@@ -1583,11 +1577,8 @@ fn main() {
         &prompts,
     )
     .unwrap_or_else(|error| {
-        tracing::warn!("{error}; falling back to the default LLM processor");
-        Arc::new(GeminiProcessor::with_model_and_prompts(
-            config.llm_model.clone(),
-            prompts.clone(),
-        ))
+        tracing::warn!("{error}; LLM processing is unavailable until configured");
+        Arc::new(UnavailableProcessor(error))
     });
 
     // Load dictionary (or create empty if not exists)
@@ -1799,18 +1790,18 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 tracing::info!("Checking available LLM processors...");
 
-                // Check Gemini CLI
-                let gemini = GeminiProcessor::new();
-                match gemini.health_check().await {
+                // Check Antigravity CLI
+                let antigravity = AntigravityProcessor::new();
+                match antigravity.health_check().await {
                     Ok(true) => {
-                        tracing::info!("✓ Gemini CLI is available");
+                        tracing::info!("✓ Antigravity CLI is available");
                     }
                     Ok(false) => {
-                        tracing::warn!("⚠ Gemini CLI is not installed.");
-                        tracing::warn!("  Install: npm install -g @google/gemini-cli");
+                        tracing::warn!("⚠ Antigravity CLI is not installed.");
+                        tracing::warn!("{}", lt_llm::antigravity::INSTALL_HINT);
                     }
                     Err(e) => {
-                        tracing::error!("✗ Failed to check Gemini CLI: {}", e);
+                        tracing::error!("✗ Failed to check Antigravity CLI: {}", e);
                     }
                 }
 
@@ -2037,7 +2028,7 @@ mod tests {
     fn processors_that_need_no_key_are_configured_out_of_the_box() {
         let config = AppConfig::default();
         for processor in [
-            LlmProcessorType::Gemini,
+            LlmProcessorType::Antigravity,
             LlmProcessorType::Copilot,
             LlmProcessorType::AppleLlm,
         ] {
@@ -2121,7 +2112,7 @@ mod tests {
 
     #[test]
     fn cli_processors_need_no_configuration() {
-        for processor in [LlmProcessorType::Gemini, LlmProcessorType::Copilot] {
+        for processor in [LlmProcessorType::Antigravity, LlmProcessorType::Copilot] {
             let config = config_with(processor);
             assert!(
                 create_llm_processor(&processor, None, &config, &PromptManager::new()).is_ok(),

@@ -17,10 +17,19 @@ Privacy-first BYOK (Bring Your Own Key) voice typing application built with Taur
 ### LLM Post-Processing
 
 - **Cloud APIs**: OpenAI, Claude, Gemini, or custom OpenAI-compatible endpoints
-- **On-device**: Apple Foundation Models — no API key needed
-- **CLI tools**: gemini-cli, copilot-cli for local processing
+- **On-device (default)**: Apple Foundation Models — no API key needed
+- **CLI tools**: Antigravity CLI (`agy`), Copilot CLI — use your CLI account for cloud processing
 - **Voice commands**: shorten, translate, change tone, generate replies
 - **Personal dictionary** for custom terms and aliases
+
+Apple Foundation Models is selected by default. To use Antigravity CLI, follow
+the [official setup guide](https://antigravity.google/docs/getting-started/), run
+`agy` once to sign in, and select Antigravity CLI in Settings. The integration uses
+JSON print mode (`--output-format json`, available in CLI 1.4.2); `agy models` lists
+the model slugs available to your account. Murmur also checks `~/.local/bin/agy`
+when `agy` is absent from its PATH. Existing Gemini CLI selections migrate to Antigravity and reset
+their model override, since the two CLIs use different model identifiers. Other
+saved provider selections and model overrides are preserved.
 
 ### Interface
 

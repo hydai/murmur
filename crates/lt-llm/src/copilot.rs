@@ -1,21 +1,28 @@
 use crate::cli::{cli_processor, CliSpec};
 
-pub const DEFAULT_MODEL: &str = "gpt-5-mini";
+pub const DEFAULT_MODEL: &str = "gpt-6-luna";
 
 static SPEC: CliSpec = CliSpec {
     binary: "copilot",
+    fallback_binary: None,
     display_name: "Copilot CLI",
     default_model: DEFAULT_MODEL,
     install_hint: "Please install Copilot CLI: npm install -g @github/copilot",
     args: |prompt, model| {
-        vec![
+        let mut args = vec![
             "--prompt".into(),
             prompt.into(),
             "--model".into(),
             model.into(),
-        ]
+            "--silent".into(),
+        ];
+        // Preserve the low-latency, non-reasoning role of the old default.
+        if model == DEFAULT_MODEL {
+            args.extend(["--reasoning-effort".into(), "none".into()]);
+        }
+        args
     },
-    parse: |stdout| stdout.trim().to_string(),
+    parse: |stdout| Ok(stdout.trim().to_string()),
 };
 
 cli_processor!(CopilotProcessor, SPEC);
@@ -51,7 +58,19 @@ mod tests {
     fn arguments_always_pass_a_model() {
         assert_eq!(
             (SPEC.args)("say hi", "gpt-x"),
-            ["--prompt", "say hi", "--model", "gpt-x"]
+            ["--prompt", "say hi", "--model", "gpt-x", "--silent"]
+        );
+        assert_eq!(
+            (SPEC.args)("say hi", DEFAULT_MODEL),
+            [
+                "--prompt",
+                "say hi",
+                "--model",
+                "gpt-6-luna",
+                "--silent",
+                "--reasoning-effort",
+                "none"
+            ]
         );
     }
 }

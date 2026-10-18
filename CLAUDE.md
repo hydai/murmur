@@ -35,7 +35,7 @@ cargo tauri build
 
 - `crates/lt-audio/` - Audio capture, cpal resampling, voice activity detection (VAD)
 - `crates/lt-core/` - Domain types and traits (STT, LLM, config, dictionary, history, output)
-- `crates/lt-llm/` - LLM processors (Gemini CLI, Copilot CLI, HTTP API for OpenAI/Claude/Gemini/custom)
+- `crates/lt-llm/` - LLM processors (Antigravity CLI, Copilot CLI, HTTP API for OpenAI/Claude/Gemini/custom)
 - `crates/lt-llm-apple/` - Swift FFI bridge for Apple Foundation Models (on-device LLM)
 - `crates/lt-output/` - Output routing (clipboard, keyboard simulation, combined mode)
 - `crates/lt-pipeline/` - Pipeline orchestration, state machine, voice command detection
@@ -69,8 +69,10 @@ cargo tauri build
 
 ### LLM Model Configuration
 - Each LLM processor has a `DEFAULT_MODEL` constant and `with_model(Option<String>)` constructor
-- CLI defaults: Gemini → `gemini-3-flash-preview`, Copilot → `gpt-5-mini`, Apple → system default
-- HTTP API defaults: OpenAI → `gpt-4o-mini`, Claude → `claude-sonnet-4-20250514`, Gemini API → `gemini-2.0-flash`
+- The default LLM processor is Apple Intelligence (`apple_llm`).
+- CLI defaults: Antigravity → `gemini-3.8-flash-medium`, Copilot → `gpt-6-luna`
+- Local default: Apple → system default
+- HTTP API defaults: OpenAI → `gpt-6-luna`, Claude → `claude-sonnet-5-5`, Gemini API → `gemini-3.8-flash`
 - `AppConfig.llm_model` stores the user override (`None` = use provider default)
 - `create_llm_processor()` in `main.rs` is the single factory — accepts `(type, model, config, prompts)` and is used at startup and before each recording
 - Config setters persist through `AppStore`; `start_pipeline` applies a fresh LLM, output, dictionary, and prompt snapshot for the next recording

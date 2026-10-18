@@ -393,7 +393,7 @@ describe('prompt editor', () => {
     mocks.invoke.mockImplementation(async command => {
       switch (command) {
         case 'get_llm_processors': return [];
-        case 'get_config': return { llm_processor: 'gemini', llm_model: null, http_llm_config: null };
+        case 'get_config': return { llm_processor: 'antigravity', llm_model: null, http_llm_config: null };
         case 'get_prompts': return prompts;
         default: return undefined;
       }

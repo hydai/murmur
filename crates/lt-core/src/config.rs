@@ -126,9 +126,11 @@ impl std::str::FromStr for SttProviderType {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmProcessorType {
-    #[default]
-    Gemini,
+    // Read old configs without retaining the removed Gemini CLI provider.
+    #[serde(alias = "gemini")]
+    Antigravity,
     Copilot,
+    #[default]
     #[serde(rename = "apple_llm")]
     AppleLlm,
     #[serde(rename = "openai_api")]
@@ -144,7 +146,7 @@ pub enum LlmProcessorType {
 impl LlmProcessorType {
     /// Every processor, in the order the settings page lists them.
     pub const ALL: [Self; 7] = [
-        Self::Gemini,
+        Self::Antigravity,
         Self::Copilot,
         Self::AppleLlm,
         Self::OpenAiApi,
@@ -157,7 +159,7 @@ impl LlmProcessorType {
     /// Kept in step with the serde representation by a test.
     pub fn id(self) -> &'static str {
         match self {
-            Self::Gemini => "gemini",
+            Self::Antigravity => "antigravity",
             Self::Copilot => "copilot",
             Self::AppleLlm => "apple_llm",
             Self::OpenAiApi => "openai_api",
@@ -169,7 +171,7 @@ impl LlmProcessorType {
 
     pub fn display_name(self) -> &'static str {
         match self {
-            Self::Gemini => "Gemini CLI",
+            Self::Antigravity => "Antigravity CLI",
             Self::Copilot => "Copilot CLI",
             Self::AppleLlm => "Apple Intelligence",
             Self::OpenAiApi => "OpenAI API",
@@ -183,7 +185,7 @@ impl LlmProcessorType {
     pub fn api_key_name(self) -> Option<&'static str> {
         match self {
             // The CLIs and the on-device model carry their own auth.
-            Self::Gemini | Self::Copilot | Self::AppleLlm => None,
+            Self::Antigravity | Self::Copilot | Self::AppleLlm => None,
             // Shared with the OpenAI STT provider.
             Self::OpenAiApi => Some("openai"),
             Self::ClaudeApi => Some("anthropic"),
@@ -200,7 +202,7 @@ impl LlmProcessorType {
 
     pub fn kind(self) -> ProviderKind {
         match self {
-            Self::Gemini | Self::Copilot => ProviderKind::Cli,
+            Self::Antigravity | Self::Copilot => ProviderKind::Cli,
             Self::AppleLlm => ProviderKind::Local,
             Self::OpenAiApi | Self::ClaudeApi | Self::GeminiApi => ProviderKind::Http,
             Self::CustomApi => ProviderKind::Custom,
@@ -436,8 +438,17 @@ impl AppConfig {
     /// Load config from TOML file
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        toml::from_str(&content)
-            .map_err(|error| MurmurError::Config(describe_toml_error(&content, &error)))
+        let parse_error = |error| MurmurError::Config(describe_toml_error(&content, &error));
+        let mut config: Self = toml::from_str(&content).map_err(parse_error)?;
+        if config.llm_processor == LlmProcessorType::Antigravity {
+            let stored: toml::Table = toml::from_str(&content).map_err(parse_error)?;
+            if stored.get("llm_processor").and_then(toml::Value::as_str) == Some("gemini") {
+                // Gemini CLI model IDs are not Antigravity model slugs. The
+                // canonical provider ID and cleared override persist on save.
+                config.llm_model = None;
+            }
+        }
+        Ok(config)
     }
 
     /// Save config to TOML file
@@ -629,6 +640,55 @@ mod tests {
         assert_eq!(parsed.hotkey, defaults.hotkey);
         assert!(parsed.api_keys.is_empty());
         assert_eq!(parsed.ui_preferences.theme, defaults.ui_preferences.theme);
+        assert_eq!(parsed.llm_processor, LlmProcessorType::AppleLlm);
+        assert!(parsed.llm_model.is_none());
+    }
+
+    #[test]
+    fn legacy_gemini_selection_migrates_without_losing_other_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+llm_processor = "gemini"
+llm_model = "gemini-2.5-pro"
+hotkey = "Ctrl+A"
+[api_keys]
+google_ai = "kept-key"
+"#,
+        )
+        .unwrap();
+        let migrated = AppConfig::load_from_file(&path).unwrap();
+        assert_eq!(migrated.llm_processor, LlmProcessorType::Antigravity);
+        assert!(migrated.llm_model.is_none());
+        assert_eq!(migrated.hotkey, "Ctrl+A");
+        assert_eq!(migrated.api_keys["google_ai"], "kept-key");
+        migrated.save_to_file(&path).unwrap();
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.contains("llm_processor = \"antigravity\""));
+        assert!(!written.contains("llm_model"));
+        assert_eq!(
+            AppConfig::load_from_file(&path).unwrap().llm_processor,
+            LlmProcessorType::Antigravity
+        );
+    }
+
+    #[test]
+    fn current_provider_and_model_overrides_survive_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        for processor in LlmProcessorType::ALL {
+            let config = AppConfig {
+                llm_processor: processor,
+                llm_model: Some("chosen-model".into()),
+                ..AppConfig::default()
+            };
+            config.save_to_file(&path).unwrap();
+            let loaded = AppConfig::load_from_file(&path).unwrap();
+            assert_eq!(loaded.llm_processor, processor);
+            assert_eq!(loaded.llm_model.as_deref(), Some("chosen-model"));
+        }
     }
 
     #[test]

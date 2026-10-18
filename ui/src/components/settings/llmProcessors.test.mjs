@@ -15,7 +15,7 @@ const processor = (overrides) => ({
   name: 'Claude API',
   id: 'claude_api',
   available: false,
-  default_model: 'claude-sonnet-4-20250514',
+  default_model: 'claude-sonnet-5-5',
   provider_type: 'http',
   requires_api_key: true,
   configured: false,
@@ -27,68 +27,68 @@ const apple = (available = true) => processor({
   name: 'Apple Intelligence', id: 'apple_llm', available, default_model: '(system default)',
   provider_type: 'local', requires_api_key: false, configured: true, api_key_name: null,
 });
-const gemini = (available = true) => processor({
-  name: 'Gemini CLI', id: 'gemini', available, default_model: 'gemini-3-flash-preview',
+const antigravity = (available = true) => processor({
+  name: 'Antigravity CLI', id: 'antigravity', available, default_model: 'gemini-3.8-flash-medium',
   provider_type: 'cli', requires_api_key: false, configured: true, api_key_name: null,
 });
 const copilot = (available = true) => processor({
-  name: 'Copilot CLI', id: 'copilot', available, default_model: 'gpt-5-mini',
+  name: 'Copilot CLI', id: 'copilot', available, default_model: 'gpt-6-luna',
   provider_type: 'cli', requires_api_key: false, configured: true, api_key_name: null,
 });
 const openai = (configured = false) => processor({
   name: 'OpenAI API', id: 'openai_api', configured, available: configured,
-  default_model: 'gpt-4o-mini', api_key_name: 'openai',
+  default_model: 'gpt-6-luna', api_key_name: 'openai',
 });
 const claude = (configured = false) => processor({ configured, available: configured });
 const geminiApi = (configured = false) => processor({
   name: 'Gemini API', id: 'gemini_api', configured, available: configured,
-  default_model: 'gemini-2.0-flash', api_key_name: 'google_ai',
+  default_model: 'gemini-3.8-flash', api_key_name: 'google_ai',
 });
 const custom = (configured = false) => processor({
   name: 'Custom Endpoint', id: 'custom_api', configured, available: configured,
-  default_model: 'gpt-4o-mini', provider_type: 'custom', requires_api_key: false, api_key_name: 'custom_llm',
+  default_model: 'gpt-6-luna', provider_type: 'custom', requires_api_key: false, api_key_name: 'custom_llm',
 });
 
 test('orders the processors on this Mac, then command-line tools, then cloud, then custom', () => {
   // The order the backend lists them in.
-  const listed = [gemini(), copilot(), apple(), openai(), claude(), geminiApi(), custom()];
+  const listed = [antigravity(), copilot(), apple(), openai(), claude(), geminiApi(), custom()];
   assert.deepEqual(
     orderedLlmProcessors(listed).map((p) => p.id),
-    ['apple_llm', 'gemini', 'copilot', 'openai_api', 'claude_api', 'gemini_api', 'custom_api'],
+    ['apple_llm', 'antigravity', 'copilot', 'openai_api', 'claude_api', 'gemini_api', 'custom_api'],
   );
 });
 
 test('lists a custom endpoint, configured or not', () => {
   // The old page filtered by three kinds and never showed this one.
-  assert.ok(orderedLlmProcessors([gemini(), custom(false)]).some((p) => p.id === 'custom_api'));
-  assert.ok(orderedLlmProcessors([custom(true), gemini()]).some((p) => p.id === 'custom_api'));
-  assert.equal(orderedLlmProcessors([custom(true), gemini(), apple(), claude()]).at(-1).id, 'custom_api');
+  assert.ok(orderedLlmProcessors([antigravity(), custom(false)]).some((p) => p.id === 'custom_api'));
+  assert.ok(orderedLlmProcessors([custom(true), antigravity()]).some((p) => p.id === 'custom_api'));
+  assert.equal(orderedLlmProcessors([custom(true), antigravity(), apple(), claude()]).at(-1).id, 'custom_api');
 });
 
 test('keeps the order the backend listed each kind in, drops none, and leaves the input alone', () => {
-  const input = [geminiApi(), custom(), copilot(), openai(), gemini(), claude()];
+  const input = [geminiApi(), custom(), copilot(), openai(), antigravity(), claude()];
   const ordered = orderedLlmProcessors(input);
   assert.deepEqual(
     ordered.map((p) => p.id),
-    ['copilot', 'gemini', 'gemini_api', 'openai_api', 'claude_api', 'custom_api'],
+    ['copilot', 'antigravity', 'gemini_api', 'openai_api', 'claude_api', 'custom_api'],
   );
   assert.equal(ordered.length, input.length);
   assert.deepEqual(
     input.map((p) => p.id),
-    ['gemini_api', 'custom_api', 'copilot', 'openai_api', 'gemini', 'claude_api'],
+    ['gemini_api', 'custom_api', 'copilot', 'openai_api', 'antigravity', 'claude_api'],
   );
 });
 
 test('orders an empty list, and a list without every kind', () => {
   assert.deepEqual(orderedLlmProcessors([]), []);
-  assert.deepEqual(orderedLlmProcessors([claude(), gemini()]).map((p) => p.id), ['gemini', 'claude_api']);
+  assert.deepEqual(orderedLlmProcessors([claude(), antigravity()]).map((p) => p.id), ['antigravity', 'claude_api']);
 });
 
 test('treats a processor of a kind it does not know as a cloud service', () => {
   const future = processor({ id: 'future_api', name: 'Future API', provider_type: 'quantum' });
   assert.deepEqual(
-    orderedLlmProcessors([custom(), future, gemini(), apple()]).map((p) => p.id),
-    ['apple_llm', 'gemini', 'future_api', 'custom_api'],
+    orderedLlmProcessors([custom(), future, antigravity(), apple()]).map((p) => p.id),
+    ['apple_llm', 'antigravity', 'future_api', 'custom_api'],
   );
   assert.equal(llmProcessorDetail(future, ''), 'Cloud');
   assert.equal(llmProcessorAction(future), 'add-key');
@@ -101,22 +101,22 @@ test('describes a processor on this Mac by whether it is available', () => {
 });
 
 test('describes a command-line tool by whether it is installed, and leaves how to install it to its hint', () => {
-  assert.equal(llmProcessorDetail(gemini(true), ''), 'Command-line tool');
+  assert.equal(llmProcessorDetail(antigravity(true), ''), 'Command-line tool');
   assert.equal(llmProcessorDetail(copilot(true), ''), 'Command-line tool');
   // The line is a button's text, which is cut off when the row is narrow and cannot be copied.
-  assert.equal(llmProcessorDetail(gemini(false), ''), 'Not installed');
+  assert.equal(llmProcessorDetail(antigravity(false), ''), 'Not installed');
   assert.equal(llmProcessorDetail(copilot(false), ''), 'Not installed');
   const other = processor({ id: 'other_cli', name: 'Other CLI', provider_type: 'cli', available: false, requires_api_key: false });
   assert.equal(llmProcessorDetail(other, ''), 'Not installed');
 });
 
 test('hints how to install a command-line tool that is not installed', () => {
-  assert.equal(llmProcessorHint(gemini(false)), 'Install: npm install -g @google/gemini-cli');
+  assert.equal(llmProcessorHint(antigravity(false)), 'Install: https://antigravity.google/docs/getting-started/ · Then run agy to sign in.');
   assert.equal(llmProcessorHint(copilot(false)), 'Install: npm install -g @github/copilot');
 });
 
 test('has no hint for a tool that is installed, a tool it has none for, or anything that is not a tool', () => {
-  assert.equal(llmProcessorHint(gemini(true)), '');
+  assert.equal(llmProcessorHint(antigravity(true)), '');
   assert.equal(llmProcessorHint(copilot(true)), '');
   const other = processor({ id: 'other_cli', name: 'Other CLI', provider_type: 'cli', available: false, requires_api_key: false });
   assert.equal(llmProcessorHint(other), '');
@@ -125,7 +125,7 @@ test('has no hint for a tool that is installed, a tool it has none for, or anyth
   assert.equal(llmProcessorHint(openai(false)), '');
   assert.equal(llmProcessorHint(custom(false)), '');
   // Whatever id a processor of another kind has, an install hint is not for it.
-  assert.equal(llmProcessorHint({ ...claude(false), id: 'gemini' }), '');
+  assert.equal(llmProcessorHint({ ...claude(false), id: 'antigravity' }), '');
 });
 
 test('describes a cloud service by whether its key is saved', () => {
@@ -163,7 +163,7 @@ test('sets up a custom endpoint, not a key, even if it were to ask for one', () 
 test('offers nothing when the processor is ready, or cannot be helped from here', () => {
   assert.equal(llmProcessorAction(apple(true)), null);
   assert.equal(llmProcessorAction(apple(false)), null);
-  assert.equal(llmProcessorAction(gemini(true)), null);
+  assert.equal(llmProcessorAction(antigravity(true)), null);
   assert.equal(llmProcessorAction(copilot(false)), null);
   assert.equal(llmProcessorAction(claude(true)), null);
   assert.equal(llmProcessorAction(openai(true)), null);
@@ -172,10 +172,10 @@ test('offers nothing when the processor is ready, or cannot be helped from here'
 
 test('disables only a tool or an on-device model that is not available', () => {
   assert.equal(llmProcessorDisabled(apple(false)), true);
-  assert.equal(llmProcessorDisabled(gemini(false)), true);
+  assert.equal(llmProcessorDisabled(antigravity(false)), true);
   assert.equal(llmProcessorDisabled(copilot(false)), true);
   assert.equal(llmProcessorDisabled(apple(true)), false);
-  assert.equal(llmProcessorDisabled(gemini(true)), false);
+  assert.equal(llmProcessorDisabled(antigravity(true)), false);
 });
 
 test('never disables a cloud service or a custom endpoint, whatever the backend says is available', () => {
@@ -188,7 +188,7 @@ test('never disables a cloud service or a custom endpoint, whatever the backend 
 });
 
 test('gives the install hint of each tool, and none for anything else', () => {
-  assert.equal(installHint('gemini'), 'Install: npm install -g @google/gemini-cli');
+  assert.equal(installHint('antigravity'), 'Install: https://antigravity.google/docs/getting-started/ · Then run agy to sign in.');
   assert.equal(installHint('copilot'), 'Install: npm install -g @github/copilot');
   assert.equal(installHint('apple_llm'), '');
   assert.equal(installHint('claude_api'), '');

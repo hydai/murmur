@@ -420,7 +420,7 @@ describe('recording capsule', () => {
       fadesAt: 3800,
       reach() {
         pipelineState('processing');
-        pipelineError('LLM processing failed: Gemini CLI exited with status 1. Using raw transcription.');
+        pipelineError('LLM processing failed: Antigravity CLI exited with status 1. Using raw transcription.');
         pipelineResult();
         // The pipeline ends this session in Error.
         pipelineState('error');
