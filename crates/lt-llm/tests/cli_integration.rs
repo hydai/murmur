@@ -39,14 +39,14 @@ async fn test_cli_exit_code_handling() {
 }
 
 #[tokio::test]
-async fn test_mock_gemini_cli_success() {
-    // Create a mock gemini CLI script
+async fn test_mock_antigravity_cli_success() {
+    // Create a mock Antigravity CLI script
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let mock_cli_path = temp_dir.path().join("mock_gemini");
+    let mock_cli_path = temp_dir.path().join("mock_antigravity");
 
     // Write mock script
     let script = r#"#!/bin/bash
-echo '{"text": "Processed successfully"}'
+echo 'Processed successfully'
 exit 0
 "#;
     fs::write(&mock_cli_path, script).unwrap();
@@ -60,7 +60,7 @@ exit 0
     let result = executor
         .execute(
             mock_cli_path.to_str().unwrap(),
-            &["-p", "test prompt", "--output-format", "json"],
+            &["--print", "test prompt", "--print-timeout", "25s"],
         )
         .await;
 
@@ -74,10 +74,10 @@ exit 0
 }
 
 #[tokio::test]
-async fn test_mock_gemini_cli_failure() {
-    // Create a mock gemini CLI script that fails
+async fn test_mock_antigravity_cli_failure() {
+    // Create a mock Antigravity CLI script that fails
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let mock_cli_path = temp_dir.path().join("mock_gemini_fail");
+    let mock_cli_path = temp_dir.path().join("mock_antigravity_fail");
 
     // Write mock script that fails
     let script = r#"#!/bin/bash
@@ -263,6 +263,7 @@ fn fake_cli(script: &str) -> (&'static CliSpec, tempfile::TempDir) {
     let binary: &'static str = Box::leak(path.to_str().unwrap().to_owned().into_boxed_str());
     let spec: &'static CliSpec = Box::leak(Box::new(CliSpec {
         binary,
+        fallback_binary: None,
         display_name: "Fake CLI",
         default_model: "fake-default",
         install_hint: "Please install fake-cli.",
@@ -274,7 +275,7 @@ fn fake_cli(script: &str) -> (&'static CliSpec, tempfile::TempDir) {
                 model.into(),
             ]
         },
-        parse: |stdout| stdout.trim().to_string(),
+        parse: |stdout| Ok(stdout.trim().to_string()),
     }));
     (spec, dir)
 }
@@ -284,6 +285,39 @@ fn post_process() -> ProcessingTask {
         text: "hello".into(),
         dictionary_terms: Vec::new(),
     }
+}
+
+#[tokio::test]
+async fn standard_install_location_works_when_the_binary_is_not_on_path() {
+    let (installed, _dir) = fake_cli(
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 1.4.2; else echo processed; fi\n",
+    );
+    let spec = Box::leak(Box::new(CliSpec {
+        binary: "nonexistent-cli-tool-xyz123",
+        fallback_binary: Some(installed.binary),
+        ..*installed
+    }));
+    let processor = CliLlmProcessor::with_model_and_prompts(spec, None, PromptManager::new());
+    assert!(processor.health_check().await.unwrap());
+    assert_eq!(
+        processor.process(post_process()).await.unwrap().text,
+        "processed"
+    );
+}
+
+#[tokio::test]
+async fn an_existing_binary_failure_does_not_run_the_installation_fallback() {
+    let (primary, _primary_dir) = fake_cli("#!/bin/sh\necho primary\nexit 7\n");
+    let (fallback, _fallback_dir) = fake_cli("#!/bin/sh\necho fallback\n");
+    let executor = CliExecutor::new().with_fallback_program(Some(fallback.binary.into()));
+    let output = executor.execute(primary.binary, &[]).await.unwrap();
+    assert_eq!(output.exit_code, 7);
+    assert_eq!(output.stdout.trim(), "primary");
+    assert!(!executor.is_available(primary.binary).await);
+
+    fs::set_permissions(primary.binary, fs::Permissions::from_mode(0o644)).unwrap();
+    let error = executor.execute(primary.binary, &[]).await.unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
 }
 
 #[tokio::test]
@@ -321,11 +355,12 @@ async fn a_nonzero_exit_reports_the_tool_name_and_its_stderr() {
 async fn a_missing_binary_reports_the_install_hint() {
     static MISSING: CliSpec = CliSpec {
         binary: "nonexistent-cli-tool-xyz123",
+        fallback_binary: None,
         display_name: "Fake CLI",
         default_model: "fake-default",
         install_hint: "Please install fake-cli.",
         args: |prompt, _| vec![prompt.into()],
-        parse: |stdout| stdout.trim().to_string(),
+        parse: |stdout| Ok(stdout.trim().to_string()),
     };
     let processor = CliLlmProcessor::with_model_and_prompts(&MISSING, None, PromptManager::new());
     let error = processor

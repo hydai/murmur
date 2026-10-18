@@ -7,17 +7,19 @@
 stt_provider = "elevenlabs"
 
 # LLM Processor Selection
-# CLI providers: "gemini", "copilot"
+# CLI providers: "antigravity", "copilot"
 # HTTP API providers: "openai_api", "claude_api", "gemini_api", "custom_api"
 # Local: "apple_llm"
-llm_processor = "gemini"
+llm_processor = "apple_llm"
 
 # LLM Model Override (optional)
 # Leave commented to use provider defaults:
-#   gemini CLI → "gemini-3-flash-preview", copilot CLI → "gpt-5-mini"
-#   openai_api → "gpt-4o-mini", claude_api → "claude-sonnet-4-20250514"
-#   gemini_api → "gemini-2.0-flash"
-# llm_model = "gemini-3-flash-preview"
+#   apple_llm → system default (no model override)
+#   antigravity CLI → "gemini-3.8-flash-medium" (use `agy models` for overrides)
+#   copilot CLI → "gpt-6-luna"
+#   openai_api → "gpt-6-luna", claude_api → "claude-sonnet-5-5"
+#   gemini_api → "gemini-3.8-flash"
+# llm_model = "gpt-6-luna"  # example for openai_api
 
 # Output Mode
 # Options: "clipboard", "keyboard", "both"
@@ -59,7 +61,7 @@ elevenlabs_language = "auto"
 # openai = "your-openai-api-key"       # shared between STT (Whisper) and LLM (Chat Completions)
 # groq = "your-groq-api-key"
 # anthropic = "your-anthropic-api-key"  # for Claude API
-# google_ai = "your-google-ai-key"     # for Gemini API (distinct from Gemini CLI)
+# google_ai = "your-google-ai-key"     # for Gemini API (distinct from Antigravity CLI)
 # custom_llm = "your-custom-api-key"   # for custom OpenAI-compatible endpoints
 
 # HTTP LLM Provider Configuration (for custom_api)

@@ -60,7 +60,7 @@ const PHASES: CapsulePhase[] = [
 ];
 
 /** What the pipeline sends when the AI step fails and it falls back to the transcript (lt-pipeline's orchestrator). */
-const AI_FAILED = 'LLM processing failed: Gemini CLI exited with status 1. Using raw transcription.';
+const AI_FAILED = 'LLM processing failed: Antigravity CLI exited with status 1. Using raw transcription.';
 
 /** One session in every phase, reached by the events that reach it in production. */
 function sessions(): Record<CapsulePhase, CapsuleState> {

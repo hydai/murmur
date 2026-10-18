@@ -19,27 +19,27 @@ const P = {
     id: 'apple_llm', name: 'Apple Intelligence', available, default_model: '(system default)',
     provider_type: 'local', requires_api_key: false, configured: true, api_key_name: null,
   }),
-  gemini: (available = true) => ({
-    id: 'gemini', name: 'Gemini CLI', available, default_model: 'gemini-3-flash-preview',
+  antigravity: (available = true) => ({
+    id: 'antigravity', name: 'Antigravity CLI', available, default_model: 'gemini-3.8-flash-medium',
     provider_type: 'cli', requires_api_key: false, configured: true, api_key_name: null,
   }),
   copilot: (available = true) => ({
-    id: 'copilot', name: 'Copilot CLI', available, default_model: 'gpt-5-mini',
+    id: 'copilot', name: 'Copilot CLI', available, default_model: 'gpt-6-luna',
     provider_type: 'cli', requires_api_key: false, configured: true, api_key_name: null,
   }),
   openai: (configured = true) => ({
-    id: 'openai_api', name: 'OpenAI API', available: configured, default_model: 'gpt-4o-mini',
+    id: 'openai_api', name: 'OpenAI API', available: configured, default_model: 'gpt-6-luna',
     provider_type: 'http', requires_api_key: true, configured, api_key_name: 'openai',
   }),
   claude: (configured = false) => ({
-    id: 'claude_api', name: 'Claude API', available: configured, default_model: 'claude-sonnet-4-20250514',
+    id: 'claude_api', name: 'Claude API', available: configured, default_model: 'claude-sonnet-5-5',
     provider_type: 'http', requires_api_key: true, configured, api_key_name: 'anthropic',
   }),
   geminiApi: (configured = false) => ({
-    id: 'gemini_api', name: 'Gemini API', available: configured, default_model: 'gemini-2.0-flash',
+    id: 'gemini_api', name: 'Gemini API', available: configured, default_model: 'gemini-3.8-flash',
     provider_type: 'http', requires_api_key: true, configured, api_key_name: 'google_ai',
   }),
-  custom: (configured = false, name = 'Custom Endpoint', default_model = 'gpt-4o-mini') => ({
+  custom: (configured = false, name = 'Custom Endpoint', default_model = 'gpt-6-luna') => ({
     id: 'custom_api', name, available: configured, default_model,
     provider_type: 'custom', requires_api_key: false, configured, api_key_name: 'custom_llm',
   }),
@@ -63,7 +63,7 @@ const prompt = (name: string, overrides: Record<string, unknown> = {}) => ({
 type PromptEntry = ReturnType<typeof prompt>;
 
 const CONFIG = {
-  llm_processor: 'gemini',
+  llm_processor: 'antigravity',
   llm_model: null as string | null,
   http_llm_config: null as null | Record<string, string | null>,
 };
@@ -76,7 +76,7 @@ const CONFIG = {
  */
 function backend(init: { processors?: Listed[]; config?: Partial<typeof CONFIG>; prompts?: PromptEntry[] } = {}) {
   const state = {
-    processors: init.processors ?? [P.apple(), P.gemini(), P.claude(true)],
+    processors: init.processors ?? [P.apple(), P.antigravity(), P.claude(true)],
     config: { ...CONFIG, ...init.config },
     prompts: init.prompts ?? VOICE_COMMANDS.map((command) => prompt(command.prompt)),
   };
@@ -227,14 +227,14 @@ async function openEditor(target: Element, title: string) {
 describe('AI Processing pane: services', () => {
   it('lists the services local first, then command-line tools, cloud, and custom, with the copy the spec gives', async () => {
     backend({
-      processors: [P.gemini(), P.copilot(false), P.apple(), P.openai(true), P.claude(false), P.geminiApi(false), P.custom(false)],
-      config: { llm_processor: 'gemini' },
+      processors: [P.antigravity(), P.copilot(false), P.apple(), P.openai(true), P.claude(false), P.geminiApi(false), P.custom(false)],
+      config: { llm_processor: 'antigravity' },
     });
     const target = await open();
     expect(target.querySelector('h1')?.textContent).toBe('AI Processing');
     expect(rowsOf(group(target, 'Service'))).toEqual([
       ['Apple Intelligence', 'On this Mac', []],
-      ['Gemini CLI', 'Command-line tool', []],
+      ['Antigravity CLI', 'Command-line tool', []],
       ['Copilot CLI', 'Not installed', []],
       ['OpenAI API', 'Cloud · key saved', []],
       ['Claude API', 'Cloud', ['Add API Key…']],
@@ -245,7 +245,7 @@ describe('AI Processing pane: services', () => {
 
   it('names each button after the service it is for, since the visible text is the same on several rows', async () => {
     backend({
-      processors: [P.gemini(), P.openai(true), P.claude(false), P.geminiApi(false), P.custom(false)],
+      processors: [P.antigravity(), P.openai(true), P.claude(false), P.geminiApi(false), P.custom(false)],
       config: { llm_processor: 'openai_api' },
     });
     const target = await open();
@@ -259,7 +259,7 @@ describe('AI Processing pane: services', () => {
 
   it('names the button that edits the endpoint in use after it', async () => {
     backend({
-      processors: [P.gemini(), P.custom(true, 'Local Ollama')],
+      processors: [P.antigravity(), P.custom(true, 'Local Ollama')],
       config: {
         llm_processor: 'custom_api',
         http_llm_config: { custom_base_url: 'http://localhost:11434/v1', custom_display_name: 'Local Ollama' },
@@ -271,10 +271,10 @@ describe('AI Processing pane: services', () => {
   });
 
   it('keeps the install hint of a tool that is not installed in its row, outside the row button', async () => {
-    backend({ processors: [P.gemini(false), P.copilot(false), P.apple()], config: { llm_processor: 'apple_llm' } });
+    backend({ processors: [P.antigravity(false), P.copilot(false), P.apple()], config: { llm_processor: 'apple_llm' } });
     const target = await open();
     const hints = {
-      'Gemini CLI': 'Install: npm install -g @google/gemini-cli',
+      'Antigravity CLI': 'Install: https://antigravity.google/docs/getting-started/ · Then run agy to sign in.',
       'Copilot CLI': 'Install: npm install -g @github/copilot',
     };
     for (const [name, hint] of Object.entries(hints)) {
@@ -290,8 +290,8 @@ describe('AI Processing pane: services', () => {
 
   it('gives a row room for a hint only when it has one', async () => {
     backend({
-      processors: [P.gemini(true), P.copilot(false), P.apple(false), P.openai(true), P.claude(false), P.custom(false)],
-      config: { llm_processor: 'gemini' },
+      processors: [P.antigravity(true), P.copilot(false), P.apple(false), P.openai(true), P.claude(false), P.custom(false)],
+      config: { llm_processor: 'antigravity' },
     });
     const target = await open();
     // An installed tool, the Mac's own model, cloud services and the custom endpoint have nothing to add.
@@ -302,7 +302,7 @@ describe('AI Processing pane: services', () => {
 
   it('gives a tool with no known install hint nothing under its row', async () => {
     backend({
-      processors: [{ ...P.gemini(false), id: 'other_cli', name: 'Other CLI' }, P.apple()],
+      processors: [{ ...P.antigravity(false), id: 'other_cli', name: 'Other CLI' }, P.apple()],
       config: { llm_processor: 'apple_llm' },
     });
     const target = await open();
@@ -311,7 +311,7 @@ describe('AI Processing pane: services', () => {
   });
 
   it('says Apple Intelligence is not available when this Mac cannot run it', async () => {
-    backend({ processors: [P.apple(false), P.gemini()], config: { llm_processor: 'gemini' } });
+    backend({ processors: [P.apple(false), P.antigravity()], config: { llm_processor: 'antigravity' } });
     const target = await open();
     expect(service(target, 'Apple Intelligence').querySelector('.row-detail')?.textContent)
       .toBe('Not available on this Mac');
@@ -319,13 +319,13 @@ describe('AI Processing pane: services', () => {
 
   it('gives each service the icon of its kind', async () => {
     backend({
-      processors: [P.apple(), P.gemini(), P.openai(true), P.custom(true, 'Local Ollama')],
-      config: { llm_processor: 'gemini' },
+      processors: [P.apple(), P.antigravity(), P.openai(true), P.custom(true, 'Local Ollama')],
+      config: { llm_processor: 'antigravity' },
     });
     const target = await open();
     const icon = (name: string) => service(target, name).querySelector('.row-icon svg')?.getAttribute('class');
     expect(icon('Apple Intelligence')).toContain('lucide-laptop');
-    expect(icon('Gemini CLI')).toContain('lucide-terminal');
+    expect(icon('Antigravity CLI')).toContain('lucide-terminal');
     expect(icon('OpenAI API')).toContain('lucide-cloud');
     expect(icon('Local Ollama')).toContain('lucide-server');
   });
@@ -333,7 +333,7 @@ describe('AI Processing pane: services', () => {
   it('lists a configured custom endpoint and marks it in use', async () => {
     backend({
       processors: [
-        P.gemini(),
+        P.antigravity(),
         {
           id: 'custom_api', name: 'Local Ollama', provider_type: 'custom', configured: true, available: true,
           requires_api_key: false, default_model: '', api_key_name: 'custom_llm',
@@ -352,10 +352,10 @@ describe('AI Processing pane: services', () => {
   });
 
   it('marks the processor in use and switches on click without a success toast', async () => {
-    backend({ processors: [P.apple(), P.gemini(), P.claude(true)], config: { llm_processor: 'gemini' } });
+    backend({ processors: [P.apple(), P.antigravity(), P.claude(true)], config: { llm_processor: 'antigravity' } });
     const target = await open();
     expect(inUse(target)).toHaveLength(1);
-    expect(inUse(target)[0].textContent).toContain('Gemini CLI');
+    expect(inUse(target)[0].textContent).toContain('Antigravity CLI');
     button(target, 'Claude API').click(); await settle();
     expect(mocks.invoke).toHaveBeenCalledWith('set_llm_processor', { processor: 'claude_api' });
     expect(target.querySelector('[aria-current="true"]')?.textContent).toContain('Claude API');
@@ -365,17 +365,17 @@ describe('AI Processing pane: services', () => {
 
   it('keeps the processor in use when switching fails', async () => {
     failing('set_llm_processor', new Error('boom'), {
-      processors: [P.apple(), P.gemini(), P.claude(true)], config: { llm_processor: 'gemini' },
+      processors: [P.apple(), P.antigravity(), P.claude(true)], config: { llm_processor: 'antigravity' },
     });
     const target = await open();
     button(target, 'Claude API').click(); await settle();
-    expect(target.querySelector('[aria-current="true"]')?.textContent).toContain('Gemini CLI');
+    expect(target.querySelector('[aria-current="true"]')?.textContent).toContain('Antigravity CLI');
     expect(inUse(target)).toHaveLength(1);
     expect(target.querySelector('.toast-error')?.textContent).toContain('Failed to switch processor');
   });
 
   it('disables a command-line tool that is not installed, and an Apple Intelligence this Mac cannot run', async () => {
-    backend({ processors: [P.apple(false), P.gemini(), P.copilot(false)], config: { llm_processor: 'gemini' } });
+    backend({ processors: [P.apple(false), P.antigravity(), P.copilot(false)], config: { llm_processor: 'antigravity' } });
     const target = await open();
     for (const name of ['Apple Intelligence', 'Copilot CLI']) {
       const main = service(target, name).querySelector<HTMLButtonElement>('.row-main')!;
@@ -383,20 +383,20 @@ describe('AI Processing pane: services', () => {
       main.click();
     }
     await settle();
-    expect(service(target, 'Gemini CLI').querySelector<HTMLButtonElement>('.row-main')?.disabled).toBe(false);
+    expect(service(target, 'Antigravity CLI').querySelector<HTMLButtonElement>('.row-main')?.disabled).toBe(false);
     expect(called('set_llm_processor')).toHaveLength(0);
     expect(target.querySelector('.toast')).toBeNull();
   });
 
   it('does not switch to a processor that cannot run even if a click gets past the disabled row', async () => {
     // The row is disabled, so this only guards the handler against a click that gets through.
-    backend({ processors: [P.gemini(), P.copilot(false)], config: { llm_processor: 'gemini' } });
+    backend({ processors: [P.antigravity(), P.copilot(false)], config: { llm_processor: 'antigravity' } });
     const target = await open();
     const main = service(target, 'Copilot CLI').querySelector<HTMLButtonElement>('.row-main')!;
     main.disabled = false;
     main.click(); await settle();
     expect(called('set_llm_processor')).toHaveLength(0);
-    expect(inUse(target)[0].textContent).toContain('Gemini CLI');
+    expect(inUse(target)[0].textContent).toContain('Antigravity CLI');
   });
 
   it('says so when the processors or the settings cannot be loaded', async () => {
@@ -416,7 +416,7 @@ describe('AI Processing pane: services', () => {
       switch (command) {
         case 'get_llm_processors':
         case 'get_prompts': return [];
-        case 'get_config': return { llm_processor: 'gemini' };
+        case 'get_config': return { llm_processor: 'antigravity' };
         default: return undefined;
       }
     });
@@ -431,7 +431,7 @@ describe('AI Processing pane: services', () => {
 
 describe('AI Processing pane: the processor in use', () => {
   it('shows the saved key of a cloud service in use', async () => {
-    backend({ processors: [P.gemini(), P.openai(true)], config: { llm_processor: 'openai_api' } });
+    backend({ processors: [P.antigravity(), P.openai(true)], config: { llm_processor: 'openai_api' } });
     const target = await open();
     expect(groupTitles(target)).toEqual(['Service', 'OpenAI API', 'Model', 'Voice Commands']);
     expect(rowsOf(group(target, 'OpenAI API'))).toEqual([['API key', 'Saved', ['Change…']]]);
@@ -439,7 +439,7 @@ describe('AI Processing pane: the processor in use', () => {
 
   it('shows the address of the custom endpoint in use', async () => {
     backend({
-      processors: [P.gemini(), P.custom(true, 'Local Ollama')],
+      processors: [P.antigravity(), P.custom(true, 'Local Ollama')],
       config: {
         llm_processor: 'custom_api',
         http_llm_config: { custom_base_url: 'http://localhost:11434/v1', custom_display_name: 'Local Ollama' },
@@ -451,18 +451,18 @@ describe('AI Processing pane: the processor in use', () => {
   });
 
   it('has no group of its own for a tool, an on-device model, or a service that has no key yet', async () => {
-    backend({ processors: [P.apple(), P.gemini(), P.claude(false)], config: { llm_processor: 'gemini' } });
+    backend({ processors: [P.apple(), P.antigravity(), P.claude(false)], config: { llm_processor: 'antigravity' } });
     let target = await open();
     expect(groupTitles(target)).toEqual(['Service', 'Model', 'Voice Commands']);
     await unmountAll();
 
-    backend({ processors: [P.apple(), P.gemini(), P.claude(false)], config: { llm_processor: 'apple_llm' } });
+    backend({ processors: [P.apple(), P.antigravity(), P.claude(false)], config: { llm_processor: 'apple_llm' } });
     target = await open();
     expect(groupTitles(target)).toEqual(['Service', 'Voice Commands']);
     await unmountAll();
 
     // Never says "Saved" for a key that is not there.
-    backend({ processors: [P.gemini(), P.claude(false)], config: { llm_processor: 'claude_api' } });
+    backend({ processors: [P.antigravity(), P.claude(false)], config: { llm_processor: 'claude_api' } });
     target = await open();
     expect(groupTitles(target)).toEqual(['Service', 'Model', 'Voice Commands']);
   });
@@ -470,31 +470,31 @@ describe('AI Processing pane: the processor in use', () => {
 
 describe('AI Processing pane: model', () => {
   it('hides the model field for Apple Intelligence', async () => {
-    backend({ processors: [P.apple(), P.gemini()], config: { llm_processor: 'apple_llm' } });
+    backend({ processors: [P.apple(), P.antigravity()], config: { llm_processor: 'apple_llm' } });
     const target = await open();
     expect(modelField(target)).toBeNull();
     expect(groupTitles(target)).not.toContain('Model');
   });
 
   it('brings the model field back when another processor is chosen', async () => {
-    backend({ processors: [P.apple(), P.gemini()], config: { llm_processor: 'apple_llm' } });
+    backend({ processors: [P.apple(), P.antigravity()], config: { llm_processor: 'apple_llm' } });
     const target = await open();
-    button(target, 'Gemini CLI').click(); await settle();
+    button(target, 'Antigravity CLI').click(); await settle();
     expect(modelField(target)).not.toBeNull();
   });
 
   it('names the processor in use, and shows its default model as the placeholder', async () => {
-    backend({ processors: [P.gemini(), P.openai(true)], config: { llm_processor: 'gemini' } });
+    backend({ processors: [P.antigravity(), P.openai(true)], config: { llm_processor: 'antigravity' } });
     const target = await open();
-    expect(rowsOf(group(target, 'Model')).map(([label]) => label)).toEqual(['Model for Gemini CLI']);
-    expect(modelField(target)?.placeholder).toBe('Default: gemini-3-flash-preview');
+    expect(rowsOf(group(target, 'Model')).map(([label]) => label)).toEqual(['Model for Antigravity CLI']);
+    expect(modelField(target)?.placeholder).toBe('Default: gemini-3.8-flash-medium');
     button(target, 'OpenAI API').click(); await settle();
     expect(rowsOf(group(target, 'Model')).map(([label]) => label)).toEqual(['Model for OpenAI API']);
-    expect(modelField(target)?.placeholder).toBe('Default: gpt-4o-mini');
+    expect(modelField(target)?.placeholder).toBe('Default: gpt-6-luna');
   });
 
   it('shows the model that is saved', async () => {
-    backend({ config: { llm_processor: 'gemini', llm_model: 'gemini-2.5-pro' } });
+    backend({ config: { llm_processor: 'antigravity', llm_model: 'gemini-2.5-pro' } });
     const target = await open();
     expect(modelField(target)?.value).toBe('gemini-2.5-pro');
   });
@@ -520,7 +520,7 @@ describe('AI Processing pane: model', () => {
   });
 
   it('does not save when the field loses focus unchanged', async () => {
-    backend({ config: { llm_processor: 'gemini', llm_model: 'gpt-4.1' } });
+    backend({ config: { llm_processor: 'antigravity', llm_model: 'gpt-4.1' } });
     const target = await open();
     const input = modelField(target)!;
     input.focus();
@@ -557,7 +557,7 @@ describe('AI Processing pane: model', () => {
   });
 
   it('goes back to the default model when the field is emptied', async () => {
-    backend({ config: { llm_processor: 'gemini', llm_model: 'gpt-4.1' } });
+    backend({ config: { llm_processor: 'antigravity', llm_model: 'gpt-4.1' } });
     const target = await open();
     const input = modelField(target)!;
     fill(input, '');
@@ -611,7 +611,7 @@ describe('AI Processing pane: model', () => {
 
 describe('AI Processing pane: API key sheet', () => {
   it('opens titled for a service without a key, from its button or its row', async () => {
-    backend({ processors: [P.gemini(), P.claude(false)], config: { llm_processor: 'gemini' } });
+    backend({ processors: [P.antigravity(), P.claude(false)], config: { llm_processor: 'antigravity' } });
     const target = await open();
     button(target, 'Add API Key…').click(); await settle();
     expect(dialogTitle(target)).toBe('Add API Key for Claude API');
@@ -625,14 +625,14 @@ describe('AI Processing pane: API key sheet', () => {
   });
 
   it('renders the sheet inside the pane', async () => {
-    backend({ processors: [P.gemini(), P.claude(false)] });
+    backend({ processors: [P.antigravity(), P.claude(false)] });
     const target = await open();
     button(target, 'Add API Key…').click(); await settle();
     expect(target.querySelector('.pane [role="dialog"]')).not.toBeNull();
   });
 
   it('opens titled as a change for a key that is already saved', async () => {
-    backend({ processors: [P.gemini(), P.openai(true)], config: { llm_processor: 'openai_api' } });
+    backend({ processors: [P.antigravity(), P.openai(true)], config: { llm_processor: 'openai_api' } });
     const target = await open();
     button(group(target, 'OpenAI API'), 'Change…').click(); await settle();
     expect(dialogTitle(target)).toBe('Change API Key for OpenAI API');
@@ -640,7 +640,7 @@ describe('AI Processing pane: API key sheet', () => {
   });
 
   it('saves a new key under the key name of the service, switches to it, and confirms with a toast', async () => {
-    backend({ processors: [P.gemini(), P.claude(false)], config: { llm_processor: 'gemini' } });
+    backend({ processors: [P.antigravity(), P.claude(false)], config: { llm_processor: 'antigravity' } });
     const target = await open();
     button(target, 'Add API Key…').click(); await settle();
     expect(button(dialog(target)!, 'Save & Use')).toBeDefined();
@@ -661,7 +661,7 @@ describe('AI Processing pane: API key sheet', () => {
   });
 
   it('saves a changed key as a key change, with a toast', async () => {
-    backend({ processors: [P.gemini(), P.openai(true)], config: { llm_processor: 'openai_api' } });
+    backend({ processors: [P.antigravity(), P.openai(true)], config: { llm_processor: 'openai_api' } });
     const target = await open();
     button(group(target, 'OpenAI API'), 'Change…').click(); await settle();
     fill(keyField(target), 'sk-new');
@@ -673,7 +673,7 @@ describe('AI Processing pane: API key sheet', () => {
   });
 
   it('says Saving… on the button while the key is being saved, then closes', async () => {
-    backend({ processors: [P.gemini(), P.claude(false)], config: { llm_processor: 'gemini' } });
+    backend({ processors: [P.antigravity(), P.claude(false)], config: { llm_processor: 'antigravity' } });
     const release = holding('save_api_key');
     const target = await open();
     button(target, 'Add API Key…').click(); await settle();
@@ -688,7 +688,7 @@ describe('AI Processing pane: API key sheet', () => {
 
   it('lets the confirmation go away by itself after two seconds', async () => {
     vi.useFakeTimers();
-    backend({ processors: [P.gemini(), P.claude(false)], config: { llm_processor: 'gemini' } });
+    backend({ processors: [P.antigravity(), P.claude(false)], config: { llm_processor: 'antigravity' } });
     const target = await open();
     button(target, 'Add API Key…').click(); await settle();
     fill(keyField(target), 'sk-ant-test');
@@ -701,7 +701,7 @@ describe('AI Processing pane: API key sheet', () => {
   });
 
   it('explains an empty key inside the sheet and saves nothing', async () => {
-    backend({ processors: [P.gemini(), P.claude(false)] });
+    backend({ processors: [P.antigravity(), P.claude(false)] });
     const target = await open();
     button(target, 'Add API Key…').click(); await settle();
     button(dialog(target)!, 'Save & Use').click(); await settle();
@@ -712,7 +712,7 @@ describe('AI Processing pane: API key sheet', () => {
 
   it('keeps the sheet open and says why when the key cannot be saved', async () => {
     failing('save_api_key', new Error('keychain locked'), {
-      processors: [P.gemini(), P.claude(false)], config: { llm_processor: 'gemini' },
+      processors: [P.antigravity(), P.claude(false)], config: { llm_processor: 'antigravity' },
     });
     const target = await open();
     button(target, 'Add API Key…').click(); await settle();
@@ -722,12 +722,12 @@ describe('AI Processing pane: API key sheet', () => {
     expect(errorToast(target)).toContain('keychain locked');
     expect(dialog(target)).not.toBeNull();
     expect(called('set_llm_processor')).toHaveLength(0);
-    expect(inUse(target)[0].textContent).toContain('Gemini CLI');
+    expect(inUse(target)[0].textContent).toContain('Antigravity CLI');
   });
 
   it('keeps the processor in use when it is the switch that fails after the key was saved', async () => {
     failing('set_llm_processor', new Error('boom'), {
-      processors: [P.gemini(), P.claude(false)], config: { llm_processor: 'gemini' },
+      processors: [P.antigravity(), P.claude(false)], config: { llm_processor: 'antigravity' },
     });
     const target = await open();
     button(target, 'Add API Key…').click(); await settle();
@@ -735,12 +735,12 @@ describe('AI Processing pane: API key sheet', () => {
     button(dialog(target)!, 'Save & Use').click(); await settle();
     expect(errorToast(target)).toContain('Failed to save API key');
     expect(dialog(target)).not.toBeNull();
-    expect(inUse(target)[0].textContent).toContain('Gemini CLI');
+    expect(inUse(target)[0].textContent).toContain('Antigravity CLI');
   });
 
   it('takes the failure with it when the sheet it came from is cancelled', async () => {
     failing('save_api_key', new Error('keychain locked'), {
-      processors: [P.gemini(), P.claude(false)], config: { llm_processor: 'gemini' },
+      processors: [P.antigravity(), P.claude(false)], config: { llm_processor: 'antigravity' },
     });
     const target = await open();
     button(target, 'Add API Key…').click(); await settle();
@@ -753,7 +753,7 @@ describe('AI Processing pane: API key sheet', () => {
   });
 
   it('forgets what was typed when the sheet is cancelled', async () => {
-    backend({ processors: [P.gemini(), P.claude(false)] });
+    backend({ processors: [P.antigravity(), P.claude(false)] });
     const target = await open();
     button(target, 'Add API Key…').click(); await settle();
     fill(keyField(target), 'sk-secret');
@@ -766,7 +766,7 @@ describe('AI Processing pane: API key sheet', () => {
 
 describe('AI Processing pane: custom endpoint sheet', () => {
   it('opens from the row or the Set Up button of an endpoint that is not set up', async () => {
-    backend({ processors: [P.gemini(), P.custom(false)], config: { llm_processor: 'gemini' } });
+    backend({ processors: [P.antigravity(), P.custom(false)], config: { llm_processor: 'antigravity' } });
     const target = await open();
     button(target, 'Set Up…').click(); await settle();
     expect(dialogTitle(target)).toBe('Custom Endpoint');
@@ -779,7 +779,7 @@ describe('AI Processing pane: custom endpoint sheet', () => {
   });
 
   it('lays out its fields with the labels and placeholders the spec gives', async () => {
-    backend({ processors: [P.gemini(), P.custom(false)] });
+    backend({ processors: [P.antigravity(), P.custom(false)] });
     const target = await open();
     button(target, 'Set Up…').click(); await settle();
     const sheet = dialog(target)!;
@@ -798,7 +798,7 @@ describe('AI Processing pane: custom endpoint sheet', () => {
   });
 
   it('cannot be submitted without a Base URL', async () => {
-    backend({ processors: [P.gemini(), P.custom(false)] });
+    backend({ processors: [P.antigravity(), P.custom(false)] });
     const target = await open();
     button(target, 'Set Up…').click(); await settle();
     const submit = button(dialog(target)!, 'Save & Use');
@@ -811,7 +811,7 @@ describe('AI Processing pane: custom endpoint sheet', () => {
   });
 
   it('saves the endpoint, uses it, and confirms with a toast', async () => {
-    backend({ processors: [P.gemini(), P.custom(false)], config: { llm_processor: 'gemini' } });
+    backend({ processors: [P.antigravity(), P.custom(false)], config: { llm_processor: 'antigravity' } });
     const target = await open();
     button(target, 'Set Up…').click(); await settle();
     fill(field(target, 'custom-llm-base-url'), ' http://localhost:11434/v1 ');
@@ -835,7 +835,7 @@ describe('AI Processing pane: custom endpoint sheet', () => {
   });
 
   it('leaves the stored key alone and sends no display name when none is typed', async () => {
-    backend({ processors: [P.gemini(), P.custom(false)] });
+    backend({ processors: [P.antigravity(), P.custom(false)] });
     const target = await open();
     button(target, 'Set Up…').click(); await settle();
     fill(field(target, 'custom-llm-base-url'), 'http://localhost:11434/v1');
@@ -847,7 +847,7 @@ describe('AI Processing pane: custom endpoint sheet', () => {
   });
 
   it('submits with Enter in a field', async () => {
-    backend({ processors: [P.gemini(), P.custom(false)] });
+    backend({ processors: [P.antigravity(), P.custom(false)] });
     const target = await open();
     button(target, 'Set Up…').click(); await settle();
     fill(field(target, 'custom-llm-base-url'), 'http://localhost:11434/v1');
@@ -858,7 +858,7 @@ describe('AI Processing pane: custom endpoint sheet', () => {
 
   it('keeps the sheet open and says why when the endpoint cannot be saved', async () => {
     failing('set_custom_llm_endpoint', new Error('disk full'), {
-      processors: [P.gemini(), P.custom(false)], config: { llm_processor: 'gemini' },
+      processors: [P.antigravity(), P.custom(false)], config: { llm_processor: 'antigravity' },
     });
     const target = await open();
     button(target, 'Set Up…').click(); await settle();
@@ -868,12 +868,12 @@ describe('AI Processing pane: custom endpoint sheet', () => {
     expect(errorToast(target)).toContain('disk full');
     expect(dialog(target)).not.toBeNull();
     expect(called('set_llm_processor')).toHaveLength(0);
-    expect(inUse(target)[0].textContent).toContain('Gemini CLI');
+    expect(inUse(target)[0].textContent).toContain('Antigravity CLI');
   });
 
   it('takes the failure with it when the sheet is cancelled', async () => {
     failing('set_custom_llm_endpoint', new Error('disk full'), {
-      processors: [P.gemini(), P.custom(false)],
+      processors: [P.antigravity(), P.custom(false)],
     });
     const target = await open();
     button(target, 'Set Up…').click(); await settle();
@@ -885,7 +885,7 @@ describe('AI Processing pane: custom endpoint sheet', () => {
 
   it('edits a saved endpoint from the in-use group, starting from what is saved', async () => {
     backend({
-      processors: [P.gemini(), P.custom(true, 'Local Ollama')],
+      processors: [P.antigravity(), P.custom(true, 'Local Ollama')],
       config: {
         llm_processor: 'custom_api',
         http_llm_config: { custom_base_url: 'http://localhost:11434/v1', custom_display_name: 'Local Ollama' },
@@ -902,7 +902,7 @@ describe('AI Processing pane: custom endpoint sheet', () => {
 
   it('shows nothing of a half-typed address on the page, and forgets it on Cancel', async () => {
     backend({
-      processors: [P.gemini(), P.custom(true, 'Local Ollama')],
+      processors: [P.antigravity(), P.custom(true, 'Local Ollama')],
       config: {
         llm_processor: 'custom_api',
         http_llm_config: { custom_base_url: 'http://localhost:11434/v1', custom_display_name: 'Local Ollama' },
@@ -923,7 +923,7 @@ describe('AI Processing pane: custom endpoint sheet', () => {
 
   it('does not open by itself when the custom endpoint is the processor in use', async () => {
     backend({
-      processors: [P.gemini(), P.custom(true, 'Local Ollama')],
+      processors: [P.antigravity(), P.custom(true, 'Local Ollama')],
       config: {
         llm_processor: 'custom_api',
         http_llm_config: { custom_base_url: 'http://localhost:11434/v1', custom_display_name: null },
@@ -1050,7 +1050,7 @@ describe('AI Processing pane: voice commands', () => {
     await openEditor(target, 'Shorten');
     backButton(target).click(); await settle();
     expect(called('get_llm_processors')).toHaveLength(before);
-    expect(inUse(target)[0].textContent).toContain('Gemini CLI');
+    expect(inUse(target)[0].textContent).toContain('Antigravity CLI');
   });
 
   it('shows the Edited mark of a prompt that was saved, once back', async () => {

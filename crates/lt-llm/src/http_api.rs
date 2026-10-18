@@ -18,9 +18,9 @@ pub enum ApiFormat {
 }
 
 /// Default models per provider
-pub const OPENAI_DEFAULT_MODEL: &str = "gpt-4o-mini";
-pub const CLAUDE_DEFAULT_MODEL: &str = "claude-sonnet-4-20250514";
-pub const GEMINI_API_DEFAULT_MODEL: &str = "gemini-2.0-flash";
+pub const OPENAI_DEFAULT_MODEL: &str = "gpt-6-luna";
+pub const CLAUDE_DEFAULT_MODEL: &str = "claude-sonnet-5-5";
+pub const GEMINI_API_DEFAULT_MODEL: &str = "gemini-3.8-flash";
 
 /// HTTP-based LLM processor supporting multiple API formats
 pub struct HttpLlmProcessor {
@@ -29,6 +29,7 @@ pub struct HttpLlmProcessor {
     base_url: String,
     api_key: String,
     model: String,
+    reasoning_effort: Option<&'static str>,
     prompt_manager: PromptManager,
     timeout_secs: u64,
 }
@@ -52,6 +53,7 @@ impl HttpLlmProcessor {
             api_format: ApiFormat::OpenAi,
             base_url: "https://api.openai.com/v1".to_string(),
             api_key,
+            reasoning_effort: (model == OPENAI_DEFAULT_MODEL).then_some("none"),
             model,
             prompt_manager: prompts,
             timeout_secs: 30,
@@ -76,6 +78,7 @@ impl HttpLlmProcessor {
             api_format: ApiFormat::Claude,
             base_url: "https://api.anthropic.com".to_string(),
             api_key,
+            reasoning_effort: None,
             model,
             prompt_manager: prompts,
             timeout_secs: 30,
@@ -100,6 +103,7 @@ impl HttpLlmProcessor {
             api_format: ApiFormat::GeminiApi,
             base_url: "https://generativelanguage.googleapis.com".to_string(),
             api_key,
+            reasoning_effort: None,
             model,
             prompt_manager: prompts,
             timeout_secs: 30,
@@ -125,6 +129,7 @@ impl HttpLlmProcessor {
             api_format: ApiFormat::OpenAi,
             base_url,
             api_key,
+            reasoning_effort: None,
             model,
             prompt_manager: prompts,
             timeout_secs: 30,
@@ -136,13 +141,18 @@ impl HttpLlmProcessor {
         match &self.api_format {
             ApiFormat::OpenAi => {
                 let url = format!("{}/chat/completions", self.base_url);
-                let body = serde_json::json!({
+                let mut body = serde_json::json!({
                     "model": self.model,
                     "messages": [
                         { "role": "system", "content": "You are a helpful text processing assistant. Follow the instructions precisely and return only the processed text." },
                         { "role": "user", "content": prompt }
                     ]
                 });
+                // Keep the new default fast for dictation. Custom endpoints
+                // and model overrides retain their own parameter contracts.
+                if let Some(effort) = self.reasoning_effort {
+                    body["reasoning_effort"] = effort.into();
+                }
                 Ok(self
                     .client
                     .post(&url)
@@ -373,6 +383,69 @@ mod tests {
         let processor = HttpLlmProcessor::openai("test-key".to_string(), None);
         assert_eq!(processor.model, OPENAI_DEFAULT_MODEL);
         assert_eq!(processor.base_url, "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn default_requests_use_current_models_and_provider_specific_parameters() {
+        for (processor, suffix, expected_model, effort) in [
+            (
+                HttpLlmProcessor::openai("key".into(), None),
+                "/chat/completions",
+                "gpt-6-luna",
+                Some("none"),
+            ),
+            (
+                HttpLlmProcessor::claude("key".into(), None),
+                "/v1/messages",
+                "claude-sonnet-5-5",
+                None,
+            ),
+            (
+                HttpLlmProcessor::gemini_api("key".into(), None),
+                "/v1beta/models/gemini-3.8-flash:generateContent",
+                "gemini-3.8-flash",
+                None,
+            ),
+        ] {
+            let request = processor
+                .build_request("process this")
+                .unwrap()
+                .build()
+                .unwrap();
+            assert!(request.url().path().ends_with(suffix));
+            let body: serde_json::Value =
+                serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+            assert_eq!(processor.model, expected_model);
+            if !matches!(processor.api_format, ApiFormat::GeminiApi) {
+                assert_eq!(body["model"], expected_model);
+            }
+            assert_eq!(
+                body.get("reasoning_effort")
+                    .and_then(serde_json::Value::as_str),
+                effort
+            );
+            if matches!(processor.api_format, ApiFormat::Claude) {
+                assert_eq!(body["max_tokens"], 4096);
+                assert_eq!(request.headers()["anthropic-version"], "2023-06-01");
+            }
+        }
+    }
+
+    #[test]
+    fn custom_endpoints_and_other_models_do_not_receive_luna_parameters() {
+        for processor in [
+            HttpLlmProcessor::openai("key".into(), Some("other-model".into())),
+            HttpLlmProcessor::custom("http://localhost:11434/v1".into(), String::new(), None),
+        ] {
+            let request = processor
+                .build_request("process this")
+                .unwrap()
+                .build()
+                .unwrap();
+            let body: serde_json::Value =
+                serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+            assert!(body.get("reasoning_effort").is_none());
+        }
     }
 
     #[test]

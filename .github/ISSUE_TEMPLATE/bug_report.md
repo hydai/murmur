@@ -29,7 +29,7 @@ What actually happened.
 - **macOS version**: (e.g., 14.5)
 - **Murmur version**: (e.g., 0.1.0)
 - **STT provider**: (e.g., ElevenLabs, OpenAI, Groq)
-- **LLM processor**: (e.g., gemini-cli, copilot-cli, none)
+- **LLM processor**: (e.g., Antigravity CLI, Copilot CLI, none)
 
 ## Logs
 

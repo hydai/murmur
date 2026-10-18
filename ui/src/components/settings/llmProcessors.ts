@@ -86,7 +86,7 @@ export function llmProcessorDisabled(processor: LlmProcessorInfo): boolean {
 
 /** How to get a command-line tool that is not installed; empty for anything else. */
 export function installHint(id: string): string {
-  if (id === 'gemini') return 'Install: npm install -g @google/gemini-cli';
+  if (id === 'antigravity') return 'Install: https://antigravity.google/docs/getting-started/ · Then run agy to sign in.';
   if (id === 'copilot') return 'Install: npm install -g @github/copilot';
   return '';
 }

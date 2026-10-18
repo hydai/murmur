@@ -1,3 +1,5 @@
+use std::ffi::OsStr;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
@@ -15,17 +17,27 @@ pub struct CliOutput {
 /// CLI executor for spawning subprocess and capturing output
 pub struct CliExecutor {
     timeout_secs: u64,
+    fallback_program: Option<PathBuf>,
 }
 
 impl CliExecutor {
     /// Create a new CLI executor with default timeout (30 seconds)
     pub fn new() -> Self {
-        Self { timeout_secs: 30 }
+        Self::with_timeout(30)
     }
 
     /// Create a new CLI executor with custom timeout
     pub fn with_timeout(timeout_secs: u64) -> Self {
-        Self { timeout_secs }
+        Self {
+            timeout_secs,
+            fallback_program: None,
+        }
+    }
+
+    /// Also support a standard install outside a desktop app's inherited PATH.
+    pub fn with_fallback_program(mut self, path: Option<PathBuf>) -> Self {
+        self.fallback_program = path;
+        self
     }
 
     /// Execute a CLI command and capture output
@@ -40,13 +52,21 @@ impl CliExecutor {
         args: &[&str],
         duration: Duration,
     ) -> Result<CliOutput, std::io::Error> {
-        let mut child = Command::new(program)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
+        let spawn = |program: &OsStr| {
+            Command::new(program)
+                .args(args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+        };
+        let mut child = match (spawn(OsStr::new(program)), &self.fallback_program) {
+            (Err(error), Some(path)) if error.kind() == std::io::ErrorKind::NotFound => {
+                spawn(path.as_os_str())?
+            }
+            (result, _) => result?,
+        };
 
         // A dedicated owner can kill AND reap the child even when the caller
         // drops its future. kill_on_drop also covers runtime shutdown.
@@ -79,7 +99,7 @@ impl CliExecutor {
         })?
     }
 
-    /// Check if a CLI tool is available in PATH
+    /// Check PATH and the optional standard install location.
     pub async fn is_available(&self, program: &str) -> bool {
         self.execute_with_timeout(
             program,
